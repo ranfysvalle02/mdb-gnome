@@ -351,7 +351,7 @@ document.addEventListener('DOMContentLoaded', () => {
   
 ### Step 5: Activation  
 
-![](mdb-genome-configure.html)  
+![](mdb-genome-configure.png)  
 
 That's it. You now have a fully self-contained experiment. You log into the `/admin` panel, find `"click_tracker"` in the list of discovered experiments, click **"Configure"**, set the status to `"active"`, and hit **"Save & Activate."**  
   
