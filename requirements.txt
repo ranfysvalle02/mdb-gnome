@@ -1,0 +1,14 @@
+# Core FastAPI dependencies
+fastapi
+python-multipart
+uvicorn[standard]
+motor>=3.0.0
+pymongo==4.15.3
+PyJWT[crypto]
+bcrypt
+jinja2
+httpx
+pillow
+casbin>=1.43.0
+casbin-motor-adapter>=0.4.0
+gunicorn

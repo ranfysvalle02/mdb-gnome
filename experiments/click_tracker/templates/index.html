@@ -1,0 +1,17 @@
+<div style="font-family: sans-serif; padding: 20px; background: #e0f7fa; border-radius: 8px;">
+  <h2>Experiment: Click Tracker</h2>
+  
+  <p>
+    You have clicked the button 
+    <strong id="click-count" style="font-size: 1.2em;">{{ count }}</strong> 
+    time(s).
+  </p>
+
+  <button id="click-btn" 
+          data-url="/experiments/click_tracker/record-click" 
+          style="padding: 10px 20px; font-size: 1em; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer;">
+    Click Me!
+  </button>
+</div>
+
+<script src="static/js/app.js"></script>

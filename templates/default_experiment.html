@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Experiment: {{ experiment.name | default('Unknown Experiment') }}</title>
+    <!-- Load Tailwind CSS from CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom font import and application */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc; /* Light blue-gray background */
+        }
+        /* Style for the 'Fallback' badge */
+        .fallback-badge {
+            animation: pulse-ring 1.5s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+        }
+        @keyframes pulse-ring {
+            0% { box-shadow: 0 0 0 0px rgba(71, 85, 105, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(71, 85, 105, 0); }
+            100% { box-shadow: 0 0 0 0px rgba(71, 85, 105, 0); }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+
+    <!-- Experiment Fallback Card -->
+    <div class="w-full max-w-4xl bg-white shadow-2xl rounded-xl overflow-hidden md:flex">
+        
+        <!-- Left Panel: Status and Metadata -->
+        <div class="md:w-1/3 p-6 md:p-10 bg-gray-800 text-white flex flex-col justify-between">
+            <div>
+                <span class="fallback-badge inline-block px-3 py-1 text-xs font-semibold uppercase tracking-wider bg-gray-700 text-gray-200 rounded-full mb-4">
+                    Level 3 Fallback Page
+                </span>
+                
+                <h1 class="text-3xl font-extrabold mb-4">{{ experiment.name | default('Untitled Experiment') }}</h1>
+                
+                <p class="text-gray-400 text-sm mb-6">
+                    This experiment has been successfully configured and activated, but it does not have a 
+                    custom HTML or Python route defined for this URL path.
+                </p>
+
+                <div class="text-sm space-y-3">
+                    <p><strong>Slug ID:</strong> <span class="font-mono text-teal-400">{{ experiment.slug | default('N/A') }}</span></p>
+                    <p><strong>Status:</strong> <span class="capitalize text-green-400 font-bold">{{ experiment.status | default('Draft') }}</span></p>
+                    <p><strong>Auth Required:</strong> 
+                        {% if experiment.auth_required %}
+                            <span class="text-red-400">Yes</span>
+                        {% else %}
+                            <span class="text-green-400">No</span>
+                        {% endif %}
+                    </p>
+                    <p><strong>Data Scope:</strong> 
+                        <span class="text-yellow-400 font-mono text-xs">
+                            {{ experiment.data_scope | join(', ') | default('self') }}
+                        </span>
+                    </p>
+                </div>
+            </div>
+
+            <!-- User Status Footer -->
+            <div class="mt-8 pt-6 border-t border-gray-700">
+                <p class="text-xs text-gray-400">Current User:</p>
+                {% if current_user %}
+                    <p class="font-medium text-gray-200 truncate">{{ current_user.email | default('Authenticated User') }}</p>
+                    {% if current_user.is_admin %}
+                        <span class="text-xs font-semibold text-teal-300">ADMIN</span>
+                    {% endif %}
+                {% else %}
+                    <p class="text-yellow-400">Guest (Not Logged In)</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Right Panel: Description and Call to Action -->
+        <div class="md:w-2/3 p-6 md:p-10 bg-gray-50 flex flex-col justify-center">
+            
+            <h2 class="text-2xl font-bold text-gray-900 mb-4">Description</h2>
+            
+            <p class="text-gray-600 mb-8 leading-relaxed italic">
+                {% if experiment.description %}
+                    "{{ experiment.description }}"
+                {% else %}
+                    No description provided for this experiment. Please update the configuration in the Admin Panel.
+                {% endif %}
+            </p>
+
+            <h3 class="text-xl font-semibold text-gray-800 mb-4 border-b pb-2">Next Steps for Development</h3>
+
+            <ul class="text-gray-700 space-y-3 list-disc pl-5">
+                <li>
+                    <strong>Implement Level 1 (SSR):</strong> Add a custom `index` function with an `@bp.get('/')` route to the experiment's Python module (`experiments/{{ experiment.slug }}/__init__.py`).
+                </li>
+                <li>
+                    <strong>Implement Level 2 (SPA):</strong> Create a single-page application entry point at 
+                    <span class="font-mono text-sm bg-yellow-100 rounded px-1">experiments/{{ experiment.slug }}/static/index.html</span>.
+                </li>
+            </ul>
+
+            <!-- Admin Link Button -->
+            {% if current_user.is_admin %}
+                <div class="mt-10">
+                    <a href="{{ request.url_for('configure_experiment_get', slug_id=experiment.slug) }}" 
+                       class="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-lg shadow-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition duration-150 ease-in-out">
+                        Go to Admin Configuration
+                        <svg class="ml-2 -mr-1 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v1.5a1 1 0 01-1 1H9a1 1 0 01-1-1V2a1 1 0 01.69-.954l.738-.246a1 1 0 01.372 0l.738.246zm-6.684 5.378a1 1 0 10-1.42 1.42L5 8.42l-1.894 1.894a1 1 0 101.42 1.42L6.42 9.84l1.894 1.894a1 1 0 001.42-1.42L7.84 8.42l1.894-1.894a1 1 0 00-1.42-1.42L6.42 7.04l-1.894-1.894z" clip-rule="evenodd" />
+                        </svg>
+                    </a>
+                </div>
+            {% endif %}
+
+        </div>
+
+    </div>
+
+</body>
+</html>

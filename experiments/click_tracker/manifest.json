@@ -1,0 +1,27 @@
+{
+  "name": "Click Tracker",
+  "description": "Tracks user clicks and generates embeddings.",
+  "status": "active",
+  "auth_required": false,
+  "data_scope": [
+    "self"
+  ],
+  "managed_indexes": {
+    "clicks": [
+      {
+        "name": "clicks_vector_embedding_index",
+        "type": "vectorSearch",
+        "definition": {
+          "fields": [
+            {
+              "type": "vector",
+              "path": "user_embedding",
+              "numDimensions": 1536,
+              "similarity": "cosine"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

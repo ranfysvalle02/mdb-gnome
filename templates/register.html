@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register - LABS</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 40px; background: #f4f7f6; display: grid; place-items: center; min-height: 80vh; }
+        .login-box { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 30px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); min-width: 300px; }
+        h1 { text-align: center; color: #333; }
+        form { display: flex; flex-direction: column; gap: 15px; }
+        label { font-weight: 600; color: #555; }
+        input[type="email"], input[type="password"] { padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; }
+        button { background: #007bff; color: white; padding: 12px; border: none; border-radius: 4px; font-size: 1em; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        .flash { padding: 15px; margin-bottom: 20px; border-radius: 4px; }
+        .flash.danger { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .links { margin-top: 15px; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <h1>Create Account</h1>
+        
+        {% if error %}
+            <div class="flash danger">{{ error }}</div>
+        {% endif %}
+
+        <form method="POST">
+            <label for="email">Email</label>
+            <input type="email" name="email" id="email" required>
+            
+            <label for="password">Password</label>
+            <input type="password" name="password" id="password" required>
+            
+            <button type="submit">Register</button>
+        </form>
+        <div class="links">
+            <a href="{{ request.url_for('login_get') }}">Already have an account? Login</a>
+        </div>
+    </div>
+</body>
+</html>

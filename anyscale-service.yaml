@@ -1,0 +1,103 @@
+# anyscale-service.yaml
+# -----------------------------------------------------------------------------
+# This is the single configuration file to deploy your full
+# Modular Labs application (FastAPI + Ray Actors) to Anyscale.
+#
+# To Deploy:
+# 1. Create your secrets (see "env_vars" section below).
+# 2. Run: anyscale service deploy -f anyscale-service.yaml
+# -----------------------------------------------------------------------------
+
+name: modular-labs-prod
+
+# -----------------------------------------------------------------------------
+# 1. COMPUTE CONFIG (WHAT MACHINES TO USE)
+# We define the machine types for the main app (head) and the
+# experiment actors (workers).
+# -----------------------------------------------------------------------------
+inline_compute_config:
+  # The "head node" runs the main FastAPI app and coordinates the cluster.
+  head_node:
+    instance_type: "m5.large" # Standard 2 CPU, 8GB RAM machine.
+
+  # "Worker nodes" are for your ExperimentActors.
+  worker_nodes:
+    # This is a pool of on-demand CPU workers
+    - name: "cpu_worker_pool"
+      instance_type: "m5.large"
+      # This is the key for cost-effectiveness:
+      min_workers: 0
+      # Scale up to 5 machines if your experiments get busy:
+      max_workers: 5
+      
+    # (Optional) Uncomment this block if your experiments need GPUs
+    # - name: "gpu_worker_pool"
+    #   instance_type: "g4dn.xlarge" # A standard GPU machine
+    #   min_workers: 0
+    #   max_workers: 2
+
+# -----------------------------------------------------------------------------
+# 2. BASE ENVIRONMENT (WHAT TO INSTALL)
+# This is the base environment for all nodes in the cluster.
+# -----------------------------------------------------------------------------
+runtime_env:
+  # 1. Install all Python packages from your requirements file
+  pip:
+    - -r requirements.txt
+
+  # 2. Install system-level packages (from your Dockerfile)
+  apt_packages:
+    - fonts-liberation
+
+  # 3. Upload all your code from the current directory
+  working_dir: "."
+  # We exclude common local files to speed up uploads
+  excludes:
+    - ".git"
+    - ".gitignore"
+    - ".vscode"
+    - "__pycache__"
+    - ".venv"
+    - "venv"
+    - "*.pyc"
+
+# -----------------------------------------------------------------------------
+# 3. SERVICE CONFIG (WHAT TO RUN)
+# This tells Ray Serve to start your FastAPI application.
+# -----------------------------------------------------------------------------
+serve_config:
+  applications:
+    - name: main-web-app
+      # This is the magic entrypoint: "filename:fastapi_app_object"
+      import_path: main:app
+      route_prefix: "/"
+      
+      # Define the environment variables FOR THE FASTAPI APP
+      runtime_env:
+        env_vars:
+          # --- !! ACTION REQUIRED !! ---
+          # You MUST create these secrets in Anyscale *before* deploying.
+          #
+          # Run these commands in your terminal:
+          # $ anyscale login
+          # $ anyscale secret create MONGO_URI_PROD --value "mongodb+srv://user:pass@your-atlas-cluster.mongodb.net/labs_db_prod"
+          # $ anyscale secret create FLASK_SECRET_PROD --value "$(openssl rand -hex 32)"
+          # $ anyscale secret create ADMIN_PASS_PROD --value "YourNewStrongPassword"
+          # ----------------------------------
+          
+          # --- Pulls from Anyscale Secrets ---
+          MONGO_URI: $MONGO_URI_PROD
+          FLASK_SECRET_KEY: $FLASK_SECRET_PROD
+          ADMIN_PASSWORD: $ADMIN_PASS_PROD
+          
+          # --- Non-secret config ---
+          # (Overrides the default "admin@example.com")
+          ADMIN_EMAIL: "admin@your-production-domain.com"
+
+      # This configures how the main FastAPI app itself is run and scaled
+      deployments:
+        - name: FastAPIWrapper # This is the default name Ray Serve gives the FastAPI app
+          # Run 2 copies of the main web server for high availability
+          num_replicas: 2
+          ray_actor_options:
+            num_cpus: 1 # Assign 1 CPU core to each copy

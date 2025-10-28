@@ -1,0 +1,31 @@
+{
+  "name": "Stats Dashboard",
+  "description": "Aggregates data from other experiments.",
+  "status": "active",
+  "auth_required": true,
+  "data_scope": [
+    "self",
+    "click_tracker"
+  ],
+  "managed_indexes": {
+    "logs": [
+      {
+        "name": "logs_timestamp_and_user",
+        "type": "regular",
+        "keys": [
+          [
+            "timestamp",
+            -1
+          ],
+          [
+            "user",
+            1
+          ]
+        ],
+        "options": {
+          "background": true
+        }
+      }
+    ]
+  }
+}

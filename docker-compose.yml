@@ -1,0 +1,97 @@
+# Docker Compose configuration for Modular Labs (Local Development)
+# This file sets up the FastAPI app, MongoDB database, and Ray cluster head.
+
+services:
+  # --------------------------------------------------------------------------
+  # FastAPI Web Application (The "Boss")
+  # --------------------------------------------------------------------------
+  api:
+    build:
+      context: . # This specifies the path to the build context (where to look for the code and Dockerfile)
+      dockerfile: compose.Dockerfile
+    container_name: mlab-api
+    platform: linux/arm64 # Match your M1 Mac
+    ports:
+      - "5001:10000"
+    volumes:
+      - .:/app # Mounts your code into the container
+    environment:
+      - PORT=10000
+      - WORKERS=1 # Reload works best with 1 worker
+      - MONGO_URI=mongodb://mongo:27017/?retryWrites=true&w=majority&directConnection=true
+      - RAY_ADDRESS=ray://ray-head:10001
+      # ------------------------------------------
+      # --- IMPORTANT: Set these for security ---
+      # You should generate a real secret: openssl rand -hex 32
+      - FLASK_SECRET_KEY=a_very_insecure_default_dev_secret_123! # CHANGE ME
+      - ADMIN_EMAIL=admin@example.com
+      - ADMIN_PASSWORD=password123 
+      - G_NOME_ENV=isolated # Ensure isolated mode for compose
+      - ENABLE_REGISTRATION=false
+    command: >
+      uvicorn main:app
+      --host 0.0.0.0
+      --port 10000
+      --reload
+    depends_on:
+      mongo:
+        condition: service_healthy
+      ray-head:
+        condition: service_healthy # Wait for Ray head client port (10001)
+
+  # --------------------------------------------------------------------------
+  # Ray Head Node (The "Factory Manager")
+  # --------------------------------------------------------------------------
+  ray-head:
+    image: rayproject/ray:2.50.0-py310 # Using 2.50.0 for ARM64 support
+    container_name: mlab-ray-head
+    platform: linux/arm64 # Ensure ARM64 platform
+    ports:
+      - "10001:10001" # Ray Client Server
+      - "8265:8265"   # Ray Dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock # Needed for Ray's Docker-in-Docker (less reliable locally)
+      - .:/app # Mounts code so Ray head can access experiment modules
+    environment:
+      - RAY_ENABLE_RUNTIME_ENV=1
+      - RAY_RUNTIME_ENV_WORKING_DIR=/app # Tell Ray where the code is
+    command: [
+      "ray", "start", "--head",
+      "--port=6379", # Internal Ray port
+      "--ray-client-server-port=10001",
+      "--dashboard-host=0.0.0.0",
+      "--disable-usage-stats",
+      "--block" # Keep the container running
+    ]
+    shm_size: 4gb # Increased shared memory often helps Ray
+    healthcheck:
+      # Check the Ray Client Server port is listening
+      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 10001))"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+      start_period: 5s
+
+  # --------------------------------------------------------------------------
+  # MongoDB Database
+  # --------------------------------------------------------------------------
+  mongo:
+    image: mongodb/mongodb-atlas-local:latest # Or a specific MongoDB version if needed
+    container_name: mlab-mongo
+    platform: linux/arm64 # Ensure ARM64 platform
+    ports:
+      - "27017:27017" # Map host port to container port
+    volumes:
+      - mongo-data:/data/db # Persist data across restarts
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.hello()", "--quiet"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+# --------------------------------------------------------------------------
+# Named Volumes
+# --------------------------------------------------------------------------
+volumes:
+  mongo-data: # Define the volume for MongoDB data persistence

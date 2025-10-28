@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Stats Dashboard</title>
+    <style>
+        body { font-family: 'Inter', sans-serif; padding: 20px; background-color: #f8f9fa; }
+        .container { background: #ffffff; padding: 30px; border-radius: 12px; max-width: 600px; margin: 40px auto; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); }
+        h2 { font-size: 1.8rem; color: #343a40; border-bottom: 2px solid #dee2e6; padding-bottom: 10px; margin-bottom: 25px; }
+        .stat-box { margin-top: 20px; padding: 15px; border-radius: 8px; border-left: 5px solid; }
+        .stat-box p { margin: 0; font-size: 1.1rem; line-height: 1.5; }
+        .stat-box strong { font-size: 1.2em; }
+        .self-log { border-left-color: #fd7e14; background-color: #fff9e6; } /* Orange */
+        .self-log strong { color: #d95f02; }
+        .cross-read { border-left-color: #198754; background-color: #e8f5e9; } /* Green */
+        .cross-read strong { color: #146c43; }
+        .user-info { margin-top: 30px; font-size: 0.9em; color: #6c757d; text-align: right; }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <h2>Experiment: Stats Dashboard</h2>
+
+        <div class="stat-box self-log">
+            <p>
+                This page view recorded <strong>(scoped to self)</strong>. Total views:
+                <strong>{{ my_logs }}</strong>
+            </p>
+        </div>
+
+        <div class="stat-box cross-read">
+            <p>
+                Total clicks recorded across
+                <strong>permitted experiments</strong>:
+                <strong>{{ total_clicks }}</strong>
+            </p>
+        </div>
+
+        {% if current_user %}
+            <p class="user-info">Logged in as: {{ current_user.email }} {% if current_user.is_admin %}(Admin){% endif %}</p>
+        {% else %}
+             <p class="user-info">Viewing as Guest</p>
+        {% endif %}
+    </div>
+</body>
+</html>
