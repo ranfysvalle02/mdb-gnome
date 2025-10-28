@@ -353,7 +353,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 ![](mdb-genome-configure.png)  
 
-That's it. You now have a fully self-contained experiment. You log into the `/admin` panel, find `"click_tracker"` in the list of discovered experiments, click **"Configure"**, set the status to `"active"`, and hit **"Save & Activate."**  
+That's it. You now have a fully self-contained experiment. You log into the `/admin` panel, find `"click_tracker"` in the list of discovered experiments, click **"Configure"**, set the status to `"active"`, and hit **"Save"**  
   
 Your experiment is now live at `/experiments/click_tracker/`, secure, and sandboxed, all without writing a single line of boilerplate.  
   
