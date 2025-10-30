@@ -268,7 +268,7 @@ def generate_chart_base64(data, color="#FF6868") -> str:
     ax.set_xticks([0, len(arr)-1])
     ax.set_xticklabels(["Start", "End"])
     ax.spines["top"].set_visible(False)
-    ax.spies["right"].set_visible(False)
+    ax.spines["right"].set_visible(False)
     ax.spines["bottom"].set_color("#23435B")
     ax.spines["left"].set_color("#23435B")
 

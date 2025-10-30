@@ -288,9 +288,6 @@ class ExperimentActor:
             "b64_r": b64_r, "b64_g": b64_g, "b64_b": b64_b,
             "json_data_pretty": doc_json,
             "ai_neighbors_html": neighbors_html,
-            #
-            # THE STRAY '.' WAS HERE. IT IS NOW REMOVED.
-            #
             "ai_classification": ai_class,
             "ai_summary": ai_sum,
             "llm_analysis_prompt": ephemeral_prompt,
