@@ -462,50 +462,107 @@ async def _ensure_db_indices(db: AsyncIOMotorDatabase):
         logger.error(f" Failed to ensure core MongoDB indexes: {e}", exc_info=True)  
   
   
+
 async def _seed_admin(app: FastAPI):  
     db: AsyncIOMotorDatabase = app.state.mongo_db  
     authz: Optional[AuthorizationProvider] = getattr(app.state, "authz_provider", None)  
   
-    if await db.users.count_documents({"is_admin": True}) > 0:  
-        logger.info("Admin user already exists. Skipping seeding.")  
-        return  
+    # 1) Fetch all users who have is_admin=True  
+    admin_users: List[Dict[str, Any]] = await db.users.find({"is_admin": True}).to_list(length=None)  
   
-    logger.warning(" No admin user found. Seeding default administrator...")  
-    email = ADMIN_EMAIL_DEFAULT  
-    password = ADMIN_PASSWORD_DEFAULT  
+    if not admin_users:  
+        # ─────────────────────────────────────────────────────────  
+        # No admin user found, so create the DEFAULT from ENV vars  
+        # ─────────────────────────────────────────────────────────  
+        logger.warning(" No admin user found. Seeding default administrator...")  
   
-    try:  
-        pwd_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())  
-    except Exception as e:  
-        logger.error(f" Failed to hash default admin password: {e}", exc_info=True)  
-        return  
+        email = ADMIN_EMAIL_DEFAULT  
+        password = ADMIN_PASSWORD_DEFAULT  
   
-    try:  
-        await db.users.insert_one(  
-            {"email": email, "password_hash": pwd_hash, "is_admin": True, "created_at": datetime.datetime.utcnow()}  
-        )  
-        logger.warning(f" Default admin user '{email}' created.")  
-        logger.warning(" IMPORTANT: Change the default admin password immediately!")  
-    except Exception as e:  
-        logger.error(f" Failed to insert default admin user '{email}': {e}", exc_info=True)  
-        return  
-  
-    if (authz and hasattr(authz, "add_role_for_user") and  
-            hasattr(authz, "add_policy") and hasattr(authz, "save_policy")):  
-        logger.info(f"AuthZ Provider '{authz.__class__.__name__}' supports policy seeding.")  
         try:  
-            await authz.add_role_for_user(email, "admin")  # type: ignore  
-            await authz.add_policy("admin", "admin_panel", "access")  # type: ignore  
-            if asyncio.iscoroutinefunction(authz.save_policy):  
-                await authz.save_policy()  # type: ignore  
-            else:  
-                authz.save_policy()  # type: ignore  
-            logger.info(f" Default policies seeded for admin user '{email}'.")  
+            pwd_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())  
         except Exception as e:  
-            logger.error(f" Failed to seed default policies: {e}", exc_info=True)  
-    else:  
-        logger.warning(f"AuthZ Provider '{authz.__class__.__name__ if authz else 'None'}' does not support auto policy seeding.")  
+            logger.error(f" Failed to hash default admin password: {e}", exc_info=True)  
+            return  
   
+        try:  
+            await db.users.insert_one(  
+                {  
+                    "email": email,  
+                    "password_hash": pwd_hash,  
+                    "is_admin": True,  
+                    "created_at": datetime.datetime.utcnow(),  
+                }  
+            )  
+            logger.warning(f" Default admin user '{email}' created.")  
+            logger.warning(" IMPORTANT: Change the default admin password immediately!")  
+  
+            # Add that newly-created user to admin role in AuthZ  
+            if (  
+                authz  
+                and hasattr(authz, "add_role_for_user")  
+                and hasattr(authz, "add_policy")  
+                and hasattr(authz, "save_policy")  
+            ):  
+                logger.info(f"AuthZ Provider '{authz.__class__.__name__}' supports policy seeding.")  
+                try:  
+                    await authz.add_role_for_user(email, "admin")  # type: ignore  
+                    await authz.add_policy("admin", "admin_panel", "access")  # type: ignore  
+                    if asyncio.iscoroutinefunction(authz.save_policy):  
+                        await authz.save_policy()  # type: ignore  
+                    else:  
+                        authz.save_policy()  # type: ignore  
+                    logger.info(f" Default policies seeded for admin user '{email}'.")  
+                except Exception as e:  
+                    logger.error(f" Failed to seed default policies: {e}", exc_info=True)  
+            else:  
+                logger.warning(  
+                    "AuthZ Provider not available or does not support auto policy seeding."  
+                )  
+  
+        except Exception as e:  
+            logger.error(f" Failed to insert default admin user '{email}': {e}", exc_info=True)  
+  
+    else:  
+        # ─────────────────────────────────────────────────────────  
+        # At least one admin user is already in the database  
+        # Ensure Casbin role/policies are also in sync for each.  
+        # ─────────────────────────────────────────────────────────  
+        logger.info(  
+            f"Found {len(admin_users)} admin user(s) already in DB. "  
+            "Ensuring each has Casbin admin role + policy."  
+        )  
+        if (  
+            authz  
+            and hasattr(authz, "add_role_for_user")  
+            and hasattr(authz, "add_policy")  
+            and hasattr(authz, "save_policy")  
+        ):  
+            try:  
+                # Ensure "admin -> admin_panel:access" policy is present  
+                await authz.add_policy("admin", "admin_panel", "access")  # type: ignore  
+  
+                # For each user with is_admin=True, forcibly add "admin" role  
+                for user_doc in admin_users:  
+                    email = user_doc["email"]  
+                    await authz.add_role_for_user(email, "admin")  # type: ignore  
+                    logger.debug(f"Synced admin role for existing user '{email}'.")  
+  
+                # Save policy changes  
+                if asyncio.iscoroutinefunction(authz.save_policy):  
+                    await authz.save_policy()  # type: ignore  
+                else:  
+                    authz.save_policy()  # type: ignore  
+  
+                logger.info(" All existing admin users synced with Casbin roles/policies.")  
+  
+            except Exception as e:  
+                logger.error(f" Failed to sync admin roles/policies: {e}", exc_info=True)  
+        else:  
+            logger.warning(  
+                "AuthZ Provider not available or does not support auto policy seeding. "  
+                "Existing admin user(s) may not have Casbin roles!"  
+            )  
   
 async def _seed_db_from_local_files(db: AsyncIOMotorDatabase):  
     logger.info("Checking for local manifests to seed database...")  
