@@ -1,0 +1,7 @@
+{  
+  "name": "Hello Ray",  
+  "description": "A minimal example showing how Ray Actors integrate with g.nome.",  
+  "status": "active",  
+  "auth_required": false,  
+  "data_scope": ["self"]  
+}  
