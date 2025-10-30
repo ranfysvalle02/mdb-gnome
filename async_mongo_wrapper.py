@@ -37,7 +37,7 @@ from pymongo.results import (
     DeleteResult
 )
 from pymongo.operations import SearchIndexModel
-from pymongo.errors import OperationFailure
+from pymongo.errors import OperationFailure, CollectionInvalid
 from pymongo import ASCENDING, DESCENDING, TEXT
 
 # --- FIX: Configure logger *before* first use ---
@@ -118,13 +118,21 @@ class AsyncAtlasIndexManager:
             Exception: For other database or build-level errors.
         """
         
-        # --- 🚀 ROBUSTNESS FIX ---
+        # --- 🚀 FIX: Handle 'Collection already exists' gracefully ---
         # Ensure the collection exists *before* trying to create an index on it.
-        # This is idempotent and prevents NamespaceNotFound errors.
         try:
             coll_name = self._collection.name
             await self._collection.database.create_collection(coll_name)
             logger.debug(f"Ensured collection '{coll_name}' exists.")
+        except CollectionInvalid as e:
+            # Catch the specific error raised by pymongo when the collection exists
+            if "already exists" in str(e):
+                logger.warning(f"Prerequisite collection '{coll_name}' already exists. Continuing index creation.")
+                pass # This is the expected and harmless condition
+            else:
+                # Re-raise for other CollectionInvalid errors
+                logger.error(f"Failed to ensure collection '{self._collection.name}' exists: {e}")
+                raise Exception(f"Failed to create prerequisite collection '{self._collection.name}': {e}") from e
         except Exception as e:
             logger.error(f"Failed to ensure collection '{self._collection.name}' exists: {e}")
             # If we can't even create the collection, we must fail.
@@ -525,7 +533,7 @@ class ScopedCollectionWrapper:
         if not filter:
             return scope_filter
             
-        # If filter exists, combine them to enforce the intersection
+        # If filter exists, combine them robustly with $and
         return {"$and": [filter, scope_filter]}
 
     async def insert_one(
