@@ -1,26 +1,36 @@
+# standalone_main.py.jinja2  
 #!/usr/bin/env python3  
 # -*- coding: utf-8 -*-  
   
-# Standalone FastAPI launcher for experiment '{{ slug_id }}'  
-# - No Ray, no MongoDB, no Auth, no Cloud  
-# - Uses local JSON files (db_config.json, db_collections.json)  
-# - Provides stubs for core_deps so the experiment router imports cleanly  
-# - Serves an inline fallback for the root route if no "index.html" in local templates.  
+"""  
+Standalone FastAPI launcher for experiment '{{ slug_id }}'.  
+  
+Includes robust in-memory stubs for:  
+  - Basic user "auth" and "admin" checks (fake in-memory handler)  
+  - Minimal "DB" logic for storing documents in memory  
+  - Simple "index management" references (no real search, for demonstration)  
+  - Fake "ray" stubs so calls like ray.get_actor() won't crash  
+  
+You can replace or expand these stubs with your own real logic!  
+"""  
   
 import os  
 import sys  
 import json  
 import logging  
 import types  
+import hashlib  
 import asyncio  
 from pathlib import Path  
-from typing import Any, Dict, List, Optional  
+from typing import Any, Dict, List, Optional, Union  
   
-from fastapi import FastAPI, Request  
+from fastapi import FastAPI, Request, HTTPException, status, Depends  
 from fastapi.responses import HTMLResponse, JSONResponse  
 from fastapi.staticfiles import StaticFiles  
   
+# --------------------------------------------------------------------------  
 # Logging  
+# --------------------------------------------------------------------------  
 logging.basicConfig(  
     level=os.getenv("LOG_LEVEL", "INFO").upper(),  
     format="%(asctime)s | standalone | %(levelname)-8s | %(message)s",  
@@ -28,13 +38,16 @@ logging.basicConfig(
 )  
 logger = logging.getLogger("standalone")  
   
+# --------------------------------------------------------------------------  
+# Basic constants and paths  
+# --------------------------------------------------------------------------  
 BASE_DIR = Path(__file__).resolve().parent  
 SLUG = "{{ slug_id }}"  
 EXPERIMENT_DIR = BASE_DIR / "experiments" / SLUG  
   
-# -----------------------------------------------------------------------------  
-# 1) Load local JSON "DB"  
-# -----------------------------------------------------------------------------  
+# --------------------------------------------------------------------------  
+# 1) Load local JSON data from db_config.json and db_collections.json  
+# --------------------------------------------------------------------------  
 def _load_json(path: Path, default: Any) -> Any:  
     try:  
         with path.open("r", encoding="utf-8") as f:  
@@ -45,24 +58,28 @@ def _load_json(path: Path, default: Any) -> Any:
         logger.error(f"Failed to read '{path.name}': {e}")  
     return default  
   
-CONFIG_JSON = _load_json(BASE_DIR / "db_config.json", {})  
-COLLECTIONS_JSON: Dict[str, List[Dict[str, Any]]] = _load_json(  
-    BASE_DIR / "db_collections.json", {}  
-)  
+DB_CONFIG: Dict[str, Any] = _load_json(BASE_DIR / "db_config.json", {})  
+DB_COLLECTIONS: Dict[str, List[Dict[str, Any]]] = _load_json(BASE_DIR / "db_collections.json", {})  
   
-# -----------------------------------------------------------------------------  
-# 2) Minimal in-memory "DB" with a Motor-like async interface  
-# -----------------------------------------------------------------------------  
+# --------------------------------------------------------------------------  
+# 2) In-memory database stubs (robust enough for basic usage)  
+# --------------------------------------------------------------------------  
 class InMemoryCollection:  
-    def __init__(self, name: str, docs: Optional[List[Dict[str, Any]]] = None):  
+    """  
+    In-memory doc store.   
+    - Each doc is a dict, stored in a list.   
+    - Searching is partial: direct equality or '$in'.  
+    - Insert, update, delete are supported.  
+    """  
+  
+    def __init__(self, name: str, initial_docs: Optional[List[Dict[str, Any]]] = None):  
         self.name = name  
-        self._docs: List[Dict[str, Any]] = [dict(d) for d in (docs or [])]  
+        self.docs = initial_docs[:] if initial_docs else []  
         self._next_id = 1  
   
-    def _match(self, doc: Dict[str, Any], filt: Optional[Dict[str, Any]]) -> bool:  
-        if not filt:  
-            return True  
-        for k, v in (filt or {}).items():  
+    def _match_filter(self, doc: Dict[str, Any], query: Dict[str, Any]) -> bool:  
+        # Basic matching for { key: value } or { key: {"$in": [...]} }  
+        for k, v in query.items():  
             if isinstance(v, dict) and "$in" in v:  
                 if doc.get(k) not in v["$in"]:  
                     return False  
@@ -71,56 +88,63 @@ class InMemoryCollection:
                     return False  
         return True  
   
-    async def find_one(self, filt: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:  
-        for d in self._docs:  
-            if self._match(d, filt):  
+    async def find_one(self, filt: Dict[str, Any]) -> Optional[Dict[str, Any]]:  
+        for d in self.docs:  
+            if self._match_filter(d, filt):  
                 return dict(d)  
         return None  
   
     async def find(self, filt: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:  
-        return [dict(d) for d in self._docs if self._match(d, filt)]  
+        if not filt:  
+            return [dict(d) for d in self.docs]  
+        return [dict(d) for d in self.docs if self._match_filter(d, filt)]  
   
     async def insert_one(self, doc: Dict[str, Any]) -> Dict[str, Any]:  
-        new_doc = dict(doc)  
-        if "_id" not in new_doc:  
-            new_doc["_id"] = str(self._next_id)  
+        obj = dict(doc)  
+        if "_id" not in obj:  
+            # Generate a naive auto-ID  
+            obj["_id"] = f"{self._next_id}"  
             self._next_id += 1  
-        self._docs.append(new_doc)  
-        return {"inserted_id": new_doc["_id"]}  
+        self.docs.append(obj)  
+        return {"inserted_id": obj["_id"]}  
   
     async def update_one(self, filt: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, int]:  
-        matched = 0  
-        modified = 0  
-        for i, d in enumerate(self._docs):  
-            if self._match(d, filt):  
+        matched, modified = 0, 0  
+        set_data = update.get("$set", {})  
+        for i, d in enumerate(self.docs):  
+            if self._match_filter(d, filt):  
                 matched += 1  
-                if "$set" in update:  
-                    upd = dict(d)  
-                    upd.update(update["$set"])  
-                    self._docs[i] = upd  
+                if set_data:  
+                    # Merge new fields  
+                    updated = dict(d)  
+                    updated.update(set_data)  
+                    self.docs[i] = updated  
                     modified += 1  
         return {"matched_count": matched, "modified_count": modified}  
   
     async def delete_one(self, filt: Dict[str, Any]) -> Dict[str, int]:  
-        for i, d in enumerate(self._docs):  
-            if self._match(d, filt):  
-                del self._docs[i]  
+        for i, d in enumerate(self.docs):  
+            if self._match_filter(d, filt):  
+                del self.docs[i]  
                 return {"deleted_count": 1}  
         return {"deleted_count": 0}  
   
   
-class InMemoryScopedDB:  
-    def __init__(self, initial: Dict[str, List[Dict[str, Any]]]):  
-        self._collections: Dict[str, InMemoryCollection] = {  
-            name: InMemoryCollection(name, docs) for name, docs in (initial or {}).items()  
-        }  
+class InMemoryDB:  
+    """  
+    Acts as a single "database" containing multiple InMemoryCollection objects.  
+    """  
   
-    def __getitem__(self, name: str) -> InMemoryCollection:  
-        if name not in self._collections:  
-            self._collections[name] = InMemoryCollection(name, [])  
-        return self._collections[name]  
+    def __init__(self, collections_data: Dict[str, List[Dict[str, Any]]]):  
+        self.collections: Dict[str, InMemoryCollection] = {}  
+        for name, docs in collections_data.items():  
+            self.collections[name] = InMemoryCollection(name, docs)  
   
-    # Some wrappers expect .collection(name) or .get_collection(name)  
+    def __getitem__(self, key: str) -> InMemoryCollection:  
+        if key not in self.collections:  
+            self.collections[key] = InMemoryCollection(key, [])  
+        return self.collections[key]  
+  
     def collection(self, name: str) -> InMemoryCollection:  
         return self[name]  
   
@@ -128,187 +152,192 @@ class InMemoryScopedDB:
         return self[name]  
   
   
-INMEM_DB = InMemoryScopedDB(COLLECTIONS_JSON)  
+# Build a single in-memory DB instance for the entire app  
+INMEM_DB = InMemoryDB(DB_COLLECTIONS)  
   
-# -----------------------------------------------------------------------------  
-# 3) Provide stub "core_deps" module so experiment imports work (no auth/no db)  
-# -----------------------------------------------------------------------------  
+# --------------------------------------------------------------------------  
+# 3) "core_deps" stubs for robust offline usage  
+#    (auth, require_admin, get_scoped_db)  
+# --------------------------------------------------------------------------  
 core_deps = types.ModuleType("core_deps")  
   
-# Return a fixed offline user; you can change to None for an “un-auth’d” user  
-OFFLINE_USER = {"email": "offline@example.com", "is_admin": True, "user_id": "offline"}  
+# A trivial in-memory user store, for demonstration:  
+# In production, you'd store hashed passwords & do real checks.  
+FAKE_USERS = {  
+    "admin@example.com": {  
+        "password_hash": hashlib.sha256(b"admin123").hexdigest(),  
+        "is_admin": True,  
+        "user_id": "1",  
+    },  
+    "user@example.com": {  
+        "password_hash": hashlib.sha256(b"user123").hexdigest(),  
+        "is_admin": False,  
+        "user_id": "2",  
+    },  
+}  
   
-def get_current_user():  
-    return OFFLINE_USER  
+async def get_current_user(token: str = None) -> Optional[Dict[str, Any]]:  
+    """  
+    Very naive approach: expects a “token” that's actually an email address.  
+    If found in FAKE_USERS, we treat them as the current user.  
+    """  
+    if token and token in FAKE_USERS:  
+        user_info = {"email": token}  
+        user_info.update(FAKE_USERS[token])  
+        return user_info  
+    return None  
   
-def get_current_user_or_redirect():  
-    return OFFLINE_USER  
+async def require_admin(current_user: Dict[str, Any] = Depends(get_current_user)):  
+    """  
+    This stub checks the user’s in-memory record for is_admin == True.  
+    If not admin, raise 403.  
+    """  
+    if not current_user or not current_user.get("is_admin"):  
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required.")  
+    return current_user  
   
-def require_admin():  
-    return OFFLINE_USER  
-  
-def get_scoped_db():  
-    # In a real app this returns a ScopedMongoWrapper; we return our in-mem DB  
+async def get_scoped_db():  
+    """  
+    In the real app, returns a DB instance with certain read/write scopes.  
+    Here, we just share the global in-memory DB.  
+    """  
     return INMEM_DB  
   
-class ScopedMongoWrapper:  # For “from core_deps import ScopedMongoWrapper”  
+core_deps.get_current_user = get_current_user  
+core_deps.require_admin = require_admin  
+core_deps.get_scoped_db = get_scoped_db  
+  
+# If your experiment code references others, like get_current_user_or_redirect, define them:  
+async def get_current_user_or_redirect(token: str = None):  
+    user = await get_current_user(token=token)  
+    # In “real” usage, if no user, you might redirect to /auth/login  
+    return user  
+  
+core_deps.get_current_user_or_redirect = get_current_user_or_redirect  
+  
+# Also define a trivial wrapper class if code does something like `ScopedMongoWrapper(...)`  
+class ScopedMongoWrapper:  
     def __init__(self, *args, **kwargs):  
         self._db = INMEM_DB  
   
     def __getitem__(self, name: str):  
         return self._db[name]  
   
+    def collection(self, name: str):  
+        return self._db[name]  
+  
+    def get_collection(self, name: str):  
+        return self._db[name]  
+  
+core_deps.ScopedMongoWrapper = ScopedMongoWrapper  
+  
+# Insert our module into sys.modules so `from core_deps import ...` works  
+sys.modules["core_deps"] = core_deps  
+  
+# --------------------------------------------------------------------------  
+# 4) Fake index management stubs (like from 'async_mongo_wrapper')  
+# --------------------------------------------------------------------------  
+mongo_wrapper_stub = types.ModuleType("async_mongo_wrapper")  
+  
+class AsyncAtlasIndexManager:  
+    """  
+    In real usage, you might manage Atlas indexes (search, vector, etc.).  
+    Here, we store them in a dict for demonstration only.  
+    """  
+    def __init__(self, collection):  
+        self.collection = collection  
+        self.indexes: Dict[str, Dict[str, Any]] = {}  
+  
+    async def create_index(self, keys, **options):  
+        name = options.get("name", "unnamed_index")  
+        self.indexes[name] = {"keys": keys, "options": options}  
+        logger.info(f"Fake: Created index '{name}' with keys={keys} options={options}")  
+  
+    async def drop_index(self, index_name: str):  
+        self.indexes.pop(index_name, None)  
+        logger.info(f"Fake: Dropped index '{index_name}'")  
+  
+    async def get_index(self, index_name: str):  
+        return self.indexes.get(index_name)  
+  
+    # Searching or vector search is not implemented; stubs only  
+    async def create_search_index(self, name: str, definition: dict, index_type: str, wait_for_ready: bool = True):  
+        self.indexes[name] = {"definition": definition, "type": index_type}  
+        logger.info(f"Fake: Created {index_type} search index '{name}'")  
+  
+    async def update_search_index(self, name: str, definition: dict, wait_for_ready: bool = True):  
+        ix = self.indexes.get(name)  
+        if ix:  
+            ix["definition"] = definition  
+            logger.info(f"Fake: Updated search index '{name}'")  
+  
+    async def get_search_index(self, name: str):  
+        return self.indexes.get(name)  
+  
+    async def _wait_for_search_index_ready(self, index_name: str, timeout: int):  
+        # Always consider index "ready" in this stub  
+        pass  
+  
+class StubbedScopedMongoWrapper:  
+    """  
+    Another stub if your code references 'async_mongo_wrapper.ScopedMongoWrapper'.  
+    """  
+    def __init__(self, *args, **kwargs):  
+        self._db = INMEM_DB  
+  
     def get_collection(self, name: str):  
         return self._db[name]  
   
     def collection(self, name: str):  
         return self._db[name]  
   
-core_deps.get_current_user = get_current_user  
-core_deps.get_current_user_or_redirect = get_current_user_or_redirect  
-core_deps.require_admin = require_admin  
-core_deps.get_scoped_db = get_scoped_db  
-core_deps.ScopedMongoWrapper = ScopedMongoWrapper  
+setattr(mongo_wrapper_stub, "AsyncAtlasIndexManager", AsyncAtlasIndexManager)  
+setattr(mongo_wrapper_stub, "ScopedMongoWrapper", StubbedScopedMongoWrapper)  
   
-sys.modules["core_deps"] = core_deps  
+sys.modules["async_mongo_wrapper"] = mongo_wrapper_stub  
   
-# -----------------------------------------------------------------------------  
-# 4) Provide a "fake" Ray stub that truly updates the in-memory DB  
-# -----------------------------------------------------------------------------  
-#  
-# By default, your experiment code might do:  
-#     actor = ray.get_actor("my_actor_name")  
-#     await actor.record_click.remote()  
-#     count = await actor.get_count.remote()  
-#  
-# We'll store a reference to the in-memory DB. That way these calls actually  
-# increment a "clicks" doc in the "clicks" collection of INMEM_DB.  
-#  
+# --------------------------------------------------------------------------  
+# 5) A "fake Ray" module so references to ray.get_actor, etc., won't crash  
+# --------------------------------------------------------------------------  
 ray_stub = types.ModuleType("ray")  
   
-class FakeActorMethod:  
-    """Handles .method_name.remote(...) calls, e.g. record_click or get_count."""  
-    def __init__(self, method_name: str, db):  
-        self.method_name = method_name  
-        self.db = db  # our in-memory DB  
+def _stub_remote(obj):  
+    """  
+    Called if code does:   
+        MyActor = ray.remote(MyClass)  
+        actor_handle = MyActor.remote()  
+    We simply return a no-op actor that logs calls.  
+    """  
+    logger.info(f"Fake ray.remote(...) called on {obj}; returning a FakeActor class.")  
+    class FakeActor:  
+        def __init__(self, *args, **kwargs):  
+            logger.info(f"FakeActor.__init__ called with args={args}, kwargs={kwargs}")  
+        def __getattr__(self, name):  
+            async def method_stub(*a, **kw):  
+                logger.info(f"FakeActor method '{name}' called with args={a}, kwargs={kw}")  
+                return None  
+            return method_stub  
+        @classmethod  
+        def remote(cls, *a, **kw):  
+            logger.info(f"FakeActor.remote called with *{a}, **{kw}")  
+            return cls(*a, **kw)  
+    return FakeActor  
   
-    async def remote(self, *args, **kwargs):  
-        logger.info(f"FakeActorMethod '{self.method_name}' called with args={args}, kwargs={kwargs}")  
-        # We do a simple doc: {"_id": "the_click_counter", "count": <int>}.  
-        # You can adapt logic as needed for your experiment.  
+def _stub_get_actor(name, namespace=None):  
+    logger.info(f"Fake ray.get_actor('{name}', namespace='{namespace}') called -> returning a FakeActor.")  
+    return _stub_remote("Retrieving actor ref")  
   
-        if self.method_name == "record_click":  
-            # find or create doc  
-            doc = await self.db["clicks"].find_one({"_id": "the_click_counter"})  
-            if not doc:  
-                doc = {"_id": "the_click_counter", "count": 0}  
-                await self.db["clicks"].insert_one(doc)  
-            # increment  
-            doc["count"] += 1  
-            await self.db["clicks"].update_one(  
-                {"_id": "the_click_counter"}, {"$set": {"count": doc["count"]}}  
-            )  
-            return doc["count"]  
-  
-        elif self.method_name == "get_count":  
-            doc = await self.db["clicks"].find_one({"_id": "the_click_counter"})  
-            if doc:  
-                return doc["count"]  
-            return 0  
-  
-        # If code calls some other method, just return None  
-        logger.warning(f"FakeActorMethod '{self.method_name}' not recognized.")  
-        return None  
-  
-  
-class FakeActor:  
-    """A do-nothing actor that can handle calls like actor.some_method.remote()."""  
-    def __init__(self, db):  
-        self.db = db  
-  
-    def __getattr__(self, method_name: str):  
-        # Return a new FakeActorMethod, capturing method_name + ref to DB  
-        return FakeActorMethod(method_name, self.db)  
-  
-  
-def _fake_get_actor(name, namespace=None):  
-    """Pretend to get an existing actor by name. Always return a FakeActor tied to our DB."""  
-    from core_deps import get_scoped_db  # import inside function  
-    logger.info(f"fake ray.get_actor('{name}', namespace='{namespace}') -> returns FakeActor.")  
-    return FakeActor(get_scoped_db())  
-  
-  
-def _fake_remote(obj):  
-    """Pretend to create a new actor. Return a FakeActor instance, also tied to INMEM_DB."""  
-    from core_deps import get_scoped_db  
-    logger.info(f"fake ray.remote(...) called on {obj}; returning a FakeActor.")  
-    return FakeActor(get_scoped_db())  
-  
-  
-# Stubs for other Ray calls  
+ray_stub.remote = _stub_remote  
+ray_stub.get_actor = _stub_get_actor  
 ray_stub.init = lambda *args, **kwargs: None  
 ray_stub.shutdown = lambda *args, **kwargs: None  
-ray_stub.get_actor = _fake_get_actor  
-ray_stub.remote = _fake_remote  
 ray_stub.get_dashboard_url = lambda: None  
   
 sys.modules["ray"] = ray_stub  
   
-# -----------------------------------------------------------------------------  
-# 4a) Provide a tiny "async_mongo_wrapper" stub so accidental imports won't crash  
-# -----------------------------------------------------------------------------  
-mongo_wrapper_stub = types.ModuleType("async_mongo_wrapper")  
-  
-class AsyncAtlasIndexManager:  
-    """Stub class to satisfy imports of async_mongo_wrapper. All methods are no-ops."""  
-    DEFAULT_SEARCH_TIMEOUT = 15  
-  
-    def __init__(self, collection):  
-        self.collection = collection  
-  
-    async def get_index(self, index_name: str):  
-        return None  
-  
-    async def create_index(self, keys, **options):  
-        pass  
-  
-    async def drop_index(self, index_name: str):  
-        pass  
-  
-    async def get_search_index(self, index_name: str):  
-        return None  
-  
-    async def create_search_index(self, name: str, definition: dict, index_type: str, wait_for_ready: bool = True):  
-        pass  
-  
-    async def update_search_index(self, name: str, definition: dict, wait_for_ready: bool = True):  
-        pass  
-  
-    async def _wait_for_search_index_ready(self, index_name: str, timeout: int):  
-        pass  
-  
-class ScopedMongoWrapper:  
-    """Minimal stub for 'from async_mongo_wrapper import ScopedMongoWrapper'."""  
-    def __init__(self, *args, **kwargs):  
-        pass  
-  
-    def __getitem__(self, name: str):  
-        return {}  
-  
-    def get_collection(self, name: str):  
-        return {}  
-  
-    def collection(self, name: str):  
-        return {}  
-  
-setattr(mongo_wrapper_stub, "AsyncAtlasIndexManager", AsyncAtlasIndexManager)  
-setattr(mongo_wrapper_stub, "ScopedMongoWrapper", ScopedMongoWrapper)  
-  
-sys.modules["async_mongo_wrapper"] = mongo_wrapper_stub  
-  
-# -----------------------------------------------------------------------------  
-# 5) Build the standalone FastAPI app  
-# -----------------------------------------------------------------------------  
+# --------------------------------------------------------------------------  
+# 6) Build the standalone FastAPI application  
+# --------------------------------------------------------------------------  
 app = FastAPI(  
     title=f"Standalone: {SLUG}",  
     version="1.0.0-offline",  
@@ -317,39 +346,43 @@ app = FastAPI(
     openapi_url="/openapi.json",  
 )  
   
+# Mount local static files for the experiment at /experiments/<slug>/static  
+static_dir = EXPERIMENT_DIR / "static"  
+if static_dir.is_dir():  
+    app.mount(f"/experiments/{SLUG}/static", StaticFiles(directory=str(static_dir)), name=f"{SLUG}_static")  
+  
 @app.get("/", response_class=HTMLResponse)  
 async def standalone_index():  
     """  
-    Serve /experiments/<slug>/templates/index.html if present,  
-    otherwise return an inline fallback HTML string.  
+    Serve index.html from the local experiment templates, or show fallback.  
     """  
     local_index = EXPERIMENT_DIR / "templates" / "index.html"  
     if local_index.is_file():  
         return local_index.read_text(encoding="utf-8")  
   
-    # Fallback inline HTML if no local index  
-    fallback_html = f"""<!DOCTYPE html>  
-<html>  
-<head>  
-    <meta charset="utf-8">  
-    <title>Standalone: {SLUG}</title>  
-</head>  
-<body>  
-    <h2>Standalone experiment for '{SLUG}'</h2>  
-    <p>This is an inline fallback page (no local index.html found).</p>  
-</body>  
-</html>  
-"""  
-    return HTMLResponse(fallback_html, status_code=200)  
+    # Fallback if no local index  
+    return HTMLResponse(f"""  
+    <html>  
+        <head><title>Standalone: {SLUG}</title></head>  
+        <body>  
+            <h2>Standalone experiment for '{SLUG}'</h2>  
+            <p>No local index.html found; using fallback page.</p>  
+        </body>  
+    </html>  
+    """, status_code=200)  
   
-# Mount experiment static dir (if present) at /experiments/<slug>/static  
-static_dir = EXPERIMENT_DIR / "static"  
-if static_dir.is_dir():  
-    app.mount(f"/experiments/{SLUG}/static", StaticFiles(directory=str(static_dir)), name=f"{SLUG}_static")  
+# Optional debugging endpoint to see what’s in our in-memory DB  
+@app.get("/_debug/db", response_class=JSONResponse)  
+async def debug_inmemory_db():  
+    summary = {}  
+    for name, col in INMEM_DB.collections.items():  
+        summary[name] = col.docs  
+    return summary  
   
-# Import and include the experiment router ("bp") AFTER stubbing our modules  
-sys.path.insert(0, str(BASE_DIR))  # allow "experiments" package import  
-  
+# --------------------------------------------------------------------------  
+# 7) Import the experiment router AFTER stubs are in place  
+# --------------------------------------------------------------------------  
+sys.path.insert(0, str(BASE_DIR))  # So "experiments" can be imported if not already  
 try:  
     mod_name = f"experiments.{SLUG.replace('-', '_')}"  
     exp_mod = __import__(mod_name, fromlist=["bp"])  
@@ -357,15 +390,15 @@ try:
         raise RuntimeError(f"Module '{mod_name}' has no 'bp' APIRouter.")  
     exp_router = getattr(exp_mod, "bp")  
     app.include_router(exp_router, prefix=f"/experiments/{SLUG}", tags=[f"Experiment: {SLUG}"])  
-    logger.info(f"Included router for experiment '{SLUG}'.")  
+    logger.info(f"Included APIRouter for experiment '{SLUG}'.")  
+except ModuleNotFoundError:  
+    logger.warning(f"No local experiment module found for '{SLUG}'. Skipping router.")  
 except Exception as e:  
     logger.error(f"Failed to include experiment router: {e}", exc_info=True)  
   
-# A tiny debug endpoint to inspect our current in-memory data  
-@app.get("/_debug/collections", response_class=JSONResponse)  
-async def debug_collections():  
-    return {name: col._docs for name, col in INMEM_DB._collections.items()}  
-  
+# --------------------------------------------------------------------------  
+# 8) Main entrypoint  
+# --------------------------------------------------------------------------  
 if __name__ == "__main__":  
     import uvicorn  
     logger.info("Starting standalone server...")  
