@@ -1,5 +1,5 @@
-# g.nome
-
+# g.nome  
+  
 ![](gnome.png)  
   
 The Missing Engine for Your Python and MongoDB Projects—a "WordPress-Like" platform built by a builder, for builders, designed to minimize the friction between idea and live application.  
@@ -9,12 +9,12 @@ If you're a builder, you know the feeling.
 You have a "digital garden" of scripts, tools, and prototypes. It's that little AI-powered chatbot you built for your family. It's the data-entry tool you made for a friend's small business. It's that internal dashboard for tracking... something.  
   
 Each one was a great idea. Each one lives in its own isolated folder. And each one, slowly, becomes a maintenance burden.  
-
-![](gnome-graveyard.png)
-
+  
+![](gnome-graveyard.png)  
+  
 I call this the "prototype graveyard." It's where good ideas go to die, not because they weren't useful, but because the cost of maintaining them became higher than the value they provided.  
   
-I hit this wall myself. Every new idea—no matter how small—meant starting from scratch. I had to write another user login page, another password-hashing function, and another granular Role-Based Access Control (RBAC) system. And what if I wanted my new "stats dashboard" to read data from my old "click tracker"? That meant a tangled mess of hard-coded database connections and security holes waiting to happen.  
+I hit this wall myself. Every new idea—no matter how small—meant starting from scratch. I had to write another user login page, another password-hashing function, another granular Role-Based Access Control (RBAC) system. And what if I wanted my new "stats dashboard" to read data from my old "click tracker"? That meant a tangled mess of hard-coded database connections and security holes waiting to happen.  
   
 The pain wasn't in building the feature. The pain was in building the scaffolding around it.  
   
@@ -26,8 +26,8 @@ So, I built g.nome.
   
 ## Why g.nome?  
   
-- It's the "genome" for your projects: a core piece of DNA that all your experiments inherit, so they grow securely and speak the same language.  
-- It's the magical "gnome" for your "digital garden": a little helper working behind the scenes to handle the weeding (auth) and mend the fences (security), letting you focus on planting new ideas.  
+- It's the "genome" for your projects: a core piece of DNA that all your experiments inherit, so they grow securely and speak the same language.    
+- It's the magical "gnome" for your "digital garden": a little helper working behind the scenes to handle the weeding (auth) and mend the fences (security), letting you focus on planting new ideas.    
 - And for modern Python developers, it's the gateway that sits between your app and your database: a 'global' helper injected exactly where you need it, handling all the boilerplate.  
   
 g.nome is the "WordPress-like" model I've always wanted for the modern FastAPI and MongoDB stack, designed to consolidate all those scattered projects into one powerful, maintainable ecosystem.  
@@ -38,9 +38,13 @@ g.nome is the "WordPress-like" model I've always wanted for the modern FastAPI a
   
 The philosophy of g.nome is built on a simple separation of concerns:  
   
-- **The CORE (The Engine)**: This is a single, central FastAPI application (`main.py`). It provides the "engine" for everything: user authentication, the admin panel, and the dynamic loader. It's the part you only want to build once.  
-- **The "Experiments" (The Plugins)**: This is where your ideas live. An "experiment" is just a folder you drop into the `/experiments` directory. It contains its own `APIRouter` (typically exposed as `bp`), optional templates, static files, and logic.  
-- **The Admin Panel (The Control Tower)**: This is the magic. As an admin, you can log in to `/admin` and see a list of all your "experiments." You can "Activate" or "Deactivate" them, make them private (requiring a login), or configure their data-sharing rules via a web GUI.  
+- **The CORE (The Engine)**: This is a single, central FastAPI application (`main.py`). It provides the "engine" for everything: user authentication, the admin panel, Backblaze B2 (S3-compatible) integration, and the dynamic loader. It's the part you only want to build once.  
+  
+- **The "Experiments" (The Plugins)**: This is where your ideas live. An "experiment" is just a folder you drop into the `/experiments` directory. It contains its own `APIRouter` (typically exposed as `bp`), optional templates, static files, logic, and now an optional `manifest.json`.  
+  
+- **The Admin Panel (The Control Tower)**: This is the magic. As an admin, you can log in to `/admin` and see a list of all your "experiments." You can "Activate" or "Deactivate" them, set them to require login, or configure their data-sharing rules. You can even upload entire experiments `.zip` files from the Admin Panel, letting g.nome push your code to Backblaze B2 seamlessly.  
+  
+And now, if you place a `manifest.json` in any `/experiments/<slug>/` folder, g.nome will read it on startup and automatically create a matching DB entry if none exists—so local experiments "just work," no tedious config required.  
   
 This immediately solves the maintenance and authentication problem. But the real power comes from how it solves the data problem.  
   
@@ -48,24 +52,35 @@ This immediately solves the maintenance and authentication problem. But the real
   
 ## Core Features  
   
-![](mdb-gnome-isolation.png)
-
+![](mdb-gnome-isolation.png)  
+  
 - **Centralized Admin Panel**: A single GUI at `/admin` to manage all your experiments. Activate/deactivate, require authentication, and configure data-sharing with a few clicks.  
+  
 - **Automatic Data Sandboxing**: A smart `ScopedMongoWrapper` (from `async_mongo_wrapper.py`) automatically tags all database writes with an `experiment_id` and scopes all reads. Each experiment lives in its own "virtual" database by default.  
-- **Automatic Index Management**: Define required MongoDB indexes (regular, Atlas Search, Vector Search) directly in your experiment's `manifest.json`. g.nome automatically creates and manages these indexes, applying slug-based prefixes (`<slug>_`) to both collections and index names to ensure proper scoping and prevent conflicts between experiments. ⚙️ [See Appendix E](#appendix-e-index-management-via-manifestjson)
+  
+- **Automatic Index Management**: Define required MongoDB indexes (regular, Atlas Search, Vector Search) directly in your experiment's `manifest.json`. g.nome automatically creates and manages these indexes, applying slug-based prefixes (`<slug>_`) to both collections and index names to ensure proper scoping and prevent conflicts between experiments.<br/>⚙️ [See Appendix E](#appendix-e-index-management-via-manifestjson)  
+  
 - **Built-in Authentication**: Provides all core auth routes (`/auth/login`, `/auth/logout`) and dependency helpers like `get_current_user` and `get_current_user_or_redirect` (defined in `core_deps.py`) for securing your experiment's routes.  
-- **Dynamic RBAC via casbin**: A fine-grained authorization layer built-in. Define roles (`admin`, `user`) and permissions for any experiment or resource, all stored in the database and manageable without a redeploy. Policies are enforced via `require_permission()` and `require_admin()` dependencies.  
-- **Flexible Front-end Hosting**:    
-  - Custom Routes: Your experiment defines its own routes (like `@bp.get('/')`) and can render templates however it likes.    
-  - Static Files: The CORE automatically mounts any `/experiments/<slug>/static/` folder so your experiment can serve its own CSS, JS, images, etc.    
-  - Fallback: If an experiment defines no route for `/`, g.nome serves a default info page showing the experiment's metadata from its database config.  
+  
+- **Dynamic RBAC via casbin**: A fine-grained authorization layer built-in. Define roles (`admin`, `user`) and permissions for any experiment, all stored in the database and manageable without a redeploy. Policies are enforced via `require_permission()` and `require_admin()` dependencies.  
+  
+- **Flexible Front-end Hosting**:  
+  - Custom Routes: Your experiment defines its own routes (like `@bp.get('/')`) and can render templates however it likes.  
+  - Static Files: The CORE automatically mounts any `/experiments/<slug>/static/` folder so your experiment can serve its own CSS, JS, images, etc.  
+  - Manifest-based Seeding: On startup, if g.nome sees that `/experiments/<slug>/manifest.json` is *not* in the database, it seeds the database entry. Perfect for local development or offline building of new experiments.  
+  - Over-the-Air Updates: If you prefer an "upload" workflow, the Admin Panel provides a route to upload a `.zip`, and g.nome will automatically push it to Backblaze B2 (if configured), or store it locally, then reload. No restarts needed.  
+  
 - **Secure Data Sharing**: Securely grant one experiment read-only access to another's data from the Admin Panel by configuring `data_scope`.  
-- **Hybrid Compute Runtime**: Run simple experiments in-process, or "promote" heavy-duty experiments to run in isolated Ray Actors to solve dependency conflicts and scale compute. The system automatically detects Ray availability and falls back gracefully if unavailable.  
-- **Clean Migration Path**: "Graduate" a successful experiment into its own standalone application with a simple `mongodump` command—no data lock-in.  
+  
+- **Hybrid Compute Runtime**: Run simple experiments in-process, or "promote" heavier experiments to run in isolated Ray Actors to solve dependency conflicts and scale. The system automatically detects Ray availability and falls back gracefully if unavailable.  
+  
+- **Graduation Path**: "Graduate" a successful experiment into its own standalone application with a simple `mongodump`—no data lock-in.  
+  
+- **B2 (S3-Compatible) Integration**: By setting environment variables for Backblaze B2 (`B2_ENDPOINT_URL`, `B2_BUCKET_NAME`, `B2_ACCESS_KEY_ID`, `B2_SECRET_ACCESS_KEY`), you enable seamless file storage. That means you can do a one-click upload of a new experiment zip from your local dev machine, and g.nome handles the rest.  
   
 ---  
   
-## Magic #1: The Secret Sauce: Automatic Data Sandboxing  
+## Magic #1: The Secret Sauce — Automatic Data Sandboxing  
   
 Here's the biggest pain point of all: how do you let a dozen different apps share a single database safely?  
   
@@ -82,9 +97,7 @@ from async_mongo_wrapper import ScopedMongoWrapper
 bp = APIRouter()  
   
 @bp.get("/")  
-async def my_route(  
-    db: ScopedMongoWrapper = Depends(get_scoped_db)  
-):  
+async def my_route(db: ScopedMongoWrapper = Depends(get_scoped_db)):  
     # 'db' is now your sandboxed, async-ready database!  
     my_data = await db.my_collection.find_one({})  
     return {"data": my_data}  
@@ -92,7 +105,8 @@ async def my_route(
   
 This wrapper does two things automatically:  
   
-1. **It Tags All Writes**: When my "click-tracker" plugin writes a document, the wrapper silently injects a new field: `{"experiment_id": "click-tracker"}`. The plugin's code is completely "naive"—it doesn't even know this is happening.    
+1. **It Tags All Writes**: When my "click-tracker" plugin writes a document, the wrapper silently injects a new field: `{"experiment_id": "click-tracker"}`. The plugin's code is completely "naive"—it doesn't even know this is happening.  
+  
 2. **It Scopes All Reads**: When that same plugin tries to read data (e.g., `await db.clicks.find()`), the wrapper intercepts the query and automatically adds a filter to only find documents matching the scopes defined in its config (by default, just its own `experiment_id`).  
   
 By default, every experiment lives in its own "virtual" database.  
@@ -107,18 +121,19 @@ What if you want the `stats-dashboard` to be visible only to users with an `"adm
   
 This is the second half of the permissions puzzle, and g.nome solves it using casbin.  
   
-### The Local/Dev Value:  
+### The Local/Dev Value  
   
 When you first boot g.nome, it seeds the database with a default Role-Based Access Control (RBAC) model (defined in `casbin_model.conf`).  
   
-- Your first user (e.g., `admin@example.com` from the `ADMIN_EMAIL` environment variable) is automatically assigned the `admin` role.    
-- All other new users get the `user` role by default.    
+- Your first user (e.g., `admin@example.com` from the `ADMIN_EMAIL` environment variable) is automatically assigned the `admin` role.  
+- All other new users get the `user` role by default.  
 - A default policy is created: `(admin, admin_panel, access)`.  
   
 Your experiment code can then demand a specific permission just as easily as it asks for the database, using a pre-built dependency from `core_deps.py`:  
   
 ```python  
 # experiments/stats-dashboard/__init__.py  
+  
 from fastapi import APIRouter, Depends, Request  
 from fastapi.responses import HTMLResponse  
 from typing import Mapping  
@@ -142,13 +157,13 @@ async def index(
     ...  
 ```  
   
-### The "At Scale" Value:  
+### The "At Scale" Value  
   
 This is where the magic really pays off. The casbin policies are stored in your MongoDB cluster (via `CasbinMotorAdapter`), not in a config file. This means:  
   
 - You can build an Admin Panel page to add/remove policies dynamically.    
 - Want to create a new `beta-tester` role? Do it in the GUI (or via code that manipulates the enforcer).    
-- Want to grant that role access to `new-ai-experiment`? Save the policy.  
+- Want to grant that role access to `new-ai-experiment`? Save the policy.    
   
 The authorization change is instant, with zero downtime and no redeployment. This is the power of a "policy-as-data" model, and it's built-in from day one.  
   
@@ -181,7 +196,7 @@ The CORE engine (`main.py`) automatically detects and mounts any `/experiments/<
   
 If an experiment doesn't define a route for `/` and doesn't have a `static/index.html` file, g.nome serves a default info page using the experiment's metadata from the database. This is a helpful safety net for API-only experiments or experiments still under development.  
   
-This hierarchy means you can build any kind of web project, from a simple API to a full server-rendered app with custom templates, and the g.nome engine will instantly know how to host it, secure it, and sandbox its data.  
+This hierarchy means you can build any kind of web project, from a simple API to a full server-rendered app with custom templates. The g.nome engine will instantly know how to host it, secure it, and sandbox its data.  
   
 ---  
   
@@ -193,7 +208,7 @@ Let's build a complete "click-tracker" experiment that shows how all the pieces 
   
 You create a new folder: `/experiments/click_tracker`. Inside, you create a `manifest.json` file. (Note: g.nome uses this file during initial discovery, but the active source of truth for config is the database record in the `experiments_config` collection.)  
   
-```  
+```json  
 experiments/click_tracker/manifest.json:  
   
 {  
@@ -221,6 +236,7 @@ from fastapi.templating import Jinja2Templates
 # --- Absolute Imports from the CORE ---  
 from core_deps import get_scoped_db  
 from async_mongo_wrapper import ScopedMongoWrapper  
+# --- End Imports ---  
   
 logger = logging.getLogger(__name__)  
   
@@ -270,89 +286,85 @@ async def record_click(
   
 You create your template in your experiment's local `/templates` folder.  
   
-```  
+```html  
+<div style="font-family: sans-serif; padding: 20px; background: #e0f7fa; border-radius: 8px;">  
+  <h2>Experiment: Click Tracker</h2>  
   
-<div style="font-family: sans-serif; padding: 20px; background: #e0f7fa; border-radius: 8px;">
-  <h2>Experiment: Click Tracker</h2>
+  <p>  
+    You have clicked the button   
+    <strong id="click-count" style="font-size: 1.2em;">{{ count }}</strong>   
+    time(s).  
+  </p>  
   
-  <p>
-    You have clicked the button 
-    <strong id="click-count" style="font-size: 1.2em;">{{ count }}</strong> 
-    time(s).
-  </p>
-
-  <button id="click-btn" 
-          data-url="/experiments/click_tracker/record-click" 
-          style="padding: 10px 20px; font-size: 1em; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer;">
-    Click Me!
-  </button>
-</div>
-
-<script src="static/js/app.js"></script>
+  <button id="click-btn"  
+          data-url="/experiments/click_tracker/record-click"  
+          style="padding: 10px 20px; font-size: 1em; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer;">  
+    Click Me!  
+  </button>  
+</div>  
+  
+<script src="static/js/app.js"></script>  
 ```  
   
 ### Step 4: The Static Files (The JavaScript)  
   
 You create a `static` folder inside your experiment folder. The CORE engine will automatically mount it at runtime.  
   
-```  
-// This runs after the HTML page is fully loaded
-document.addEventListener('DOMContentLoaded', () => {
-    
-    const clickButton = document.getElementById('click-btn');
-    const countSpan = document.getElementById('click-count');
-    
-    // Safety check
-    if (!clickButton || !countSpan) {
-        console.error("Could not find button or count span!");
-        return;
-    }
-
-    // Get the API URL we stored in the 'data-url' attribute
-    const apiUrl = clickButton.dataset.url;
-
-    // Listen for a click on our button
-    clickButton.addEventListener('click', () => {
-        
-        // Disable the button to prevent double-clicks
-        clickButton.disabled = true;
-        clickButton.innerText = "Clicking...";
-
-        // Call our new API route /record-click
-        fetch(apiUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                // IT WORKED! Update the count on the page.
-                countSpan.innerText = data.new_count;
-            } else {
-                console.error("API Error:", data.error);
-                countSpan.innerText = "Error!";
-            }
-        })
-        .catch(error => {
-            console.error("Fetch Error:", error);
-            countSpan.innerText = "Error!";
-        })
-        .finally(() => {
-            // Re-enable the button
-            clickButton.disabled = false;
-            clickButton.innerText = "Click Me!";
-        });
-    });
-});
-
+```js  
+// This runs after the HTML page is fully loaded  
+document.addEventListener('DOMContentLoaded', () => {  
+    const clickButton = document.getElementById('click-btn');  
+    const countSpan = document.getElementById('click-count');  
+  
+    // Safety check  
+    if (!clickButton || !countSpan) {  
+        console.error("Could not find button or count span!");  
+        return;  
+    }  
+  
+    // Get the API URL we stored in the 'data-url' attribute  
+    const apiUrl = clickButton.dataset.url;  
+  
+    // Listen for a click on our button  
+    clickButton.addEventListener('click', () => {  
+        // Disable the button to prevent double-clicks  
+        clickButton.disabled = true;  
+        clickButton.innerText = "Clicking...";  
+  
+        // Call our new API route /record-click  
+        fetch(apiUrl, {  
+            method: 'POST',  
+            headers: {  
+                'Content-Type': 'application/json'  
+            }  
+        })  
+        .then(response => response.json())  
+        .then(data => {  
+            if (data.success) {  
+                // IT WORKED! Update the count on the page.  
+                countSpan.innerText = data.new_count;  
+            } else {  
+                console.error("API Error:", data.error);  
+                countSpan.innerText = "Error!";  
+            }  
+        })  
+        .catch(error => {  
+            console.error("Fetch Error:", error);  
+            countSpan.innerText = "Error!";  
+        })  
+        .finally(() => {  
+            // Re-enable the button  
+            clickButton.disabled = false;  
+            clickButton.innerText = "Click Me!";  
+        });  
+    });  
+});  
 ```  
   
 ### Step 5: Activation  
-
+  
 ![](mdb-genome-configure.png)  
-
+  
 That's it. You now have a fully self-contained experiment. You log into the `/admin` panel, find `"click_tracker"` in the list of discovered experiments, click **"Configure"**, set the status to `"active"`, and hit **"Save"**  
   
 Your experiment is now live at `/experiments/click_tracker/`, secure, and sandboxed, all without writing a single line of boilerplate.  
@@ -369,9 +381,11 @@ Let's say I want to build a new `stats_dashboard`. I want it to read from my `cl
   
 In the Admin Panel's "Configure" page for `stats_dashboard`, I set the `data_scope` to include both `self` and `click_tracker`:  
   
-Data Scope:    
-[✓] self    
-[✓] click_tracker    
+```  
+Data Scope:  
+[✓] self  
+[✓] click_tracker  
+```  
   
 That `data_scope` configuration is the key. I'm telling the system, "This experiment needs to read its own data (self) and data from click_tracker."  
   
@@ -396,7 +410,6 @@ logger = logging.getLogger(__name__)
   
 # 1. Define the path to this experiment's directory  
 EXPERIMENT_DIR = os.path.dirname(os.path.abspath(__file__))  
-  
 # 2. Define a LOCAL templates object pointing to this experiment's local 'templates' folder  
 templates = Jinja2Templates(directory=os.path.join(EXPERIMENT_DIR, "templates"))  
   
@@ -434,13 +447,12 @@ async def index(
   
         # 3. (Scoped to "stats_dashboard") Read back the logs  
         my_log_count = await db.logs.count_documents({})  
-  
     except Exception as e:  
         logger.error(f"stats-dashboard DB error for user {user_email}: {e}", exc_info=True)  
         error_message = f"Database error occurred: {e}"  
   
     return templates.TemplateResponse(  
-        "index.html",  # Looks in experiments/stats_dashboard/templates/index.html  
+        "index.html",  
         {  
             "request": request,  
             "total_clicks": total_clicks,  
@@ -453,57 +465,92 @@ async def index(
   
 ### Step 3: The template lives in your experiment's local folder:  
   
-```  
+```html  
+<!DOCTYPE html><html lang="en"><head>  
+    <meta charset="UTF-8">  
+    <title>Stats Dashboard</title>  
+    <style>  
+        body {  
+          font-family: 'Inter', sans-serif;  
+          padding: 20px;  
+          background-color: #f8f9fa;  
+        }  
+        .container {  
+          background: #ffffff;  
+          padding: 30px;  
+          border-radius: 12px;  
+          max-width: 600px;  
+          margin: 40px auto;  
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);  
+        }  
+        h2 {  
+          font-size: 1.8rem;  
+          color: #343a40;  
+          border-bottom: 2px solid #dee2e6;  
+          padding-bottom: 10px;  
+          margin-bottom: 25px;  
+        }  
+        .stat-box {  
+          margin-top: 20px;  
+          padding: 15px;  
+          border-radius: 8px;  
+          border-left: 5px solid;  
+        }  
+        .stat-box p {  
+          margin: 0;  
+          font-size: 1.1rem;  
+          line-height: 1.5;  
+        }  
+        .stat-box strong {  
+          font-size: 1.2em;  
+        }  
+        .self-log {  
+          border-left-color: #fd7e14;  
+          background-color: #fff9e6;  
+        } /* Orange */  
+        .self-log strong {  
+          color: #d95f02;  
+        }  
+        .cross-read {  
+          border-left-color: #198754;  
+          background-color: #e8f5e9;  
+        } /* Green */  
+        .cross-read strong {  
+          color: #146c43;  
+        }  
+        .user-info {  
+          margin-top: 30px;  
+          font-size: 0.9em;  
+          color: #6c757d;  
+          text-align: right;  
+        }  
+    </style>  
+</head><body>  
+    <div class="container">  
+        <h2>Experiment: Stats Dashboard</h2>  
   
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Stats Dashboard</title>
-    <style>
-        body { font-family: 'Inter', sans-serif; padding: 20px; background-color: #f8f9fa; }
-        .container { background: #ffffff; padding: 30px; border-radius: 12px; max-width: 600px; margin: 40px auto; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); }
-        h2 { font-size: 1.8rem; color: #343a40; border-bottom: 2px solid #dee2e6; padding-bottom: 10px; margin-bottom: 25px; }
-        .stat-box { margin-top: 20px; padding: 15px; border-radius: 8px; border-left: 5px solid; }
-        .stat-box p { margin: 0; font-size: 1.1rem; line-height: 1.5; }
-        .stat-box strong { font-size: 1.2em; }
-        .self-log { border-left-color: #fd7e14; background-color: #fff9e6; } /* Orange */
-        .self-log strong { color: #d95f02; }
-        .cross-read { border-left-color: #198754; background-color: #e8f5e9; } /* Green */
-        .cross-read strong { color: #146c43; }
-        .user-info { margin-top: 30px; font-size: 0.9em; color: #6c757d; text-align: right; }
-    </style>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
-</head>
-<body>
-    <div class="container">
-        <h2>Experiment: Stats Dashboard</h2>
-
-        <div class="stat-box self-log">
-            <p>
-                This page view recorded <strong>(scoped to self)</strong>. Total views:
-                <strong>{{ my_logs }}</strong>
-            </p>
-        </div>
-
-        <div class="stat-box cross-read">
-            <p>
-                Total clicks recorded across
-                <strong>permitted experiments</strong>:
-                <strong>{{ total_clicks }}</strong>
-            </p>
-        </div>
-
-        {% if current_user %}
-            <p class="user-info">Logged in as: {{ current_user.email }} {% if current_user.is_admin %}(Admin){% endif %}</p>
-        {% else %}
-             <p class="user-info">Viewing as Guest</p>
-        {% endif %}
-    </div>
-</body>
-</html>
+        <div class="stat-box self-log">  
+            <p>  
+                This page view recorded <strong>(scoped to self)</strong>. Total views:  
+                <strong>{{ my_logs }}</strong>  
+            </p>  
+        </div>  
+  
+        <div class="stat-box cross-read">  
+            <p>  
+                Total clicks recorded across  
+                <strong>permitted experiments</strong>:  
+                <strong>{{ total_clicks }}</strong>  
+            </p>  
+        </div>  
+  
+        {% if current_user %}  
+            <p class="user-info">Logged in as: {{ current_user.email }} {% if current_user.is_admin %}(Admin){% endif %}</p>  
+        {% else %}  
+            <p class="user-info">Viewing as Guest</p>  
+        {% endif %}  
+    </div>  
+</body></html>  
 ```  
   
 ### Step 4: I log into the Admin Panel at `/admin`  
@@ -522,8 +569,6 @@ Your main application breaks. This is "dependency hell," and it's the death of a
   
 This is where g.nome's second, and most powerful, piece of magic comes in. It's not just a plugin loader; it's a hybrid runtime engine powered by Ray.  
   
-g.nome understands that some experiments are simple and can run in-process, while others are complex and need total isolation. It lets you choose.  
-  
 ---  
   
 ## Magic #3: The Hybrid Runtime (In-Process vs. Isolated)  
@@ -534,7 +579,8 @@ g.nome is built on a hybrid model that gives you the right tool for any job.
   
 This is the pattern we just built, perfect for simple dashboards and APIs that share the main app's environment.  
   
-**How it works**: You use `Depends(get_scoped_db)` to get the sandboxed database wrapper. Your routes run in the same process as the CORE FastAPI app.    
+**How it works**: You use `Depends(get_scoped_db)` to get the sandboxed database wrapper. Your routes run in the same process as the CORE FastAPI app.  
+  
 **Pro**: Very fast, easy to write, zero overhead.    
 **Con**: Shares dependencies with the CORE and all other "in-process" experiments.  
   
@@ -542,11 +588,12 @@ This is the pattern we just built, perfect for simple dashboards and APIs that s
   
 This is the solution for "dependency hell" and heavy-duty tasks. You "promote" an experiment to run as a Ray Actor—a stateful, isolated service in its own process with its own dependencies.  
   
-**How it works**: In your experiment's `__init__.py` (or `main.py`), you define an `ExperimentActor` class decorated with `@ray.remote`. You can optionally specify a custom `runtime_env` dict with specific pip packages, or you can provide a `requirements.txt` file in your experiment folder and set `G_NOME_ENV=isolated` to have g.nome parse it automatically.  
+**How it works**:    
+- In your experiment's `actor.py`, you define an `ExperimentActor` class that references your target libraries.    
+- If `G_NOME_ENV=isolated`, g.nome can parse your `requirements.txt` and automatically pass them to Ray as a dedicated `runtime_env` for that actor.    
+- The "thin client" code in your `__init__.py` uses simple `await actor.method_name.remote()`, letting Ray handle concurrency or conflicting dependencies.  
   
-- **What g.nome Does**: The CORE engine (`main.py`) automatically finds this class during experiment loading. When `G_NOME_ENV=isolated`, it reads your `requirements.txt` and tells Ray: "Launch this ExperimentActor as a named, detached service with these specific dependencies."  
-- **Your `bp` (APIRouter) is a "thin client."** Its routes become simple pass-through logic that calls methods on the Ray actor using `await actor.method_name.remote()`.  
-- **Automatic Fallback**: If Ray is unavailable or the actor fails to start, g.nome seamlessly falls back to a local service class that uses the standard `ScopedMongoWrapper` for database access. Your routes continue to work, just without the isolation and concurrency benefits of Ray.  
+**Automatic Fallback**: If Ray is unavailable or the actor fails to start, g.nome seamlessly falls back to a local service class that uses the standard `ScopedMongoWrapper` for database access. Your routes continue to work, just without the isolation or concurrency benefits of Ray.  
   
 ---  
   
@@ -763,39 +810,54 @@ async def record_click(service: Any = Depends(get_click_service)):
         )  
 ```  
   
-### What happens at runtime:  
-  
-- If Ray is available and the actor starts successfully: The `get_click_service` dependency returns a handle to the Ray actor. Your routes call methods like `await service.record_click.remote()`.  
-- If Ray is unavailable or the actor fails: The dependency returns a `ClickTrackerLocalService` instance that uses the standard async database wrapper. Your routes call methods like `await service.record_click()`.  
-- No code changes needed in your routes. The dependency abstraction handles the complexity.  
+Now you get scalable concurrency (if you’re using a Ray cluster) *or* you fall back to plain in-process code otherwise.  
   
 ---  
   
-## Beyond Isolation: Scaling CPU-Bound Workloads  
+## Magic #4: Over-the-Air Experiment Upload and Local Seeding  
+  
+Historically, you might have manually copied each experiment folder to the server’s `/experiments/<slug>` directory. Now, g.nome supports two powerful new workflows:  
+  
+1. **Local File Seeding**:    
+   If you put a valid `manifest.json` into `/experiments/<slug>/` and start your server, g.nome calls `_seed_db_from_local_files` internally. If the database doesn't already have a config for `<slug>`, it inserts one—no manual steps required.    
+   This is perfect for local development: new experiments are "discovered" automatically so you can test them before production.  
+  
+2. **Over-the-Air Zip Upload** (via Backblaze B2 / S3):    
+   From the admin panel or an API call to `/admin/api/upload-experiment/<slug_id>`, you can upload a `.zip` containing everything your experiment needs (`actor.py`, `__init__.py`, `requirements.txt`, etc.).    
+   - If B2 is configured via env vars (`B2_ENDPOINT_URL`, `B2_BUCKET_NAME`, `B2_ACCESS_KEY_ID`, `B2_SECRET_ACCESS_KEY`), g.nome automatically stores the zip in that bucket and sets a presigned URL in the experiment’s database record.    
+   - On subsequent reload, Ray uses that presigned URL as a "py_modules" reference for fully isolated, versioned code.    
+   - If needed, we also parse the `requirements.txt` from inside the zip, attach it to the experiment’s config, and pass those dependencies to Ray when `G_NOME_ENV=isolated`.    
+   - The local "thin client" files are extracted to `/experiments/<slug>/`, letting you serve templates and static files as usual.    
+  
+This means you can push updates to your experiment’s codebase in seconds, from anywhere, without messing with server-side file systems manually. Combined with the Ray runtime environment isolation, you have a robust pipeline for shipping new features or conflicting dependencies seamlessly.  
+  
+---  
+  
+## The Payoff Continues: Scaling CPU-Bound Workloads  
   
 The Actor pattern doesn't just solve dependency hell—it unlocks scalability.  
   
-What about an experiment that does heavy CPU-bound work, like an image watermarker?  
+What about an experiment that does heavy CPU-bound work, like an image watermarker or a machine learning pipeline?  
   
 - **The Old Way**: An "in-process" task would block the main server.    
 - **The g.nome Way**: You define an actor that can spawn multiple Ray tasks, distributing the workload across all CPU cores in your cluster. Your main FastAPI process just triggers a method call on the actor, and Ray handles the rest.  
   
 ---  
   
-## Focus on Your Differentiation, Not Your Boilerplate
-
+## Focus on Your Differentiation, Not Your Boilerplate  
+  
 ![](good-gnome.png)  
   
 This is the convention-over-configuration powerhouse I've always wanted. Python and MongoDB Atlas are an incredible combination for innovation. Python (with FastAPI) is expressive and blazing fast, while Atlas provides a scalable, serverless data platform.  
   
 The problem is that "glue" code still gets in the way.  
   
-g.nome is designed to be that glue. It lets you focus 100% on your differentiation.  
+g.nome is designed to be that glue. It lets you focus 100% on your differentiation.    
   
 By connecting this engine to a MongoDB Atlas cluster, every single one of my experiments instantly inherits a world-class infrastructure.  
   
-- Want to add powerful, typo-tolerant search to your experiment? You don't need Elasticsearch. You just flip on Atlas Search, and your plugin can use it.    
-- Want to build a rich visualization dashboard? You can embed Atlas Charts without rewriting your code.    
+- Want to add powerful, typo-tolerant search to your experiment? You don't need Elasticsearch. You just flip on Atlas Search, and your plugin can use it.  
+- Want to build a rich visualization dashboard? You can embed Atlas Charts without rewriting your code.  
 - Want an action to happen when a user registers? Hook up an Atlas Trigger to keep your logic simple.  
   
 You stop worrying about managing users, scaling databases, or writing security filters. You just build your feature.  
@@ -810,33 +872,48 @@ g.nome's hybrid architecture is controlled by a single environment variable: `G_
   
 **Production Mode (Default)**    
 `G_NOME_ENV="production"` (or not set)    
-Uses Ray if available, else fallback to in-process.    
-The engine respects any `runtime_env` declared inside an experiment's actor class.  
+  
+Uses Ray if available, else fallback to in-process. The engine respects any `runtime_env` declared inside an experiment's actor class.    
   
 **Isolated Mode**    
 `G_NOME_ENV="isolated"`    
-On startup, each experiment can parse a local `requirements.txt` file (via the `_parse_requirements_file()` helper in `main.py`), and g.nome automatically creates a Ray actor with those specific dependencies in an isolated `runtime_env`.    
-This is the definitive solution for mixing conflicting library versions.    
-If Ray fails entirely, g.nome reverts each experiment to in-process mode. You still get all the core features (auth, sandboxing, admin GUI), just without the isolation or extra concurrency that Ray can provide.  
+  
+On startup, each experiment can parse a local `requirements.txt` file (via `_parse_requirements_file()`) and g.nome automatically creates a Ray actor with those specific dependencies in an isolated `runtime_env`. This is the definitive solution for mixing conflicting library versions.  
+  
+If Ray fails entirely, g.nome reverts each experiment to in-process mode. You still get all the core features (Admin Panel, RBAC, data sandboxing) with zero extra overhead.  
+  
+### Backblaze B2 (S3-Compatible) Config  
+  
+Set these environment variables if you want to enable Over-the-Air code uploads and storage:  
+- `B2_ENDPOINT_URL` (e.g., `"https://s3.us-west-004.backblazeb2.com"`)  
+- `B2_BUCKET_NAME`  
+- `B2_ACCESS_KEY_ID`  
+- `B2_SECRET_ACCESS_KEY`  
+  
+If these are set, g.nome will store experiment `.zip` files in your B2 bucket and generate presigned URLs to pass to Ray. Otherwise, it reverts to local or fallback logic.  
   
 ---  
   
 ## Appendix A: Graduating from the Incubator  
   
-![](gnome-graduation.png)
-
+![](gnome-graduation.png)  
+  
 g.nome is a perfect "incubator." But what happens when your `click_tracker` becomes so successful it needs to "graduate" into its own, fully independent production application?  
   
 Because g.nome tags all data with `experiment_id`, you have zero lock-in.  
   
-1. **Copy the code**: Move your `click_tracker` folder to a brand-new repo, add a minimal FastAPI scaffolding (e.g., a standalone `main.py` that includes your experiment's router).    
+1. **Copy the code**: Move your `click_tracker` folder to a brand-new repo, add a minimal FastAPI scaffolding (e.g., a standalone `main.py` that includes your experiment's router).  
+  
 2. **Export the data**: Use `mongodump` to export only the documents belonging to your experiment:  
+   ```bash  
+   mongodump --uri="<your-mongo-uri>" --db=labs_db --collection=clicks \  
+             --query='{"experiment_id":"click_tracker"}' --out=./backup  
    ```  
-   mongodump --uri="<your-mongo-uri>" --db=labs_db --collection=clicks --query='{"experiment_id":"click_tracker"}' --out=./backup  
-   ```  
+  
 3. **Import it into your new standalone Atlas cluster**:  
-   ```  
-   mongorestore --uri="<your-new-cluster-uri>" --db=my_new_db ./backup/labs_db/clicks.bson  
+   ```bash  
+   mongorestore --uri="<your-new-cluster-uri>" --db=my_new_db \  
+                ./backup/labs_db/clicks.bson  
    ```  
   
 You keep the business logic intact, with no painful rewriting.  
@@ -852,7 +929,7 @@ This solves the biggest pains I faced, but it opens up even more possibilities:
 - More Granular Data Scopes: e.g., read-only access to a single collection, or field-level permissions.    
 - Shared "Service" Experiments: e.g., a `sentiment-analyzer` experiment that others can call as an internal API.    
 - CLI Scaffolding Tool: `gnome create <name>` to quickly generate a new experiment folder with boilerplate files.    
-- Global API Key Management: Issue keys that can call certain experiments or collections, bridging external apps to your g.nome ecosystem.  
+- Global API Key Management: Issue keys that can call certain experiments or collections, bridging external apps to your g.nome ecosystem.    
   
 ---  
   
@@ -872,95 +949,101 @@ You get the developer convenience of "functions," while staying in standard Pyth
   
 g.nome is perfectly suited for streamlined hosting on Render. By default, if there's no Ray cluster, the system simply runs experiments in-process.  
   
-- Connect to your GitHub and point a Render Web Service at your g.nome repo (or fork).    
-- Add environment variables like:    
+- Connect to your GitHub and point a Render Web Service at your g.nome repo (or fork).  
+- Add environment variables like:  
+  
   ```  
-  MONGO_URI         - Your MongoDB connection string (e.g., from Atlas)  
-  FLASK_SECRET_KEY  - A strong random secret for JWT signing  
-  ADMIN_EMAIL       - The email for the initial admin user  
-  ADMIN_PASSWORD    - The password for the initial admin user  
-  G_NOME_ENV        - (Optional) Set to isolated if you want Ray actors to use  
-                      experiment-specific requirements.txt files  
+  MONGO_URI         # Your MongoDB connection string (e.g., from Atlas)  
+  FLASK_SECRET_KEY  # A strong random secret for JWT signing  
+  ADMIN_EMAIL       # The email for the initial admin user  
+  ADMIN_PASSWORD    # The password for the initial admin user  
+  B2_ENDPOINT_URL   # (Optional) for Over-the-Air uploads  
+  B2_BUCKET_NAME  
+  B2_ACCESS_KEY_ID  
+  B2_SECRET_ACCESS_KEY  
   ```  
+  
 - Deploy. The included Dockerfile (or Render's automatic Python detection) runs your entire app in a single container. If Ray is missing or fails to connect, it automatically uses the in-process fallback.  
-- You still get every core feature (Admin Panel, RBAC, data sandboxing) with zero extra overhead.  
+- You still get every core feature (Admin Panel, RBAC, data sandboxing, local file seeding) with zero extra overhead.  
   
 ---  
-
-## Appendix E: Index Management via `manifest.json` ⚙️
-
-g.nome simplifies database optimization by allowing experiments to declare necessary MongoDB indexes directly within their `manifest.json`. This declarative approach ensures that your experiments have the indexes they need to perform well, without manual intervention in the database.
-
-### Manifest Structure
-
-Inside `manifest.json`, you define indexes under the `managed_indexes` key. This is an object where keys are the **base collection names** (the name your experiment code uses, like `"clicks"` or `"products"`) and values are arrays of index definitions.
-
-Each index definition **must** include:
-
-* `"name"`: The **base name** for the index (e.g., `"user_timestamp"`, `"embedding_vector"`).
-* `"type"`: The type of index:
-    * `"regular"`: Standard MongoDB indexes. Requires a `"keys"` field (e.g., `{ "field": 1 }` or `[["field", -1]]`). Can optionally include an `"options"` object (e.g., `{ "unique": true }`).
-    * `"search"`: Atlas Search index (Lucene). Requires a `"definition"` field matching the Atlas Search index definition JSON.
-    * `"vectorSearch"`: Atlas Vector Search index. Requires a `"definition"` field matching the Atlas Vector Search index definition JSON.
-
-**Example:**
-
-```json
-// experiments/product_recommender/manifest.json
-{
-  "slug": "product_recommender",
-  // ... other keys ...
-  "managed_indexes": {
-    "products": [ // Base Collection Name
-      {
-        "name": "embedding_index", // Base Index Name
-        "type": "vectorSearch",
-        "definition": { /* Atlas Vector Search definition */ }
-      },
-      {
-        "name": "category_price", // Base Index Name
-        "type": "regular",
-        "keys": { "category": 1, "price": -1 }
-      }
-    ],
-    "interactions": [ // Another Base Collection
-      {
-         "name": "user_ts", // Base Index Name
-         "type": "regular",
-         "keys": [ ["user_id", 1], ["timestamp", -1] ],
-         "options": { "sparse": true }
-      }
-    ]
-  }
-}
-````
-
-### Automatic Scoping (Prefixing)
-
-Crucially, g.nome enforces separation between experiments. It automatically prepends the experiment's `slug_id` followed by an underscore (`_`) to **both** the collection name and the index name before interacting with MongoDB.
-
-  * **Manifest:** Collection `"products"`, Index `"embedding_index"`
-  * **Actual in DB (for `slug="product_recommender"`):** Collection `product_recommender_products`, Index `product_recommender_embedding_index`
-
-This convention guarantees that indexes defined by one experiment won't collide with or overwrite indexes from another, even if they use the same base names in their respective manifests. ✅
-
-### How it Works
-
-When an experiment is activated or g.nome reloads:
-
-1.  **Read & Prefix:** It reads the `managed_indexes` from the manifest and generates the prefixed names.
-2.  **Ensure Collection:** It ensures the *prefixed* collection exists (creating it if needed).
-3.  **Check Index:** It checks if an index with the *prefixed* name exists on the *prefixed* collection.
-4.  **Compare & Act:**
-      * If the index exists, it compares the definition (`keys` for regular, `definition` for search/vector) against the manifest. If different, it updates (`search`/`vectorSearch`) or drops/recreates (`regular`). ⚠️ *Regular index recreation can be slow.*
-      * If the index *doesn't* exist, it creates it.
-5.  **Wait (Search/Vector):** For Atlas Search/Vector types, it waits until the index reports as `QUERYABLE` before completing the task.
-6.  **Background Tasks:** Each index is managed in a non-blocking background task. Errors are logged but don't typically halt the entire application startup.
-
+  
+## Appendix E: Index Management via `manifest.json` ⚙️  
+  
+g.nome simplifies database optimization by allowing experiments to declare necessary MongoDB indexes directly within their `manifest.json`. This declarative approach ensures that your experiments have the indexes they need to perform well, without manual intervention in the database.  
+  
+### Manifest Structure  
+  
+Inside `manifest.json`, you define indexes under the `managed_indexes` key. This is an object where keys are the **base collection names** (the name your experiment code uses, like `"clicks"` or `"products"`) and values are arrays of index definitions.  
+  
+Each index definition **must** include:  
+  
+- `"name"`: The **base name** for the index (e.g., `"user_timestamp"`, `"embedding_vector"`).    
+- `"type"`: The type of index:    
+  - `"regular"`: Standard MongoDB indexes. Requires a `"keys"` field (e.g., `{ "field": 1 }` or `[["field", -1]]`). Can optionally include an `"options"` object (e.g., `{ "unique": true }`).    
+  - `"search"`: Atlas Search index (Lucene). Requires a `"definition"` field matching the Atlas Search index definition JSON.    
+  - `"vectorSearch"`: Atlas Vector Search index. Requires a `"definition"` field matching the Atlas Vector Search index definition JSON.  
+  
+**Example**:  
+  
+```json  
+// experiments/product_recommender/manifest.json  
+{  
+  "slug": "product_recommender",  
+  // ... other keys ...  
+  "managed_indexes": {  
+    "products": [ // Base Collection Name  
+      {  
+        "name": "embedding_index", // Base Index Name  
+        "type": "vectorSearch",  
+        "definition": {  
+          /* Atlas Vector Search definition */  
+        }  
+      },  
+      {  
+        "name": "category_price", // Base Index Name  
+        "type": "regular",  
+        "keys": { "category": 1, "price": -1 }  
+      }  
+    ],  
+    "interactions": [ // Another Base Collection  
+      {  
+         "name": "user_ts", // Base Index Name  
+         "type": "regular",  
+         "keys": [ ["user_id", 1], ["timestamp", -1] ],  
+         "options": { "sparse": true }  
+      }  
+    ]  
+  }  
+}  
+```  
+  
+### Automatic Scoping (Prefixing)  
+  
+Crucially, g.nome enforces separation between experiments. It automatically prepends the experiment's `slug_id` followed by an underscore (`_`) to **both** the collection name and the index name before interacting with MongoDB.  
+  
+- **Manifest:** Collection `"products"`, Index `"embedding_index"`    
+- **Actual in DB (for `slug="product_recommender"`):** Collection `product_recommender_products`, Index `product_recommender_embedding_index`  
+  
+This convention guarantees that indexes defined by one experiment won't collide with or overwrite indexes from another, even if they use the same base names in their respective manifests. ✅  
+  
+### How it Works  
+  
+When an experiment is activated or g.nome reloads:  
+  
+1. **Read & Prefix**: It reads the `managed_indexes` from the manifest and generates the prefixed names.    
+2. **Ensure Collection**: It ensures the *prefixed* collection exists (creating it if needed).    
+3. **Check Index**: It checks if an index with the *prefixed* name exists on the *prefixed* collection.    
+4. **Compare & Act**:    
+   - If the index exists, it compares the definition (`keys` for regular, `definition` for search/vector) against the manifest. If different, it updates (`search`/`vectorSearch`) or drops/recreates (`regular`).    
+   - If the index *doesn't* exist, it creates it.    
+5. **Wait (Search/Vector)**: For Atlas Search/Vector types, it waits until the index reports as `QUERYABLE` before completing the task.    
+6. **Background Tasks**: Each index is managed in a non-blocking background task. Errors are logged but don't typically halt the entire application startup.  
+  
 This makes index management automated, version-controlled, and safely scoped to each experiment.  
-
----
-
+  
+---  
+  
 ## Conclusion  
   
-g.nome helps you ship ideas quickly, without burying yourself in repetitive boilerplate. You get a single engine that can grow alongside your experiments—everything from tiny prototypes to fully isolated, Ray-powered microservices—while ensuring you can "graduate" any successful idea to its own dedicated codebase and database. Build fast, stay secure, and never fear the "prototype graveyard" again.  
+g.nome helps you ship ideas quickly, without burying yourself in repetitive boilerplate. You get a single engine that can grow alongside your experiments—everything from tiny prototypes to fully isolated, Ray-powered microservices—while ensuring you can "graduate" any successful idea to its own dedicated codebase and database. Build fast, stay secure, and never fear the "prototype graveyard" again.
