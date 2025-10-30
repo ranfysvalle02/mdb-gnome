@@ -12,3 +12,5 @@ pillow
 casbin>=1.43.0
 casbin-motor-adapter>=0.4.0
 gunicorn
+ray[default]==2.50.0
+boto3

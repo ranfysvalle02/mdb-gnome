@@ -1,0 +1,38 @@
+{
+  "name": "Workout Radiologist",
+  "description": "Generates visual 'fingerprints' of workout data, uses Vector Search to find 'twins', and RAG to analyze them.",
+  "status": "active",
+  "auth_required": false,
+  "data_scope": [
+    "self"
+  ],
+  "managed_indexes": {
+    "workouts": [
+      {
+        "name": "workout_vector_index",
+        "type": "vectorSearch",
+        "definition": {
+          "fields": [
+            {
+              "type": "vector",
+              "path": "workout_vector",
+              "numDimensions": 192,
+              "similarity": "cosine"
+            },
+            {
+              "type": "filter",
+              "path": "_id"
+            }
+          ]
+        }
+      },
+      {
+        "name": "_id_index",
+        "type": "regular",
+        "keys": {
+          "_id": 1
+        }
+      }
+    ]
+  }
+}

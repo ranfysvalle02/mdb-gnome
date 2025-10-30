@@ -21,9 +21,6 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# install RAY for distributed processing
-RUN pip install --no-cache-dir ray[default]==2.50.0
-
 # --- Stage 2: The Final Runtime Image ---
 # Use the minimal 'slim' image for the final container
 FROM python:3.10.18-slim

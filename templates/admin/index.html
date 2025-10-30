@@ -23,7 +23,7 @@
 </head>
 <body>
     <div class="header-nav">
-        <a href="{{ request.url_for('root') }}">&larr; Back to Main Site</a>
+        <a href="{{ request.url_for('home') }}">&larr; Back to Main Site</a>
         {% if current_user %}
             <span>Logged in as <strong>{{ current_user.email }}</strong> | <a href="{{ request.url_for('logout') }}">Logout</a></span>
         {% endif %}

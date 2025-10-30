@@ -1,71 +1,71 @@
-# Docker Compose configuration for Modular Labs (Local Development)
-# This file sets up the FastAPI app, MongoDB database, and Ray cluster head.
+#
+# docker-compose.yml (FINAL)
+#
+version: "3.8"
 
 services:
   # --------------------------------------------------------------------------
-  # FastAPI Web Application (The "Boss")
+  # FastAPI Web Application (The "Boss" / Ray Client)
   # --------------------------------------------------------------------------
   api:
     build:
-      context: . # This specifies the path to the build context (where to look for the code and Dockerfile)
-      dockerfile: compose.Dockerfile
+      context: .
+      dockerfile: Dockerfile
     container_name: mlab-api
-    platform: linux/arm64 # Match your M1 Mac
+    platform: linux/arm64
     ports:
       - "5001:10000"
     volumes:
-      - .:/app # Mounts your code into the container
-    environment:
-      - PORT=10000
-      - WORKERS=1 # Reload works best with 1 worker
-      - MONGO_URI=mongodb://mongo:27017/?retryWrites=true&w=majority&directConnection=true
-      - RAY_ADDRESS=ray://ray-head:10001
-      # ------------------------------------------
-      # --- IMPORTANT: Set these for security ---
-      # You should generate a real secret: openssl rand -hex 32
-      - FLASK_SECRET_KEY=a_very_insecure_default_dev_secret_123! # CHANGE ME
-      - ADMIN_EMAIL=admin@example.com
-      - ADMIN_PASSWORD=password123 
-      - G_NOME_ENV=isolated # Ensure isolated mode for compose
-      - ENABLE_REGISTRATION=false
+      # Mounts your local code (main.py, experiments/, etc.) into the container
+      # This is what makes --reload work.
+      - .:/app 
+    env_file:
+      - .env # Make sure .env contains your B2/AWS credentials
     command: >
-      uvicorn main:app
-      --host 0.0.0.0
-      --port 10000
-      --reload
+      uvicorn main:app --host 0.0.0.0 --port 10000 --reload
     depends_on:
       mongo:
         condition: service_healthy
       ray-head:
-        condition: service_healthy # Wait for Ray head client port (10001)
+        condition: service_healthy
 
   # --------------------------------------------------------------------------
-  # Ray Head Node (The "Factory Manager")
+  # Ray Head Node (The "Factory Manager" / Ray Server)
   # --------------------------------------------------------------------------
   ray-head:
-    image: rayproject/ray:2.50.0-py310 # Using 2.50.0 for ARM64 support
+    build: # <-- CHANGED (Was 'image: rayproject/ray:2.50.0-py310')
+      context: .
+      dockerfile: Dockerfile
     container_name: mlab-ray-head
-    platform: linux/arm64 # Ensure ARM64 platform
+    platform: linux/arm64
     ports:
-      - "10001:10001" # Ray Client Server
-      - "8265:8265"   # Ray Dashboard
+      - "10001:10001"
+      - "8265:8265" # Ray Dashboard
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock # Needed for Ray's Docker-in-Docker (less reliable locally)
-      - .:/app # Mounts code so Ray head can access experiment modules
+      # This mount is ALSO needed here so Ray's "working_dir"
+      # can find the class definitions (like ExperimentActor) from main.py
+      - .:/app
+    env_file:
+      - .env # Make sure .env contains your B2/AWS credentials
     environment:
       - RAY_ENABLE_RUNTIME_ENV=1
-      - RAY_RUNTIME_ENV_WORKING_DIR=/app # Tell Ray where the code is
+      # This tells Ray that the "working directory" for all jobs
+      # and code IS /app. This aligns with our volume mount.
+      - RAY_RUNTIME_ENV_WORKING_DIR=/app
+      - RAY_NAMESPACE=modular_labs
+      - AWS_ENDPOINT_URL=${B2_ENDPOINT_URL}
+      - AWS_ACCESS_KEY_ID=${B2_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${B2_SECRET_ACCESS_KEY}
     command: [
       "ray", "start", "--head",
-      "--port=6379", # Internal Ray port
+      "--port=6379",
       "--ray-client-server-port=10001",
       "--dashboard-host=0.0.0.0",
       "--disable-usage-stats",
-      "--block" # Keep the container running
+      "--block"
     ]
-    shm_size: 4gb # Increased shared memory often helps Ray
+    shm_size: 4gb
     healthcheck:
-      # Check the Ray Client Server port is listening
       test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 10001))"]
       interval: 5s
       timeout: 2s
@@ -90,8 +90,5 @@ services:
       retries: 3
       start_period: 5s
 
-# --------------------------------------------------------------------------
-# Named Volumes
-# --------------------------------------------------------------------------
 volumes:
-  mongo-data: # Define the volume for MongoDB data persistence
+  mongo-data:

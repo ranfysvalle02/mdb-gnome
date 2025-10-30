@@ -1,60 +1,76 @@
-# ---------------------------------------------  
-# Stage 1: Builder – Install Dependencies  
-# ---------------------------------------------  
-FROM python:3.10-slim AS builder  
-  
-WORKDIR /app  
-  
-# Install system packages needed to compile wheels for some Python deps  
-RUN apt-get update && apt-get install -y \  
-    build-essential \  
- && rm -rf /var/lib/apt/lists/*  
-  
-# Create and activate a Python venv  
-RUN python -m venv /opt/venv  
-ENV PATH="/opt/venv/bin:$PATH"  
-  
-# Copy requirements and install  
-COPY requirements.txt .  
-RUN pip install --no-cache-dir -r requirements.txt  
-  
-# ---------------------------------------------  
-# Stage 2: Final – Runtime Image  
-# ---------------------------------------------  
-FROM python:3.10-slim  
-  
-WORKDIR /app  
-  
-# Copy venv from builder  
-COPY --from=builder /opt/venv /opt/venv  
-  
-# Copy full source (including experiments/) into /app  
-COPY . .  
-  
-# Activate the venv for all future commands  
-ENV PATH="/opt/venv/bin:$PATH"  
-  
-# -------------------------------------------------------------------  
-#   TELL UVICORN WORKERS TO TRUST PROXY HEADERS (fix Mixed Content)  
-# -------------------------------------------------------------------  
-# Note: Gunicorn doesn’t know --proxy-headers, but we can set env  
-# vars that Uvicorn workers read at runtime:  
-ENV UVICORN_PROXY_HEADERS=true  
-ENV UVICORN_FORWARDED_ALLOW_IPS=*  
-  
-# (Optional) If you need Ray, also install it in the builder or  
-# add "ray==2.6.0" to requirements.txt. Then no more Ray warnings.  
-# Example:  
-# RUN pip install --no-cache-dir ray  
-  
-# Create a non-root user for security (optional but recommended)  
-RUN addgroup --system appgroup && adduser --system --group appuser  
-RUN chown -R appuser:appgroup /app  
-USER appuser  
-  
-# Gunicorn expects $PORT from Render or another platform  
-# For local dev you can override with e.g. docker run -e PORT=8000 ...  
-CMD ["gunicorn", "main:app", \  
-     "-k", "uvicorn.workers.UvicornWorker", \  
-     "--bind", "0.0.0.0:10000", \  
-     "--workers", "4"]  
+#
+# Dockerfile (Portable for Compose, Render, and Anyscale)
+#
+# --- STAGE 1: Build virtual environment with dependencies ---
+# We use a specific, pinned version to guarantee consistency
+# Using "bookworm" (Debian 12) as a modern, secure base
+FROM python:3.10.13-slim-bookworm AS builder
+
+# Set build-time args for non-interactive install
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Install build-essential for packages that compile C extensions (like bcrypt)
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libopenblas-dev \
+    libfreetype-dev \
+    libpng-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a virtual environment
+RUN python -m venv /opt/venv
+
+# Activate venv and install dependencies
+# This is cached, so it only re-runs if requirements.txt changes
+COPY requirements.txt .
+RUN . /opt/venv/bin/activate && \
+    pip install --upgrade pip && \
+    pip install -r requirements.txt
+
+
+# --- STAGE 2: Create the final, lean production image ---
+FROM python:3.10.13-slim-bookworm
+
+WORKDIR /app
+
+# Create a non-root user for security
+RUN addgroup --system app && adduser --system --group app
+
+# Copy the virtual environment from the builder stage
+COPY --from=builder /opt/venv /opt/venv
+
+# Copy the application code
+# This copies main.py, experiments/, templates/, etc.
+COPY . .
+
+# Copy the entrypoint script to a standard PATH location
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Change ownership to our non-root user
+RUN chown -R app:app /app /opt/venv
+
+# Switch to the non-root user
+USER app
+
+# Set the PATH to include the venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Set the default port your app will run on inside the container
+# This matches your docker-compose.yml 'PORT=10000'
+# Render.com will also pick this up.
+ENV PORT=10000
+
+# Expose all ports. This is just metadata but good practice.
+EXPOSE 10000 10001 6379 8265
+
+# The entrypoint activates the venv before running the CMD
+ENTRYPOINT ["docker-entrypoint.sh"]
+
+# --- THIS IS THE KEY ---
+# This is the default "production" command for your API.
+# It will be USED by Render.
+# It will be IGNORED & OVERRIDDEN by docker-compose.yml.
+# It will be IGNORED by Anyscale.
+CMD ["gunicorn", "main:app", "--workers", "4", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:10000"]

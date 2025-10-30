@@ -1,46 +1,35 @@
 # ==============================================================================
-# AuthZ Provider Factory
-#
-# This file imports all concrete AuthZ implementations and provides
-# a single factory function (`create_authz_provider`) to build one
-# based on a name.
-#
-# main.py will call this factory, keeping main.py free of
-# provider-specific imports like 'casbin' or 'oso'.
+# AuthZ Provider Factory (FINAL DE-COUPLED VERSION)
 # ==============================================================================
 
 import logging
 from pathlib import Path
 from typing import Any, Dict
 
-# --- Generic Protocol Import ---
+# --- Generic Protocol Import (MUST remain at the top) ---
+# CasbinAdapter is imported here as it is part of the common 'authz_provider' file.
 from authz_provider import AuthorizationProvider, CasbinAdapter
 
-# --- Casbin-Specific Imports ---
-try:
-    import casbin  # type: ignore
-    from casbin_motor_adapter import Adapter as CasbinMotorAdapter
-    CASBIN_AVAILABLE = True
-except ImportError:
-    CASBIN_AVAILABLE = False
-
-# --- Other Provider Imports (Future) ---
-# try:
-#     import oso
-#     OSO_AVAILABLE = True
-# except ImportError:
-#     OSO_AVAILABLE = False
-
+# The global CASBIN_AVAILABLE check has been removed.
 
 logger = logging.getLogger(__name__)
 
 
 async def _create_casbin_provider(settings: Dict[str, Any]) -> AuthorizationProvider:
-    """Builds and returns a CasbinAdapter."""
-    if not CASBIN_AVAILABLE:
+    """
+    Builds and returns a CasbinAdapter.
+    **Dependencies (casbin, casbin-motor-adapter) are imported LOCALLY.**
+    """
+    # --- Casbin-Specific Imports (NOW LOCALIZED) ---
+    try:
+        import casbin  # type: ignore
+        from casbin_motor_adapter import Adapter as CasbinMotorAdapter
+    except ImportError as e:
+        # This RuntimeError is only raised if 'casbin' is the selected provider
+        # but the dependencies are missing.
         raise RuntimeError(
-            "Casbin provider selected, but 'casbin' or 'casbin-motor-adapter' "
-            "are not installed."
+            f"Casbin provider selected, but required libraries are not installed: {e}. "
+            f"Ensure 'casbin' and 'casbin-motor-adapter' are in your environment."
         )
 
     # Extract required settings
@@ -57,6 +46,7 @@ async def _create_casbin_provider(settings: Dict[str, Any]) -> AuthorizationProv
 
     logger.info(f"Using Casbin model: {model_path}")
     adapter = CasbinMotorAdapter(mongo_uri, db_name)
+    # casbin.AsyncEnforcer is now available locally
     enforcer = casbin.AsyncEnforcer(str(model_path), adapter)
     await enforcer.load_policy()
 

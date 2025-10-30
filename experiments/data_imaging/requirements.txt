@@ -1,0 +1,11 @@
+# --- Dependencies for engine.py ---
+numpy
+matplotlib
+pillow
+httpx
+
+# --- Dependencies for actor.py (the actor) ---
+pymongo
+motor
+fastapi
+jinja2

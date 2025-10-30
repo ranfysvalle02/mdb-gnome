@@ -641,24 +641,54 @@ class ScopedCollectionWrapper:
         scoped_filter = self._inject_read_filter(filter)
         return await self._collection.count_documents(scoped_filter, *args, **kwargs)
 
-    def aggregate(
-        self,
-        pipeline: List[Dict[str, Any]],
-        *args,
-        **kwargs
-    ) -> AsyncIOMotorCursor:
-        """
-        Injects a $match stage at the beginning of the aggregation pipeline
-        to enforce the read scope.
-        """
-        scope_match_stage = {
-            "$match": {"experiment_id": {"$in": self._read_scopes}}
-        }
-        # Prepending the $match stage is the most efficient way to scope
-        scoped_pipeline = [scope_match_stage] + pipeline
-        return self._collection.aggregate(scoped_pipeline, *args, **kwargs)
-
-
+    def aggregate(  
+        self,  
+        pipeline: List[Dict[str, Any]],  
+        *args,  
+        **kwargs  
+    ) -> AsyncIOMotorCursor:  
+        """  
+        Injects a scope filter into the pipeline. For normal pipelines, we prepend   
+        a $match stage. However, if the first stage is $vectorSearch, we embed   
+        the read_scope filter into its 'filter' property, because $vectorSearch must   
+        remain the very first stage in Atlas.  
+        """  
+        if not pipeline:  
+            # No stages given, just prepend our $match  
+            scope_match_stage = {  
+                "$match": {"experiment_id": {"$in": self._read_scopes}}  
+            }  
+            pipeline = [scope_match_stage]  
+            return self._collection.aggregate(pipeline, *args, **kwargs)  
+    
+        # Identify the first stage  
+        first_stage = pipeline[0]  
+        first_stage_op = next(iter(first_stage.keys()), None)  # e.g. "$match", "$vectorSearch", etc.  
+    
+        if first_stage_op == "$vectorSearch":  
+            # We must not prepend $match or it breaks the pipeline.  
+            # Instead, embed our scope in the 'filter' of $vectorSearch.  
+            vs_stage = first_stage["$vectorSearch"]  
+            existing_filter = vs_stage.get("filter", {})  
+            scope_filter = {"experiment_id": {"$in": self._read_scopes}}  
+    
+            if existing_filter:  
+                # Combine the user's existing filter with our scope filter via $and  
+                new_filter = {"$and": [existing_filter, scope_filter]}  
+            else:  
+                new_filter = scope_filter  
+    
+            vs_stage["filter"] = new_filter  
+            # Return the pipeline as-is, so that $vectorSearch remains the first stage  
+            return self._collection.aggregate(pipeline, *args, **kwargs)  
+        else:  
+            # Normal case: pipeline doesn't start with $vectorSearch,   
+            # so we can safely prepend a $match stage for scoping.  
+            scope_match_stage = {  
+                "$match": {"experiment_id": {"$in": self._read_scopes}}  
+            }  
+            scoped_pipeline = [scope_match_stage] + pipeline  
+            return self._collection.aggregate(scoped_pipeline, *args, **kwargs)  
 class ScopedMongoWrapper:
     """
     Wraps an `AsyncIOMotorDatabase` to provide scoped collection access.
