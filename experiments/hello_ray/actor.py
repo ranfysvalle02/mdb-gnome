@@ -1,11 +1,23 @@
-# experiments/hello_ray/actor.py  
+# actor.py  
   
 import logging  
-import ray  
+# Instead of importing ray directly here, import the custom decorator you created:  
+# If your decorator is in main.py, do:  
+# from main import ray_actor  
+# or if you placed ray_actor into a separate module, import from there:  
+from main import ray_actor    
   
 logger = logging.getLogger(__name__)  
   
-@ray.remote  
+  
+@ray_actor(  
+    name="hello_ray-actor",       # Tells Ray to register the actor by this name  
+    namespace="modular_labs",     # Ray namespace  
+    lifetime="detached",          # Actor’s lifetime in Ray cluster  
+    max_restarts=-1,              # Unlimited restarts  
+    get_if_exists=True,           # Reuse if actor already exists  
+    fallback_if_no_db=True        # Example: handle no PyMongo scenario gracefully  
+)  
 class ExperimentActor:  
     """  
     Minimal Ray actor that can accept g.nome’s extra constructor parameters.  
@@ -22,7 +34,6 @@ class ExperimentActor:
         self.mongo_uri = mongo_uri  
         self.db_name = db_name  
         self.write_scope = write_scope  
-        # Provide a default if none was passed  
         self.read_scopes = read_scopes or []  
   
         logger.info(  
