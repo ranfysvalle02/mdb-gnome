@@ -37,8 +37,13 @@ import ray
   
 # Core dependencies and DB scoping  
 from core_deps import get_scoped_db  
-from async_mongo_wrapper import ScopedMongoWrapper  
-  
+
+try:  
+    from async_mongo_wrapper import ScopedMongoWrapper  
+except ImportError:  
+    # Fallback to the stub in core_deps if the real library is missing  
+    from core_deps import ScopedMongoWrapper  
+      
 # Our Ray Actor definition for this experiment  
 from .actor import ExperimentActor  
   

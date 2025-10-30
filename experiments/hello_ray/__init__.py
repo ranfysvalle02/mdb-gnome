@@ -13,6 +13,7 @@
 import logging  
 import ray  
 from fastapi import APIRouter, Request  
+from fastapi.templating import Jinja2Templates  
 from fastapi.responses import HTMLResponse  
   
 # Import the actor definition (which must be named `ExperimentActor`).  
@@ -21,6 +22,9 @@ from .actor import ExperimentActor
 logger = logging.getLogger(__name__)  
   
 bp = APIRouter()  
+  
+# Point this to your templates directory.  
+templates = Jinja2Templates(directory="experiments/hello_ray/templates")  
   
 def get_actor_handle() -> "ray.actor.ActorHandle":  
     """  
@@ -47,11 +51,10 @@ async def hello_ray_index(request: Request):
     A simple route that calls the Ray actor and returns its response.  
     """  
     actor = get_actor_handle()  # Returns or creates the Ray actor  
-    future = actor.say_hello.remote()  
-    greeting = await future  
+    greeting = await actor.say_hello.remote()  
   
-    html_content = f"""  
-    <h1>Hello Ray!</h1>  
-    <p>The actor responded: <strong>{greeting}</strong></p>  
-    """  
-    return HTMLResponse(html_content)  
+    # Render the 'index.html' template with the greeting  
+    return templates.TemplateResponse(  
+        "index.html",  
+        {"request": request, "greeting": greeting}  
+    )  
