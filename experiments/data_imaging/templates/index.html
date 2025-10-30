@@ -97,6 +97,27 @@
       transform: translateY(-2px);  
     }  
   
+    /* NEW: Styling for the bulk generation button */
+    .btn-bulk {
+      background-color: var(--atlas-green-darker);
+      color: var(--button-text-dark);
+      border: 1px solid var(--atlas-green-darker);
+    }
+    .btn-bulk:hover {
+      background-color: var(--atlas-green);
+      color: #000;
+      box-shadow: 0 0 15px var(--atlas-green);
+      transform: translateY(-2px);
+    }
+    .btn-bulk:disabled {
+        background-color: var(--atlas-hover-bg);
+        color: var(--atlas-mid-text);
+        border-color: var(--atlas-border);
+        cursor: not-allowed;
+        box-shadow: none;
+        transform: none;
+    }
+    
     .btn-clear {  
       background-color: transparent;  
       color: var(--atlas-delete-red);  
@@ -157,6 +178,14 @@
       color: var(--atlas-light-text);  
       font-weight: 500;  
     }  
+
+    /* NEW: Simple spinning animation for feedback */
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+    .spinner-border {
+        animation: spin 1s linear infinite;
+    }
   </style>  
 </head>  
 <body>  
@@ -167,9 +196,7 @@
   <h1>Workout Collection Gallery</h1>  
   <h2>The Workout Radiologist</h2>  
   
-  <!-- Controls -->  
   <div class="controls">  
-    <!-- Generate Form (POST) -->  
     <form action="/experiments/data_imaging/generate" method="POST" style="margin: 0;">  
       <button type="submit" class="control-btn btn-generate">  
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor"   
@@ -180,8 +207,22 @@
         Generate New Workout  
       </button>  
     </form>  
+
+    <form action="/experiments/data_imaging/generate-demo" method="POST" style="margin: 0;"
+          onsubmit="
+            this.querySelector('button').disabled=true; 
+            this.querySelector('button').innerHTML='<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'16\' height=\'16\' fill=\'currentColor\' class=\'spinner-border\' viewBox=\'0 0 16 16\'><path fill-rule=\'evenodd\' d=\'M8 3a5 5 0 1 0 0 10A5 5 0 0 0 8 3zm0 1a4 4 0 1 0 0 8 4 4 0 0 0 0-8z\'/><path d=\'M8 0a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 0zM14 8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 14 8zM3 8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 3 8zM8 16a.5.5 0 0 1-.5-.5v-2a.5.5 0 0 1 1 0v2A.5.5 0 0 1 8 16zM11.66 4.34a.5.5 0 0 1 .707.707l-1.414 1.414a.5.5 0 1 1-.707-.707l1.414-1.414zM4.34 11.66a.5.5 0 0 1-.707-.707l1.414-1.414a.5.5 0 1 1 .707.707L4.34 11.66zM12.778 12.778a.5.5 0 0 1-.707 0l-1.414-1.414a.5.5 0 1 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .707zM4.34 4.34a.5.5 0 0 1 0-.707l1.414-1.414a.5.5 0 1 1 .707.707L4.34 4.34z\'/>Loading...'; 
+            return true;
+          ">
+      <button type="submit" class="control-btn btn-generate btn-bulk">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor"   
+             viewBox="0 0 16 16">
+          <path d="M14 10a.5.5 0 0 0-.5-.5h-2a.5.5 0 0 0 0 1h.634l-2.585 3.102A1.5 1.5 0 0 1 7.42 15a1.5 1.5 0 0 1-1.353-.787L.811 7.276A1.5 1.5 0 0 1 2.373 5h3.91l.858-.96A1.5 1.5 0 0 1 8.854 3h5.45c.27 0 .5.224.5.5v6.5zM2.873 6a.5.5 0 0 0-.175.023L.811 7.276A.5.5 0 0 0 .811 7.276L5.067 14.21A.5.5 0 0 0 5.42 14.5a.5.5 0 0 0 .193-.027L8 10h-5.127zM6.28 9H13.5a.5.5 0 0 0 .5-.5V3.5A.5.5 0 0 0 13.5 3h-5.45a.5.5 0 0 0-.447.276L6.28 9zM6 10.5a.5.5 0 0 0-.5-.5h-2a.5.5 0 0 0 0 1h.634l-2.585 3.102A1.5 1.5 0 0 1 3.42 15a1.5 1.5 0 0 1-1.353-.787L.811 7.276A1.5 1.5 0 0 1 2.373 5h3.91l.858-.96A1.5 1.5 0 0 1 8.854 3h5.45c.27 0 .5.224.5.5v6.5z"/>
+        </svg>
+        Generate **100** Workouts
+      </button>
+    </form>
   
-    <!-- Clear Form (POST) -->  
     <form action="/experiments/data_imaging/clear" method="POST" style="margin: 0;"   
           onsubmit="return confirm('Are you sure you want to delete ALL workouts?');">  
       <button type="submit" class="control-btn btn-clear">  
@@ -197,13 +238,11 @@
     </form>  
   </div>  
   
-  <!-- The gallery grid is replaced by the server's injected HTML snippet -->  
   <div class="collection-grid">  
     {{ collection_images_html|safe }}  
   </div>  
 </div>  
   
-<!-- Particle.js background script (same as your original or omit if you don't need) -->  
 <script>  
 document.addEventListener("DOMContentLoaded", function() {  
   const canvas = document.getElementById("particle-canvas");  
@@ -259,4 +298,4 @@ document.addEventListener("DOMContentLoaded", function() {
 </script>  
   
 </body>  
-</html>  
+</html>

@@ -102,7 +102,41 @@ async def analyze_workout(
         logger.error(f"Actor call failed for run_analysis: {e}", exc_info=True)
         raise HTTPException(500, f"Actor analysis failed: {e}")
 
+@bp.post("/generate-demo")
+async def generate_demo(
+    request: Request,
+    actor: "ray.actor.ActorHandle" = get_actor_handle()
+):
+    """
+    Calls the Ray Actor to create *multiple* new workout docs for a demo,
+    then redirects to the gallery page.
+    """
+    # --- Configuration ---
+    NUM_GENERATIONS = 100
+    # ---------------------
 
+    logger.info(f"Initiating bulk generation of {NUM_GENERATIONS} workout docs.")
+    
+    try:
+        # 1. Start all actor calls concurrently
+        tasks = [actor.generate_one.remote() for _ in range(NUM_GENERATIONS)]
+        
+        # 2. Wait for all tasks to complete (This can take a while)
+        # Note: We discard the results, as we just want the operation to complete.
+        await ray.get(tasks) 
+        
+        logger.info(f"Successfully generated {NUM_GENERATIONS} workout docs.")
+
+        # Use the request's URL to build a relative path back to the gallery
+        redirect_url = request.url_for("show_gallery")
+        return RedirectResponse(
+            url=redirect_url, 
+            status_code=status.HTTP_303_SEE_OTHER
+        )
+    except Exception as e:
+        logger.error(f"Actor call failed during bulk generation: {e}", exc_info=True)
+        raise HTTPException(500, f"Actor failed to generate demo docs: {e}")
+        
 @bp.post("/generate")
 async def generate_one(
     request: Request, 
