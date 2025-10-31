@@ -2,7 +2,7 @@
 
 import logging
 import ray
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, Request, HTTPException, Depends, Query  # <-- UPDATED
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette import status
 
@@ -79,14 +79,26 @@ async def show_gallery(
 async def show_detail(
     request: Request, 
     workout_id: int, 
-    actor: "ray.actor.ActorHandle" = get_actor_handle()
+    actor: "ray.actor.ActorHandle" = get_actor_handle(),
+    # --- NEW: Add query parameters for channel selection ---
+    r: str = Query("heart_rate", alias="r_key"),
+    g: str = Query("calories_per_min", alias="g_key"),
+    b: str = Query("speed_kph", alias="b_key")
 ):
     """
-    Renders a detail page by calling the actor.
+    Renders a detail page by calling the actor. (UPDATED)
+    Accepts query parameters ?r_key=...&g_key=...&b_key=...
     """
     context = {"url": str(request.url)}
     try:
-        html = await actor.render_detail_page.remote(workout_id, context)
+        # Pass the new keys to the actor
+        html = await actor.render_detail_page.remote(
+            workout_id, 
+            context,
+            r_key=r,
+            g_key=g,
+            b_key=b
+        )
         return HTMLResponse(html)
     except Exception as e:
         logger.error(f"Actor call failed for render_detail_page: {e}", exc_info=True)
@@ -105,7 +117,13 @@ async def analyze_workout(
     try:
         await actor.run_analysis.remote(workout_id)
         # Use the request's URL to build a relative path back to the detail page
+        # PRESERVE query params on redirect
         redirect_url = request.url_for("show_detail", workout_id=workout_id)
+        
+        # Append existing query params (r_key, g_key, b_key)
+        if request.url.query:
+            redirect_url = f"{redirect_url}?{request.url.query}"
+
         return RedirectResponse(
             url=redirect_url, 
             status_code=status.HTTP_303_SEE_OTHER

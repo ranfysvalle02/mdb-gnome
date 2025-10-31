@@ -17,11 +17,22 @@ PLACEHOLDER_CLASSIFICATION = "Pending Analysis"
 PLACEHOLDER_SUMMARY = "Click 'Generate AI Summary' to analyze"
 PLACEHOLDER_PROMPT = "(not yet generated)"
 
-# --- Normalization Bounds ---
+# --- NEW: Define all available metrics for the UI ---
+AVAILABLE_METRICS = [
+    "heart_rate",
+    "calories_per_min",
+    "speed_kph",
+    "power",
+    "cadence"
+]
+
+# --- Normalization Bounds (UPDATED) ---
 NORM_BOUNDS = {
     "heart_rate": (50, 200),
     "calories_per_min": (0, 20),
     "speed_kph": (0, 15),
+    "power": (0, 400),       # New
+    "cadence": (0, 120),      # New
 }
 
 # --- Functions ---
@@ -119,7 +130,7 @@ def analyze_time_series_features(doc: dict, neighbors: list[dict]) -> tuple[str,
 
 def create_synthetic_apple_watch_data(suffix: int) -> dict:
     """
-    Generates synthetic data with random variations.
+    Generates synthetic data with random variations. (UPDATED)
     """
     np.random.seed(suffix)
     t = np.linspace(0, 2 * np.pi, 64)
@@ -138,6 +149,18 @@ def create_synthetic_apple_watch_data(suffix: int) -> dict:
     spd_array[:5] = 2.0 + np.random.rand(5)*0.4
     spd_array[-5:] = 1.2 + np.random.rand(5)*0.3
 
+    # --- NEW DATA ---
+    power_base = 150 + (suffix % 8) * 10
+    power_array = power_base + 50 * np.sin(t + np.random.rand() * 0.7) + np.random.rand(64) * 15
+    power_array[power_array < 0] = 0 # Power can't be negative
+
+    cadence_base = 80 + (suffix % 4) * 5
+    cadence_array = np.full(64, cadence_base) + np.random.rand(64) * 3
+    # Add some dropouts
+    cadence_array[10:15] = 0 
+    cadence_array[40:45] = 0
+    # --- END NEW DATA ---
+
     doc_id = f"workout_rad_{suffix}"
     return {
         "_id": doc_id,
@@ -145,6 +168,8 @@ def create_synthetic_apple_watch_data(suffix: int) -> dict:
             "heart_rate": list(np.round(np.maximum(hr_array, NORM_BOUNDS["heart_rate"][0]), 2)),
             "calories_per_min": list(np.round(np.maximum(cal_array, NORM_BOUNDS["calories_per_min"][0]), 2)),
             "speed_kph": list(np.round(np.maximum(spd_array, NORM_BOUNDS["speed_kph"][0]), 2)),
+            "power": list(np.round(np.maximum(power_array, NORM_BOUNDS["power"][0]), 2)), # New
+            "cadence": list(np.round(np.maximum(cadence_array, NORM_BOUNDS["cadence"][0]), 2)), # New
         },
         "start_time": datetime(2025, 10, 27, 10, 10 + (suffix % 40), 0, tzinfo=timezone.utc),
         "workout_type": np.random.choice(["Outdoor Run", "Cycling", "Strength", "Yoga"]),
@@ -174,41 +199,63 @@ def _norm_array(x, lo, hi):
     return ((x_clipped - lo) / rng * 255).astype(np.uint8)
 
 
-def generate_workout_viz_arrays(doc: dict, size=8):
-    """Generates the normalized 8x8x3 RGB array plus raw arrays."""
-    raw_hr = doc.get("time_series", {}).get("heart_rate", [0]*64)
-    raw_cal = doc.get("time_series", {}).get("calories_per_min", [0]*64)
-    raw_spd = doc.get("time_series", {}).get("speed_kph", [0]*64)
+def generate_workout_viz_arrays(
+    doc: dict, 
+    size=8, 
+    r_key: str = "heart_rate", 
+    g_key: str = "calories_per_min", 
+    b_key: str = "speed_kph"
+):
+    """Generates the normalized 8x8x3 RGB array plus raw arrays. (UPDATED)"""
+    
+    # Helper to safely get data
+    def get_raw_data(key):
+        return doc.get("time_series", {}).get(key, [0]*64)
 
-    raw_hr = np.array(raw_hr, dtype=float)
-    raw_cal = np.array(raw_cal, dtype=float)
-    raw_spd = np.array(raw_spd, dtype=float)
+    # Get data for all available metrics
+    raw_data = {key: np.array(get_raw_data(key), dtype=float) for key in AVAILABLE_METRICS}
+    
+    # Get normalization bounds for selected keys, with a fallback
+    r_bounds = NORM_BOUNDS.get(r_key, (0, 1))
+    g_bounds = NORM_BOUNDS.get(g_key, (0, 1))
+    b_bounds = NORM_BOUNDS.get(b_key, (0, 1))
 
-    r_1d = _norm_array(raw_hr, *NORM_BOUNDS["heart_rate"])
-    g_1d = _norm_array(raw_cal, *NORM_BOUNDS["calories_per_min"])
-    b_1d = _norm_array(raw_spd, *NORM_BOUNDS["speed_kph"])
+    r_1d = _norm_array(raw_data.get(r_key, np.zeros(64)), *r_bounds)
+    g_1d = _norm_array(raw_data.get(g_key, np.zeros(64)), *g_bounds)
+    b_1d = _norm_array(raw_data.get(b_key, np.zeros(64)), *b_bounds)
 
     r_2d = r_1d.reshape(size, size)
     g_2d = g_1d.reshape(size, size)
     b_2d = b_1d.reshape(size, size)
 
     rgb = np.stack([r_2d, g_2d, b_2d], axis=-1)
+    
     return {
         "rgb_combined": rgb,
-        "raw_hr": raw_hr,
-        "raw_cal": raw_cal,
-        "raw_speed": raw_spd,
+        # Return all raw data for charts
+        "raw_data": raw_data, 
+        # Return channel-specific data for viz
         "channel_r_2d": r_2d,
         "channel_g_2d": g_2d,
         "channel_b_2d": b_2d,
+        "selected_keys": {"r": r_key, "g": g_key, "b": b_key},
+        "selected_bounds": {"r": r_bounds, "g": g_bounds, "b": b_bounds}
     }
 
 
 def get_feature_vector(doc: dict):
     """
-    Flattens the 8x8x3 RGB array (192 values) into one vector.
+    Flattens the 8x8x3 RGB array (192 values) into one vector. (UPDATED)
+    IMPORTANT: This MUST always use the canonical keys (hr, cal, speed)
+    to ensure all vectors are in the same feature space for comparison.
     """
-    arrays = generate_workout_viz_arrays(doc, size=8)
+    arrays = generate_workout_viz_arrays(
+        doc, 
+        size=8,
+        r_key="heart_rate",
+        g_key="calories_per_min",
+        b_key="speed_kph"
+    )
     return arrays["rgb_combined"].reshape(-1)  # returns a NumPy array
 
 

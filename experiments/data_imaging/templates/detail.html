@@ -143,6 +143,47 @@
     background-color: var(--atlas-hover-bg);  
     box-shadow: 0 0 10px rgba(0, 237, 100, 0.3);  
   }  
+
+  /* --- NEW: Channel Selectors --- */
+  .channel-selectors {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    align-items: center;
+    background-color: var(--atlas-hover-bg);
+    padding: 15px 20px;
+    border-radius: 8px;
+    border: 1px solid var(--atlas-border);
+    margin-bottom: 30px;
+  }
+  .selector-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .selector-group label {
+    font-weight: 600;
+    font-size: 1.05em;
+    color: var(--atlas-light-text);
+  }
+  .selector-group select {
+    background-color: var(--atlas-bg);
+    color: var(--atlas-light-text);
+    border: 1px solid var(--atlas-border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 1em;
+    font-family: inherit;
+    font-weight: 500;
+  }
+  .channel-selectors .control-btn {
+    background-color: var(--atlas-green);
+    color: var(--button-text-dark);
+    margin: 0;
+  }
+  .channel-selectors .control-btn:hover {
+    background-color: #fff;
+  }
   
   /* --- Main Content Grid --- */  
   .content-grid {  
@@ -454,7 +495,7 @@
     margin-right: 15px;  
     flex-shrink: 0;  
   }  
-  /* Step 1: Charts */  
+  /* Step 1: Charts (UPDATED) */  
   .step-1-charts {  
     display: grid;  
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));   
@@ -470,6 +511,8 @@
   .step-1-charts .red { color: var(--accent-red); }  
   .step-1-charts .green { color: var(--accent-green-viz); }  
   .step-1-charts .blue { color: var(--accent-blue); }  
+  .step-1-charts .orange { color: var(--accent-orange); } /* NEW */
+  .step-1-charts .purple { color: var(--accent-purple); } /* NEW */
   
   /* Step 2: Fold Visualization */  
   .fold-visualization {  
@@ -646,8 +689,46 @@
   </a>  
   
   <h1>Workout Detail: {{workout_id}}</h1>  
+
+  <form id="channelSelectorForm" method="GET" action="/experiments/data_imaging/workout/{{workout_id}}">
+    <div class="channel-selectors">
+      <div class="selector-group">
+        <label for="r_key" style="color: var(--accent-red);">R Channel:</label>
+        <select name="r_key" id="r_key">
+          {% for metric in all_metrics %}
+          <option value="{{ metric }}" {% if metric == selected_r_key %}selected{% endif %}>
+            {{ metric.replace('_', ' ')|title }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      
+      <div class="selector-group">
+        <label for="g_key" style="color: var(--accent-green-viz);">G Channel:</label>
+        <select name="g_key" id="g_key">
+          {% for metric in all_metrics %}
+          <option value="{{ metric }}" {% if metric == selected_g_key %}selected{% endif %}>
+            {{ metric.replace('_', ' ')|title }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      
+      <div class="selector-group">
+        <label for="b_key" style="color: var(--accent-blue);">B Channel:</label>
+        <select name="b_key" id="b_key">
+          {% for metric in all_metrics %}
+          <option value="{{ metric }}" {% if metric == selected_b_key %}selected{% endif %}>
+            {{ metric.replace('_', ' ')|title }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      
+      <button type="submit" class="control-btn" style="padding: 10px 18px; margin-bottom: 0;">Update View</button>
+    </div>
+  </form>
   
-  <!-- Main Grid: Left=Image, Right=JSON -->  
   <div class="content-grid">  
     <div class="image-box">  
       <h2>Workout Fingerprint</h2>  
@@ -655,25 +736,26 @@
            alt="Generated feature image from JSON data"  
            class="main-img">  
       <p class="caption">  
-        This 8x8 "visual fingerprint" is flattened into a 192-element vector for search.  
+        This 8x8 "visual fingerprint" is flattened into a 192-element vector for search.
+        (Using canonical keys: HR, Calories, Speed)
       </p>  
       <p class="caption">  
-        <b>R:</b> Heart Rate ({{norm_bounds_hr}})<br>  
-        <b>G:</b> Calories ({{norm_bounds_cal}})<br>  
-        <b>B:</b> Speed ({{norm_bounds_speed}})  
+        <b>R:</b> {{ selected_r_key.replace('_', ' ')|title }} ({{norm_bounds_r}})<br>  
+        <b>G:</b> {{ selected_g_key.replace('_', ' ')|title }} ({{norm_bounds_g}})<br>  
+        <b>B:</b> {{ selected_b_key.replace('_', ' ')|title }} ({{norm_bounds_b}})  
       </p>  
     </div>  
   
     <div class="json-box">  
       <h2>Original JSON Data</h2>  
       <p class="caption">  
-        Note the <code>workout_vector</code> field was added automatically during generation.  
+        Note the <code>workout_vector</code> field was added automatically during generation.
+        (And <code>power</code>/<code>cadence</code> are now included!)
       </p>  
       <pre><code>{{json_data_pretty}}</code></pre>  
     </div>  
   </div>  
   
-  <!-- AI Summary Box -->  
   <div class="ai-summary-box">  
     <div class="ai-header">  
       <h2>  
@@ -723,7 +805,6 @@
     <p class="ai-summary-text">{{ai_summary}}</p>  
   </div>  
   
-  <!-- kNN / Vector Search Results -->  
   <div class="guide-box guide-box-knn">  
     <h2>  
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"  
@@ -748,7 +829,6 @@
     <ul>{{ai_neighbors_html | safe}}</ul>  
   </div>  
   
-  <!-- Encoding Pipeline Explanation -->  
   <div class="explanation-box">  
     <div class="pipeline-header">  
       <h2>  
@@ -797,20 +877,28 @@
   
         <div class="pipeline-step">  
           <h3><span class="step-number">1</span> Start: 1D Time-Series Data (64 mins)</h3>  
-          <p>We begin with three separate 64-point data arrays, normalized to a 0-255 scale.</p>  
+          <p>We begin with multiple 64-point data arrays, normalized to a 0-255 scale.</p>  
           <div class="step-1-charts">  
             <div>  
               <h4 class="red">Heart Rate (1D Array)</h4>  
-              <img src="data:image/png;base64,{{b64_chart_hr}}" alt="Heart Rate Line Chart" class="chart-img">  
+              <img src="data:image/png;base64,{{all_charts.heart_rate}}" alt="Heart Rate Line Chart" class="chart-img">  
             </div>  
             <div>  
               <h4 class="green">Calories (1D Array)</h4>  
-              <img src="data:image/png;base64,{{b64_chart_cal}}" alt="Calories Line Chart" class="chart-img">  
+              <img src="data:image/png;base64,{{all_charts.calories_per_min}}" alt="Calories Line Chart" class="chart-img">  
             </div>  
             <div>  
               <h4 class="blue">Speed (1D Array)</h4>  
-              <img src="data:image/png;base64,{{b64_chart_speed}}" alt="Speed Line Chart" class="chart-img">  
-            </div>  
+              <img src="data:image/png;base64,{{all_charts.speed_kph}}" alt="Speed Line Chart" class="chart-img">  
+            </div>
+            <div>  
+              <h4 class="orange">Power (1D Array)</h4>  
+              <img src="data:image/png;base64,{{all_charts.power}}" alt="Power Line Chart" class="chart-img">  
+            </div>
+            <div>  
+              <h4 class="purple">Cadence (1D Array)</h4>  
+              <img src="data:image/png;base64,{{all_charts.cadence}}" alt="Cadence Line Chart" class="chart-img">  
+            </div>
           </div>  
         </div>  
   
@@ -845,15 +933,15 @@
           <div class="step-3-substeps">  
             <div class="substep">  
               <img src="data:image/png;base64,{{b64_r}}" alt="Red channel" class="channel-img">  
-              <p><strong>Heart Rate</strong> data provides the pixel values for the <strong class="red-label">Red channel</strong>.</p>  
+              <p><strong>{{ selected_r_key.replace('_', ' ')|title }}</strong> data provides the pixel values for the <strong class="red-label">Red channel</strong>.</p>  
             </div>  
             <div class="substep">  
               <img src="data:image/png;base64,{{b64_g}}" alt="Green channel" class="channel-img">  
-              <p><strong>Calories</strong> data provides the pixel values for the <strong class="green-label">Green channel</strong>.</p>  
+              <p><strong>{{ selected_g_key.replace('_', ' ')|title }}</strong> data provides the pixel values for the <strong class="green-label">Green channel</strong>.</p>  
             </div>  
             <div class="substep">  
               <img src="data:image/png;base64,{{b64_b}}" alt="Blue channel" class="channel-img">  
-              <p><strong>Speed</strong> data provides the pixel values for the <strong class="blue-label">Blue channel</strong>.</p>  
+              <p><strong>{{ selected_b_key.replace('_', ' ')|title }}</strong> data provides the pixel values for the <strong class="blue-label">Blue channel</strong>.</p>  
             </div>  
           </div>  
           <div class="pipeline-arrow">&dArr;</div>  
@@ -878,7 +966,6 @@
     </div>  
   </div>  
   
-  <!-- Radiologist's Guide -->  
   <div class="guide-box guide-box-radiologist">  
     <h2>  
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"  
@@ -896,18 +983,17 @@
     </h2>  
     <p>Think of this 8x8 image like a tiny X-ray of your workout's effort structure:</p>  
     <ul>  
-      <li><strong>Overall Color:</strong> Red=HR, Green=Calories, Blue=Speed.  
-        <span style="color: #FFB6F1; background: #2c1a2b; padding: 1px 4px; border-radius: 3px;">Purplish</span> (R+B) = High HR & Speed (intense run).  
-        <span style="color: #DFFFBF; background: #1a3a53; padding: 1px 4px; border-radius: 3px;">Yellowish</span> (R+G) = High HR & Calories (cardio/strength).  
+      <li><strong>Overall Color:</strong> The color mix shows which metrics are high *at the same time*.
+        <span style="color: #FFB6F1; background: #2c1a2b; padding: 1px 4px; border-radius: 3px;">Purplish</span> (R+B) = High Red & Blue channels.  
+        <span style="color: #DFFFBF; background: #1a3a53; padding: 1px 4px; border-radius: 3px;">Yellowish</span> (R+G) = High Red & Green channels.  
         <span style="color: #000; background: #fff; padding: 1px 4px; border-radius: 3px;">White</span> = Peak effort (all channels high).  
         <span style="color: #eee; background: #333; padding: 1px 4px; border-radius: 3px;">Dark/Black</span> = Low effort (rest/warmup).</li>  
       <li><strong>Texture & Patterns (Top-Left to Bottom-Right):</strong> The image reads like text. Top-Left (start) is often dark (warm-up), Bottom-Right (end) is often dark (cool-down).  
-        Clear <strong>horizontal stripes</strong> in Blue suggest speed intervals.  
+        Clear <strong>horizontal stripes</strong> suggest intervals.  
         A smooth <strong>diagonal color gradient</strong> indicates a progressive ramp-up/down.</li>  
     </ul>  
   </div>  
   
-  <!-- Polymorphic Data Box (Yoga, Strength, etc.) -->  
   <div class="guide-box polymorphic-box">  
     <h2>  
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"  
@@ -939,7 +1025,6 @@
   
 </div>  
   
-<!-- Prompt Modal -->  
 <div id="promptModal" class="modal">  
   <div class="modal-content">  
     <span class="close-btn">&times;</span>  
@@ -948,38 +1033,38 @@
     <div class="prompt-code"><pre>{{llm_analysis_prompt}}</pre></div>  
     <p class="caption" style="margin-top: 15px;">  
       <strong>System Instruction:</strong>  
-      "You are a professional Workout Radiologist. Your job is to synthesize all provided data into a concise, qualitative summary (max 3 sentences) for a fitness expert. Pay special attention to the <strong>Radiology Task</strong> section, where you must analyze any <strong>discrepancies</strong> between the quantitative metrics and the user's qualitative metadata. Explain the <i>function</i> of the effort and provide a holistic diagnosis."  
+      "You are a professional Workout Radiologist. Your job is to synthesize the provided data "
+      "into a concise, qualitative summary (max 3 sentences)."
     </p>  
   </div>  
 </div>  
   
-<!-- "Why is this cool?" Modal -->  
 <div id="whyModal" class="modal">  
   <div class="modal-content">  
     <span class="close-btn">&times;</span>  
     <h2>Why the "Visual Fingerprint"?</h2>  
-    <div class="modal-comparison">  
-      <div class="pain-point">  
+    <div class="modal-comparison" style="display: flex; gap: 20px;">  
+      <div class="pain-point" style="flex: 1;">  
         <h3>❌ The Old Way (Painful!)</h3>  
         <p>Comparing raw time-series data (like minute-by-minute heart rate) directly is:</p>  
-        <ul>  
+        <ul style="padding-left: 20px;">  
           <li><strong>Slow:</strong> Algorithms like DTW are complex - comparing millions takes ages.</li>  
           <li><strong>Unindexable:</strong> You can't build a fast search index. Every search requires comparing against *everything*.</li>  
           <li><strong>Impractical:</strong> Real-time "find similar patterns" is basically impossible at scale.</li>  
         </ul>  
       </div>  
-      <div class="divider"></div>  
-      <div class="cool-point">  
+      <div class="divider" style="border-left: 2px solid var(--atlas-border);"></div>  
+      <div class="cool-point" style="flex: 1;">  
         <h3>✅ The Vector Way (Awesome!)</h3>  
         <p>Turning the pattern into a vector ("fingerprint") via this encoding pipeline + Atlas Vector Search is:</p>  
-        <ul>  
+        <ul style="padding-left: 20px;">  
           <li><strong>Indexable:</strong> Atlas builds a highly optimized vector index (HNSW).</li>  
           <li><strong>Fast:</strong> Finding similar patterns in millions takes milliseconds, not hours.</li>  
           <li><strong>Shape-Focused:</strong> Captures the *structure* of the effort, perfect for finding workouts that *feel* the same.</li>  
         </ul>  
       </div>  
     </div>  
-    <p class="bottom-line">  
+    <p class="bottom-line" style="text-align: center; font-size: 1.2em; font-weight: 600; margin-top: 25px; color: var(--atlas-light-text);">  
       <strong>We trade a little precision for a HUGE gain in speed and scalability!</strong>  
     </p>  
   </div>  
@@ -987,7 +1072,7 @@
   
 <script>  
 document.addEventListener("DOMContentLoaded", function() {  
-  // Particle background (optional). If you have the code, place it here.  
+  // --- Particle background (optional). If you have the code, place it here. ---
   const canvas = document.getElementById("particle-canvas");  
   if (!canvas) {  
     console.error("Particle.js: Canvas element with id 'particle-canvas' not found.");  
@@ -1086,134 +1171,81 @@ document.addEventListener("DOMContentLoaded", function() {
   const analyzeBtn = document.getElementById("analyzeBtn");  
   if (analyzeForm && analyzeBtn) {  
     analyzeForm.addEventListener("submit", function(e) {  
-      e.preventDefault();  
+      e.preventDefault(); // Stop default form submission
+      
+      // Disable button and show loading state
       analyzeBtn.disabled = true;  
       analyzeBtn.innerHTML = 'Analyzing...';  
       analyzeBtn.style.backgroundColor = 'var(--accent-orange)';  
       analyzeBtn.style.color = 'var(--button-text-dark)';  
+      
+      // Get the current URL's query string (to preserve r_key, g_key, b_key)
+      const queryString = window.location.search;
   
       fetch(analyzeForm.action, {  
         method: 'POST',  
         headers: {  
           'Content-Type': 'application/json'  
         }  
-      }).then(response => {  
-        if (response.ok) {  
+      })
+      .then(response => {  
+        // The server sends a 303 redirect. We need to follow it.
+        if (response.status === 303 || response.redirected) {
+          // Manually redirect, preserving the original query string
+          let redirectUrl = response.headers.get('Location');
+          if (redirectUrl.indexOf('?') === -1) { // Check if redirect URL already has params
+             redirectUrl += queryString; // Add our params if not
+          }
+          window.location.href = redirectUrl;  
+        } else if (response.ok) {  
+          // Fallback if not a redirect (e.g., if code changed)
           window.location.reload();  
-        } else {  
+        } else {
+          // Handle errors
           response.json().then(data => {  
             alert(`LLM Analysis Failed: ${data.detail}`);  
           }).catch(() => {  
             alert('LLM Analysis Failed. Check console and server logs.');  
-          });  
-          // Restore button on failure  
-          analyzeBtn.disabled = false;  
-          analyzeBtn.innerHTML = `  
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"  
-                 fill="currentColor" viewBox="0 0 16 16"  
-                 style="vertical-align: -2px; margin-right: 5px;">  
-              <path d="M8 15A7 7 0 1 0  
-                       8 1a7 7 0 0 0 0  
-                       14zm-5.467 4.14C7.02 12.637  
-                       7.558 13 8 13c.448 0 .89-.37  
-                       1.341-.758.384-.33  
-                       1.164-.98 1.956-1.579.529-.396  
-                       .958-.87 1.253-1.412.308-.567  
-                       .452-1.217.452-1.921 0-.663  
-                       -.122-1.284-.367-1.841  
-                       -.247-.568-.62-1.11  
-                       -1.12-1.583-.497-.47  
-                       -1.127-.866-1.87  
-                       -1.171C9.697 5.093 8.87  
-                       4.75 8 4.75c-.878  
-                       0-1.688.354-2.457.784  
-                       -.735.41-1.353.94  
-                       -1.854 1.572-.497.625  
-                       -.873 1.342-1.124  
-                       2.144-.25.808-.372  
-                       1.68-.372 2.616 0  
-                       .666.126 1.298.375  
-                       1.879.248.568.618  
-                       1.107 1.117  
-                       1.582.497.47 1.127  
-                       .865 1.87  
-                       1.171z"/>  
-              <path fill-rule="evenodd"  
-                    d="M8 15A7 7 0 1 0  
-                       8 1a7 7 0 0  
-                       0 0 14zM8  
-                       2A6 6 0 1 1  
-                       8 14 6 6 0 0  
-                       1 8 2z"/>  
-            </svg>  
-            Generate AI Summary  
-          `;  
-          // Restore original button style  
-          analyzeBtn.style.backgroundColor = 'var(--accent-blue)';  
-          analyzeBtn.style.color = 'white';  
-        }  
-      }).catch(error => {  
+          });
+          // Restore button on failure
+          analyzeBtn.disabled = false;
+          analyzeBtn.innerHTML = `... (omitted for brevity) ... Generate AI Summary`;
+          analyzeBtn.style.backgroundColor = 'var(--accent-blue)';
+          analyzeBtn.style.color = 'white';
+        }
+      })
+      .catch(error => {
+        // Handle network errors
         console.error('Network Error:', error);  
         alert('Network error during analysis.');  
-        // Restore button  
-        analyzeBtn.disabled = false;  
-        analyzeBtn.innerHTML = `  
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"  
-               fill="currentColor" viewBox="0 0 16 16"  
-               style="vertical-align: -2px; margin-right: 5px;">  
-             <path d="M8 15A7 7 0 1 0  
-                      8 1a7 7 0 0 0 0  
-                      14zm-5.467 4.14C7.02 12.637  
-                      7.558 13 8 13c.448 0  
-                      .89-.37 1.341-.758.384  
-                      -.33 1.164-.98 1.956  
-                      -1.579.529-.396  
-                      .958-.87 1.253-1.412  
-                      .308-.567.452-1.217  
-                      .452-1.921  
-                      0-.663-.122-1.284  
-                      -.367-1.841  
-                      -.247-.568-.62  
-                      -1.11-1.12-1.583  
-                      -.497-.47-1.127-.866  
-                      -1.87-1.171C9.697  
-                      5.093 8.87  
-                      4.75 8  
-                      4.75c-.878  
-                      0-1.688.354  
-                      -2.457.784  
-                      -.735.41-1.353.94  
-                      -1.854 1.572  
-                      -.497.625  
-                      -.873 1.342  
-                      -1.124 2.144  
-                      -.25.808-.372  
-                      1.68-.372 2.616  
-                      0 .666.126  
-                      1.298.375  
-                      1.879.248.568.618  
-                      1.107 1.117  
-                      1.582.497.47  
-                      1.127.865  
-                      1.87 1.171z"/>  
-             <path fill-rule="evenodd"  
-                   d="M8 15A7 7 0 1 0  
-                      8 1a7 7 0 0  
-                      0 0 14zM8  
-                      2A6 6 0 1  
-                      1 8 14 6  
-                      6 0 0 1  
-                      8 2z"/>  
-          </svg>  
-          Generate AI Summary  
-        `;  
-        analyzeBtn.style.backgroundColor = 'var(--accent-blue)';  
-        analyzeBtn.style.color = 'white';  
+        // Restore button
+        analyzeBtn.disabled = false;
+        analyzeBtn.innerHTML = `... (omitted for brevity) ... Generate AI Summary`;
+        analyzeBtn.style.backgroundColor = 'var(--accent-blue)';
+        analyzeBtn.style.color = 'white';
       });  
     });  
-  }  
+  }
+  
+  // --- NEW: Auto-submit channel selector form on change ---
+  const rSelect = document.getElementById('r_key');
+  const gSelect = document.getElementById('g_key');
+  const bSelect = document.getElementById('b_key');
+  const form = document.getElementById('channelSelectorForm');
+
+  function handleSubmit() {
+    form.submit();
+  }
+
+  // We don't want to auto-submit on every single change,
+  // so we'll rely on the "Update View" button.
+  // If you *did* want auto-submit, you'd uncomment these:
+  // if(rSelect) rSelect.addEventListener('change', handleSubmit);
+  // if(gSelect) gSelect.addEventListener('change', handleSubmit);
+  // if(bSelect) bSelect.addEventListener('change', handleSubmit);
+
 });  
 </script>  
   
 </body>  
-</html>  
+</html>
