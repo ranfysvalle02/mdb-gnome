@@ -45,7 +45,7 @@
             margin-bottom: 20px;  
             font-size: 0.9em;  
         }
-        /* --- NEW STYLES FOR EXPORT BUTTON --- */
+        /* --- STYLES FOR EXPORT BUTTON --- */
         .experiment-actions {
             margin-top: 10px;
         }
@@ -60,6 +60,24 @@
             font-size: 0.9em;
             font-weight: 500;
             display: inline-block;
+        }
+        /* --- STYLES FOR BADGES --- */
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            margin-left: 10px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .badge-public {
+            background-color: #007bff; /* Blue */
+            color: white;
+        }
+        .badge-auth {
+            background-color: #dc3545; /* Red */
+            color: white;
         }
         /* ------------------------------------ */
     </style>  
@@ -90,20 +108,26 @@
                 <strong>  
                     <a href="{{ meta.url }}">{{ meta.name }}</a>  
                 </strong>  
+                
+                {# Security indicator #}
                 {% if meta.auth_required %}  
-                    <span title="Authentication Required">🔒</span>  
+                    <span class="badge badge-auth" title="Authentication Required">REQUIRES AUTH</span>  
                 {% else %}  
-                    <span title="Public">🔓</span>  
-                {% endif %}  
+                    <span class="badge badge-public" title="Public">PUBLIC</span>  
+                {% endif %}
+                
                 <p>{{ meta.description }}</p>  
                 <small>Path: <code>{{ meta.url }}</code></small>  
 
+                {# Export button now shows if (not auth_required) OR (auth_required AND current_user) #}
+                {% if not meta.auth_required or current_user %}
                 <div class="experiment-actions">
                     <a href="{{ request.url_for('package_standalone', slug_id=slug) }}"
                        class="export-button">
                        📦 Standalone Export
                     </a>
                 </div>
+                {% endif %}
 
             </li>  
         {% else %}  

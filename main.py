@@ -17,7 +17,7 @@ import shutil
 import zipfile
 import fnmatch
 import io
-import re  # Needed for requirement parsing
+import re # Needed for requirement parsing
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 from contextlib import asynccontextmanager
@@ -25,7 +25,7 @@ from urllib.parse import quote
 
 # Attempt to see if PyMongo is installed (for fallback logic in ray_actor)
 try:
-    import pymongo  # or from async_mongo_wrapper import ScopedMongoWrapper
+    import pymongo # or from async_mongo_wrapper import ScopedMongoWrapper
     HAVE_PYMONGO = True
 except ImportError:
     HAVE_PYMONGO = False
@@ -71,7 +71,7 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 # Third-party for dependency parsing
 try:
-    import pkg_resources  # Used for robust requirement parsing
+    import pkg_resources # Used for robust requirement parsing
 except ImportError:
     pass
 
@@ -193,13 +193,13 @@ if ADMIN_PASSWORD_DEFAULT == "password123":
 
 
 # --- NEW: Backblaze B2 Configuration ---
-B2_ENDPOINT_URL = os.getenv("B2_ENDPOINT_URL")  # e.g., "https://s3.us-west-004.backblazeb2.com"
+B2_ENDPOINT_URL = os.getenv("B2_ENDPOINT_URL") # e.g., "https://s3.us-west-004.backblazeb2.com"
 B2_BUCKET_NAME = os.getenv("B2_BUCKET_NAME")
 B2_ACCESS_KEY_ID = os.getenv("B2_ACCESS_KEY_ID")
 B2_SECRET_ACCESS_KEY = os.getenv("B2_SECRET_ACCESS_KEY")
 
 B2_ENABLED = all([B2_ENDPOINT_URL, B2_BUCKET_NAME, B2_ACCESS_KEY_ID, B2_SECRET_ACCESS_KEY, BOTO3_AVAILABLE])
-s3_client = None  # Will be initialized in lifespan
+s3_client = None # Will be initialized in lifespan
 
 if not BOTO3_AVAILABLE:
     logger.critical("boto3 library not installed. B2 features are impossible. pip install boto3")
@@ -219,7 +219,7 @@ def _generate_presigned_download_url(s3_client: boto3.client, bucket_name: str, 
     return s3_client.generate_presigned_url(
         'get_object',
         Params={'Bucket': bucket_name, 'Key': object_key},
-        ExpiresIn=3600  # URL valid for 1 hour
+        ExpiresIn=3600 # URL valid for 1 hour
     )
 
 
@@ -258,7 +258,7 @@ def _extract_pkgname(line: str) -> str:
         return ""
     if 'pkg_resources' in sys.modules:
         try:
-            req = pkg_resources.Requirement.parse(line)  # type: ignore
+            req = pkg_resources.Requirement.parse(line) # type: ignore
             return req.name.lower()
         except Exception:
             pass
@@ -319,7 +319,7 @@ async def lifespan(app: FastAPI):
                 aws_access_key_id=B2_ACCESS_KEY_ID,
                 aws_secret_access_key=B2_SECRET_ACCESS_KEY
             )
-            app.state.s3_client = s3_client  # Store in state
+            app.state.s3_client = s3_client # Store in state
             logger.info("Backblaze B2 (S3) client initialized successfully.")
         except Exception as e:
             logger.error(f"Failed to initialize B2 client during lifespan: {e}")
@@ -328,7 +328,7 @@ async def lifespan(app: FastAPI):
         app.state.s3_client = None
         logger.warning("B2 client not initialized (B2_ENABLED=False).")
 
-    #  Ray Cluster Connection
+    # Ray Cluster Connection
     if RAY_AVAILABLE:
         job_runtime_env: Dict[str, Any] = {"working_dir": str(BASE_DIR)}
 
@@ -363,7 +363,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Ray library not found. Ray integration is disabled.")
 
-    #  MongoDB Connection
+    # MongoDB Connection
     logger.info(f"Connecting to MongoDB at '{MONGO_URI}'...")
     try:
         client = AsyncIOMotorClient(
@@ -380,7 +380,7 @@ async def lifespan(app: FastAPI):
         logger.critical(f" CRITICAL ERROR: Failed to connect to MongoDB: {e}", exc_info=True)
         raise RuntimeError(f"MongoDB connection failed: {e}") from e
 
-    #  Pluggable Authorization Provider Initialization
+    # Pluggable Authorization Provider Initialization
     AUTHZ_PROVIDER = os.getenv("AUTHZ_PROVIDER", "casbin").lower()
     logger.info(f"Initializing Authorization Provider: '{AUTHZ_PROVIDER}'...")
     provider_settings = {"mongo_uri": MONGO_URI, "db_name": DB_NAME, "base_dir": BASE_DIR}
@@ -392,7 +392,7 @@ async def lifespan(app: FastAPI):
         logger.critical(f" CRITICAL ERROR: Failed to initialize AuthZ provider '{AUTHZ_PROVIDER}': {e}", exc_info=True)
         raise RuntimeError(f"Authorization provider initialization failed: {e}") from e
 
-    #  Initial Database Setup
+    # Initial Database Setup
     try:
         await _ensure_db_indices(db)
         await _seed_admin(app)
@@ -401,7 +401,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f" Error during initial database setup: {e}", exc_info=True)
 
-    #  Load Initial Active Experiments
+    # Load Initial Active Experiments
     try:
         await reload_active_experiments(app)
     except Exception as e:
@@ -409,7 +409,7 @@ async def lifespan(app: FastAPI):
 
     logger.info(" Application startup sequence complete. Ready to serve requests.")
     try:
-        yield  # The application runs here
+        yield # The application runs here
     finally:
         logger.info(" Application shutdown sequence initiated...")
         if hasattr(app.state, "mongo_client") and app.state.mongo_client:
@@ -425,7 +425,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Modular Experiment Labs",
-    version="2.1.0-B2",  # Example version
+    version="2.1.0-B2", # Example version
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
@@ -470,9 +470,9 @@ async def _seed_admin(app: FastAPI):
     admin_users: List[Dict[str, Any]] = await db.users.find({"is_admin": True}).to_list(length=None)
 
     if not admin_users:
-        # ─────────────────────────────────────────────────────────
+        # 
         # No admin user found, so create the DEFAULT from ENV vars
-        # ─────────────────────────────────────────────────────────
+        # 
         logger.warning(" No admin user found. Seeding default administrator...")
 
         email = ADMIN_EMAIL_DEFAULT
@@ -505,12 +505,12 @@ async def _seed_admin(app: FastAPI):
             ):
                 logger.info(f"AuthZ Provider '{authz.__class__.__name__}' supports policy seeding.")
                 try:
-                    await authz.add_role_for_user(email, "admin")  # type: ignore
-                    await authz.add_policy("admin", "admin_panel", "access")  # type: ignore
+                    await authz.add_role_for_user(email, "admin") # type: ignore
+                    await authz.add_policy("admin", "admin_panel", "access") # type: ignore
                     if asyncio.iscoroutinefunction(authz.save_policy):
-                        await authz.save_policy()  # type: ignore
+                        await authz.save_policy() # type: ignore
                     else:
-                        authz.save_policy()  # type: ignore
+                        authz.save_policy() # type: ignore
                     logger.info(f" Default policies seeded for admin user '{email}'.")
                 except Exception as e:
                     logger.error(f" Failed to seed default policies: {e}", exc_info=True)
@@ -523,10 +523,10 @@ async def _seed_admin(app: FastAPI):
             logger.error(f" Failed to insert default admin user '{email}': {e}", exc_info=True)
 
     else:
-        # ─────────────────────────────────────────────────────────
+        # 
         # At least one admin user is already in the database
         # Ensure Casbin role/policies are also in sync for each.
-        # ─────────────────────────────────────────────────────────
+        # 
         logger.info(
             f"Found {len(admin_users)} admin user(s) already in DB. "
             "Ensuring each has Casbin admin role + policy."
@@ -539,19 +539,19 @@ async def _seed_admin(app: FastAPI):
         ):
             try:
                 # Ensure "admin -> admin_panel:access" policy is present
-                await authz.add_policy("admin", "admin_panel", "access")  # type: ignore
+                await authz.add_policy("admin", "admin_panel", "access") # type: ignore
 
                 # For each user with is_admin=True, forcibly add "admin" role
                 for user_doc in admin_users:
                     email = user_doc["email"]
-                    await authz.add_role_for_user(email, "admin")  # type: ignore
+                    await authz.add_role_for_user(email, "admin") # type: ignore
                     logger.debug(f"Synced admin role for existing user '{email}'.")
 
                 # Save policy changes
                 if asyncio.iscoroutinefunction(authz.save_policy):
-                    await authz.save_policy()  # type: ignore
+                    await authz.save_policy() # type: ignore
                 else:
-                    authz.save_policy()  # type: ignore
+                    authz.save_policy() # type: ignore
 
                 logger.info(" All existing admin users synced with Casbin roles/policies.")
 
@@ -909,33 +909,33 @@ def _create_standalone_zip(slug_id: str,
 This package contains a self-contained, single-file server (`standalone_main.py`)
 to run the experiment locally, independent of the main platform.
 
-## 🚀 How to Run
+##  How to Run
 
-1.  **Setup Environment:** We recommend using a fresh Python virtual environment.
-    ```bash
-    python3 -m venv venv
-    source venv/bin/activate  # or venv\\Scripts\\activate on Windows
-    ```
+1. **Setup Environment:** We recommend using a fresh Python virtual environment.
+  ```bash
+  python3 -m venv venv
+  source venv/bin/activate # or venv\\Scripts\\activate on Windows
+  ```
 
-2.  **Install Dependencies:**
-    This experiment requires FastAPI, Uvicorn, Motor, and PyMongo.
-    If a `requirements.txt` file is present in this directory, install those dependencies as well.
-    ```bash
-    # Base requirements
-    pip install fastapi uvicorn 'motor[asyncio]' pymongo
-    
-    # Install experiment-specific requirements (if file exists)
-    if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-    ```
+2. **Install Dependencies:**
+  This experiment requires FastAPI, Uvicorn, Motor, and PyMongo.
+  If a `requirements.txt` file is present in this directory, install those dependencies as well.
+  ```bash
+  # Base requirements
+  pip install fastapi uvicorn 'motor[asyncio]' pymongo
+ 
+  # Install experiment-specific requirements (if file exists)
+  if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+  ```
 
-3.  **Start the Server:**
-    Run the standalone application. It will automatically load the snapshot data.
-    ```bash
-    python standalone_main.py
-    ```
+3. **Start the Server:**
+  Run the standalone application. It will automatically load the snapshot data.
+  ```bash
+  python standalone_main.py
+  ```
 
-4.  **Access:**
-    Open your browser and navigate to: http://127.0.0.1:8000/
+4. **Access:**
+  Open your browser and navigate to: http://127.0.0.1:8000/
 """
 
     # --- 4. Create ZIP archive ---
@@ -972,28 +972,6 @@ to run the experiment locally, independent of the main platform.
                     # Rewrite paths in HTML files
                     if file_path.suffix in (".html", ".htm"):
                         original_html = file_path.read_text(encoding="utf-8")
-                        # The static fix for standalone should point to local 'static/'
-                        # not the full `/experiments/<slug>/static/` path.
-                        # However, for simplicity and reliance on the structure/templates,
-                        # we'll use a simpler, relative fix if possible, or ensure jinja is safe.
-                        # For packaging, we only include the experiment's contents directly.
-                        # The fix_static_paths logic is more for the *main* app.
-                        # In the standalone context, the template expects a simple '/' prefix,
-                        # which the jinja template should handle, OR it expects *no* prefix.
-                        # Since the client code is included, we apply the fix to rewrite to a
-                        # local path relative to the eventual standalone server root.
-                        # The original template expects /experiments/<slug>/static/
-                        # which the standalone server will map to /static/
-                        
-                        # Let's assume the standalone_main.py correctly mounts it at /static/
-                        # so we need to rewrite to use '/static/' instead of 'static/' or the full path.
-                        # The original _fix_static_paths is designed for the monolithic app structure.
-                        
-                        # Custom fix for standalone: static/ -> /static/ (or just keep as-is if templates are smart)
-                        # Given the provided _fix_static_paths, we'll keep it simple:
-                        # rely on the template to correctly mount the static folder
-                        # and rely on the standalone_main.py template logic.
-                        
                         # We use the existing logic for safety, assuming the standalone_main template handles the final mapping.
                         fixed_html = _fix_static_paths(original_html, slug_id) # Uses the full /experiments/<slug>/static/ path for client files
                         zf.writestr(arcname, fixed_html)
@@ -1022,8 +1000,74 @@ to run the experiment locally, independent of the main platform.
     logger.info(f"Standalone package created successfully for '{slug_id}'.")
     return zip_buffer
 
+# -----------------------------------------------------
+# NEW: Public Standalone Export Endpoint
+# -----------------------------------------------------
+public_api_router = APIRouter(prefix="/api", tags=["Public API"])
+
+@public_api_router.get("/package-standalone/{slug_id}", name="package_standalone")
+async def package_standalone_experiment(
+    request: Request,
+    slug_id: str,
+    user: Optional[Mapping[str, Any]] = Depends(get_current_user) # Allows unauthenticated access
+):
+    db: AsyncIOMotorDatabase = request.app.state.mongo_db
+    
+    # 1. Check Experiment Configuration
+    config = await db.experiments_config.find_one({"slug": slug_id})
+    if not config or config.get("status") != "active":
+        raise HTTPException(status_code=404, detail="Experiment not found or not active.")
+
+    auth_required = config.get("auth_required", False)
+
+    # 2. Enforce Authentication if required
+    if auth_required:
+        if not user:
+            # If auth is required and no user is logged in, redirect to login
+            current_path = quote(request.url.path)
+            login_url = request.url_for("login_get", next=current_path)
+            # Use 302 Found or 303 See Other for redirects after unauthenticated access attempt
+            response = RedirectResponse(url=login_url, status_code=status.HTTP_302_FOUND)
+            return response
+    
+    # 3. Perform Packaging
+    try:
+        config_data, collections_data = await _dump_db_to_json(db, slug_id)
+        
+        zip_buffer = _create_standalone_zip(
+            slug_id=slug_id,
+            source_dir=BASE_DIR,
+            db_data=config_data,
+            db_collections=collections_data
+        )
+        file_name = f"{slug_id}_standalone_package_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+        response = FastAPIResponse(
+            content=zip_buffer.getvalue(),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{file_name}"',
+                "Content-Length": str(zip_buffer.getbuffer().nbytes),
+            }
+        )
+        user_email = user.get('email', 'Guest') if user else 'Guest'
+        logger.info(f"Sending standalone package for '{slug_id}' (User: {user_email}, Auth Required: {auth_required}).")
+        return response
+    except ValueError as e:
+        logger.error(f"Error packaging experiment '{slug_id}': {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error packaging '{slug_id}': {e}", exc_info=True)
+        raise HTTPException(500, "Unexpected server error during packaging.")
+
+app.include_router(public_api_router)
+# -----------------------------------------------------
+
 @admin_router.get("/package/{slug_id}", name="package_experiment")
 async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any] = Depends(require_admin)):
+    """
+    NOTE: This is the original, restricted admin route. 
+    It is kept for separation, even though it currently mirrors the public logic.
+    """
     db: AsyncIOMotorDatabase = request.app.state.mongo_db
     try:
         config_data, collections_data = await _dump_db_to_json(db, slug_id)
@@ -1042,7 +1086,7 @@ async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any
                 "Content-Length": str(zip_buffer.getbuffer().nbytes),
             }
         )
-        logger.info(f"Sending standalone package for '{slug_id}'.")
+        logger.info(f"Sending standalone package for ADMIN '{user.get('email', 'Unknown')}' - '{slug_id}'.")
         return response
     except ValueError as e:
         logger.error(f"Error packaging experiment '{slug_id}': {e}")
@@ -1069,9 +1113,9 @@ async def admin_dashboard(request: Request, user: Dict[str, Any] = Depends(requi
         except OSError as e:
             error_message = f"Error reading experiments directory '{EXPERIMENTS_DIR}': {e}"
             logger.error(error_message)
-    else:
-        error_message = f"Experiments directory missing at '{EXPERIMENTS_DIR}'"
-        logger.error(error_message)
+        else:
+            error_message = f"Experiments directory missing at '{EXPERIMENTS_DIR}'"
+            logger.error(error_message)
 
     try:
         db_configs_list = await db.experiments_config.find().to_list(length=None)
@@ -1470,7 +1514,7 @@ app.include_router(admin_router)
 
 
 def _create_experiment_proxy_router(slug: str, cfg: Dict[str, Any], exp_path: Path, templates_global: Optional[Jinja2Templates]) -> APIRouter:
-    pass  # Omitted for brevity in your final code.
+    pass # Omitted for brevity in your final code.
 
 
 async def reload_active_experiments(app: FastAPI):
@@ -1582,7 +1626,7 @@ async def _register_experiments(app: FastAPI, active_cfgs: List[Dict[str, Any]],
             logger.warning(f"[{slug}] 'managed_indexes' present but index manager not available.")
 
         #
-        # --- 🚀 LOGIC FIX ---
+        # ---  LOGIC FIX ---
         # We must load the routes and register the experiment *before* checking for Ray.
         #
         
@@ -1599,7 +1643,7 @@ async def _register_experiments(app: FastAPI, active_cfgs: List[Dict[str, Any]],
             proxy_router = getattr(init_mod, "bp")
         except ModuleNotFoundError:
             logger.warning(f"[{slug}] No local module '{init_mod_name}' found. Skipped.")
-            logger.warning(f"    ENSURE 'experiments/__init__.py' and 'experiments/{slug}/__init__.py' exist.")
+            logger.warning(f"  ENSURE 'experiments/__init__.py' and 'experiments/{slug}/__init__.py' exist.")
             continue
         except Exception as e:
             logger.error(f"[{slug}] Error loading __init__.py: {e}", exc_info=True)
@@ -1618,14 +1662,14 @@ async def _register_experiments(app: FastAPI, active_cfgs: List[Dict[str, Any]],
         prefix = f"/experiments/{slug}"
         app.include_router(proxy_router, prefix=prefix, tags=[f"Experiment: {slug}"], dependencies=deps)
         cfg["url"] = prefix
-        app.state.experiments[slug] = cfg  # <-- This fixes the empty home page
+        app.state.experiments[slug] = cfg # <-- This fixes the empty home page
         logger.info(f"[{slug}] Experiment mounted at '{prefix}'")
 
 
         # Now, check for Ray and *only* skip the actor logic
         if not getattr(app.state, "ray_is_available", False):
             logger.warning(f"[{slug}] No Ray available; skipping actor.")
-            continue  # This is now safe, it just skips the actor part below
+            continue # This is now safe, it just skips the actor part below
 
         # 3. Load the local 'actor.py'
         actor_mod_name = f"experiments.{slug.replace('-', '_')}.actor"
