@@ -324,45 +324,58 @@ async def lifespan(app: FastAPI):
 
   # Ray Cluster Connection
   if RAY_AVAILABLE:
-    # --- MODIFIED LOGIC FOR RUNPOD/SINGLE VM ---
-    # Force "local" if not explicitly connecting to an external cluster.
-    # This allows Ray to start its own cluster inside the single container.
-    RAY_CONNECTION_ADDRESS = os.getenv("RAY_ADDRESS", "local")
-    # --- END MODIFIED LOGIC ---
+      # Get the address without a default value
+      RAY_CONNECTION_ADDRESS = os.getenv("RAY_ADDRESS") 
 
-    job_runtime_env: Dict[str, Any] = {"working_dir": str(BASE_DIR)}
+      job_runtime_env: Dict[str, Any] = {"working_dir": str(BASE_DIR)}
 
-    if B2_ENABLED:
-      # Pass B2 keys as environment variables for Ray to use in its actors/workers
-      job_runtime_env["env_vars"] = {
-        "AWS_ENDPOINT_URL": B2_ENDPOINT_URL,
-        "AWS_ACCESS_KEY_ID": B2_ACCESS_KEY_ID,
-        "AWS_SECRET_ACCESS_KEY": B2_SECRET_ACCESS_KEY
-      }
-      logger.info("Passing B2 (as AWS) credentials to Ray job runtime environment.")
+      if B2_ENABLED:
+        # Pass B2 keys as environment variables for Ray to use in its actors/workers
+        job_runtime_env["env_vars"] = {
+            "AWS_ENDPOINT_URL": B2_ENDPOINT_URL,
+            "AWS_ACCESS_KEY_ID": B2_ACCESS_KEY_ID,
+            "AWS_SECRET_ACCESS_KEY": B2_SECRET_ACCESS_KEY
+        }
+        logger.info("Passing B2 (as AWS) credentials to Ray job runtime environment.")
 
-    try:
-      logger.info(f"Connecting to Ray cluster (address='{RAY_CONNECTION_ADDRESS}', namespace='modular_labs')...")
-      ray.init(
-        address=RAY_CONNECTION_ADDRESS,
-        namespace="modular_labs",
-        ignore_reinit_error=True,
-        runtime_env=job_runtime_env,
-        log_to_driver=False,
-      )
-      app.state.ray_is_available = True
-      logger.info(" Ray connection successful.")
       try:
-        dash_url = ray.get_dashboard_url()
-        if dash_url:
-          logger.info(f"Ray Dashboard URL: {dash_url}")
-      except Exception:
-        pass
-    except Exception as e:
-      logger.exception(f" Ray connection failed: {e}. Ray features will be disabled.")
-      app.state.ray_is_available = False
+          if RAY_CONNECTION_ADDRESS:
+              # Explicit connection attempt to an external or specific cluster
+              logger.info(f"Connecting to Ray cluster (address='{RAY_CONNECTION_ADDRESS}', namespace='modular_labs')...")
+              ray.init(
+                  address=RAY_CONNECTION_ADDRESS,
+                  namespace="modular_labs",
+                  ignore_reinit_error=True,
+                  runtime_env=job_runtime_env,
+                  log_to_driver=False,
+              )
+              connect_mode = f"EXTERNAL ({RAY_CONNECTION_ADDRESS})"
+          else:
+              # Start a new, local Ray runtime within the container
+              logger.info("Starting a new LOCAL Ray cluster instance inside the container...")
+              ray.init(
+                  namespace="modular_labs",
+                  ignore_reinit_error=True,
+                  runtime_env=job_runtime_env,
+                  log_to_driver=False,
+              )
+              connect_mode = "LOCAL INSTANCE"
+              
+          app.state.ray_is_available = True
+          logger.info(f" Ray connection successful (Mode: {connect_mode}).")
+          
+          try:
+            dash_url = ray.get_dashboard_url()
+            if dash_url:
+              logger.info(f"Ray Dashboard URL: {dash_url}")
+          except Exception:
+            pass
+            
+      except Exception as e:
+          logger.exception(f" Ray connection failed: {e}. Ray features will be disabled.")
+          app.state.ray_is_available = False
   else:
-    logger.warning("Ray library not found. Ray integration is disabled.")
+      logger.warning("Ray library not found. Ray integration is disabled.")
 
   # MongoDB Connection
   logger.info(f"Connecting to MongoDB at '{MONGO_URI}'...")
