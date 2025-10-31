@@ -57,7 +57,17 @@ class CasbinAdapter:
         try:
             # The 'enforcer' object *is* an instance of casbin.AsyncEnforcer, 
             # so this call is valid at runtime.
-            result = self._enforcer.enforce(subject, resource, action)
+            
+            # 
+            # --- 🚀 CRITICAL FIX ---
+            # The enforce method is asynchronous and MUST be awaited.
+            # Without 'await', it returns a 'truthy' coroutine object,
+            # causing authorization checks to pass incorrectly.
+            #
+            result = await self._enforcer.enforce(subject, resource, action)
+            # --- END FIX ---
+            #
+            
             return result
         except Exception as e:
             logger.error(
