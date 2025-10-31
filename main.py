@@ -299,6 +299,7 @@ else:
 
 
 ## FastAPI Application Lifespan (Startup & Shutdown)
+## FastAPI Application Lifespan (Startup & Shutdown)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(" Application startup sequence initiated...")
@@ -427,6 +428,7 @@ async def lifespan(app: FastAPI):
             ray.shutdown()
 
         logger.info(" Application shutdown complete.")
+
 
 
 app = FastAPI(
