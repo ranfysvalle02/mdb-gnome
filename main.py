@@ -1581,9 +1581,51 @@ async def _register_experiments(app: FastAPI, active_cfgs: List[Dict[str, Any]],
         elif "managed_indexes" in cfg:
             logger.warning(f"[{slug}] 'managed_indexes' present but index manager not available.")
 
+        #
+        # --- 🚀 LOGIC FIX ---
+        # We must load the routes and register the experiment *before* checking for Ray.
+        #
+        
+        # 4. Load the local APIRouter from '__init__.py'
+        init_mod_name = f"experiments.{slug.replace('-', '_')}"
+        try:
+            if init_mod_name in sys.modules and is_reload:
+                init_mod = importlib.reload(sys.modules[init_mod_name])
+            else:
+                init_mod = importlib.import_module(init_mod_name)
+            if not hasattr(init_mod, "bp"):
+                logger.error(f"[{slug}] '__init__.py' has no 'bp' (APIRouter). Skipped.")
+                continue
+            proxy_router = getattr(init_mod, "bp")
+        except ModuleNotFoundError:
+            logger.warning(f"[{slug}] No local module '{init_mod_name}' found. Skipped.")
+            logger.warning(f"    ENSURE 'experiments/__init__.py' and 'experiments/{slug}/__init__.py' exist.")
+            continue
+        except Exception as e:
+            logger.error(f"[{slug}] Error loading __init__.py: {e}", exc_info=True)
+            continue
+
+        if not isinstance(proxy_router, APIRouter):
+            logger.error(f"[{slug}] 'bp' is not an APIRouter. Skipped.")
+            continue
+
+        deps = []
+        if cfg.get("auth_required"):
+            deps = [Depends(get_current_user_or_redirect)]
+        else:
+            deps = [Depends(get_current_user)]
+
+        prefix = f"/experiments/{slug}"
+        app.include_router(proxy_router, prefix=prefix, tags=[f"Experiment: {slug}"], dependencies=deps)
+        cfg["url"] = prefix
+        app.state.experiments[slug] = cfg  # <-- This fixes the empty home page
+        logger.info(f"[{slug}] Experiment mounted at '{prefix}'")
+
+
+        # Now, check for Ray and *only* skip the actor logic
         if not getattr(app.state, "ray_is_available", False):
             logger.warning(f"[{slug}] No Ray available; skipping actor.")
-            continue
+            continue  # This is now safe, it just skips the actor part below
 
         # 3. Load the local 'actor.py'
         actor_mod_name = f"experiments.{slug.replace('-', '_')}.actor"
@@ -1616,41 +1658,6 @@ async def _register_experiments(app: FastAPI, active_cfgs: List[Dict[str, Any]],
         except Exception as e:
             logger.error(f"[{slug}] Actor start error: {e}", exc_info=True)
             continue
-
-        # 4. Load the local APIRouter from '__init__.py'
-        init_mod_name = f"experiments.{slug.replace('-', '_')}"
-        try:
-            if init_mod_name in sys.modules and is_reload:
-                init_mod = importlib.reload(sys.modules[init_mod_name])
-            else:
-                init_mod = importlib.import_module(init_mod_name)
-            if not hasattr(init_mod, "bp"):
-                logger.error(f"[{slug}] '__init__.py' has no 'bp' (APIRouter). Skipped.")
-                continue
-            proxy_router = getattr(init_mod, "bp")
-        except ModuleNotFoundError:
-            logger.warning(f"[{slug}] No local '__init__.py'? ('{init_mod_name}'). Skipped.")
-            continue
-        except Exception as e:
-            logger.error(f"[{slug}] Error loading __init__.py: {e}", exc_info=True)
-            continue
-
-        if not isinstance(proxy_router, APIRouter):
-            logger.error(f"[{slug}] 'bp' is not an APIRouter. Skipped.")
-            continue
-
-        deps = []
-        if cfg.get("auth_required"):
-            deps = [Depends(get_current_user_or_redirect)]
-        else:
-            deps = [Depends(get_current_user)]
-
-        prefix = f"/experiments/{slug}"
-        app.include_router(proxy_router, prefix=prefix, tags=[f"Experiment: {slug}"], dependencies=deps)
-        cfg["url"] = prefix
-        app.state.experiments[slug] = cfg
-        logger.info(f"[{slug}] Experiment mounted at '{prefix}'")
-
 
 async def _run_index_creation_for_collection(
     db: AsyncIOMotorDatabase,
