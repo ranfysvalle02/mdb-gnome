@@ -3,8 +3,7 @@ FROM python:3.10-slim-bookworm as builder
 WORKDIR /app  
   
 # (Optional) Install build deps  
-RUN apt-get update && apt-get install -y build-essential && rm -rf /var/lib/apt/lists/*  
-  
+RUN apt-get update && apt-get install -y build-essential && rm -rf /var/lib/apt/lists/* # NOTE: Assumes you have a requirements.txt in the same directory  
 COPY requirements.txt /app/  
 RUN python -m venv /opt/venv && \  
     . /opt/venv/bin/activate && \  
@@ -27,18 +26,12 @@ RUN addgroup --system app && adduser --system --group app
 RUN chown -R app:app /app  
 USER app  
   
-#  
 # Build ARG and ENV for port  
-# ----------------------------------------  
-# ARG is set when you do “docker build --build-arg APP_PORT=xxxx .”  
-# That ARG is then saved into an ENV variable inside the image.  
-#  
 ARG APP_PORT=10000  
 ENV PORT=$APP_PORT  
   
-# EXPOSE does not expand environment variables at run time,  
-# but this will work at *build time*, using $APP_PORT.  
+# Expose the port  
 EXPOSE ${APP_PORT}  
   
 # Default command: Gunicorn on $PORT  
-CMD ["gunicorn", "main:app", "--workers", "1", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:${PORT}"] 
+CMD gunicorn main:app --workers 1 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:${PORT}
