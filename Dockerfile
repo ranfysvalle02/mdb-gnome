@@ -29,4 +29,4 @@ USER app
 # Default command: Gunicorn on $PORT  
 ENV PORT=10000  
 EXPOSE 10000  
-CMD ["gunicorn", "main:app", "--workers", "4", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:${PORT}"]  
+CMD ["gunicorn", "main:app", "--workers", "1", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:${PORT}"]  
