@@ -14,3 +14,5 @@ casbin-motor-adapter>=0.4.0
 gunicorn
 ray[default]==2.50.0
 boto3
+numpy
+matplotlib
