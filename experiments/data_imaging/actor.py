@@ -1,4 +1,6 @@
-import ray
+# File: /app/experiments/data_imaging/actor.py
+
+# import ray  <-- REMOVED
 import logging
 import json
 import pathlib
@@ -15,11 +17,12 @@ templates_dir = experiment_dir / "templates"
 logger = logging.getLogger(__name__)
 
 
-@ray.remote
+# @ray.remote  <-- REMOVED
 class ExperimentActor:
     """
     This is the "Headless Server". It runs in a separate, isolated
     Ray worker process with all the heavy dependencies.
+    main.py is responsible for decorating and launching this class.
     """
 
     def __init__(self, mongo_uri: str, db_name: str, write_scope: str, read_scopes: list[str]):

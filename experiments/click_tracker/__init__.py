@@ -1,32 +1,4 @@
-# experiments/click_tracker/__init__.py
-
-"""
-{
-  "name": "Click Tracker",
-  "description": "Tracks user clicks and generates embeddings.",
-  "status": "active",
-  "auth_required": false,
-  "data_scope": ["self"],
-  "managed_indexes": {
-    "clicks": [
-      {
-        "name": "clicks_vector_embedding_index",
-        "type": "vectorSearch",
-        "definition": {
-          "fields": [
-            {
-              "type": "vector",
-              "path": "user_embedding",
-              "numDimensions": 1536,
-              "similarity": "cosine"
-            }
-          ]
-        }
-      }
-    ]
-  }
-}
-"""
+# File: /app/experiments/click_tracker/__init__.py
 
 import logging
 from fastapi import APIRouter, Depends, Request, HTTPException
@@ -39,14 +11,6 @@ from starlette import status # Import status for 503
 
 # Core dependencies and DB scoping
 from core_deps import get_scoped_db
-# 💡 FIX: Import MONGO_URI and DB_NAME from the module that defines it (assumed to be main)
-try:
-    # Assuming main.py exposes these as module-level globals
-    from main import MONGO_URI, DB_NAME 
-except ImportError:
-    # Fallback for local testing if main isn't on pythonpath
-    MONGO_URI = "mongodb://localhost:27017/"
-    DB_NAME = "labs_db"
 
 try:
     # Import for type-hinting, though not strictly required
@@ -72,14 +36,13 @@ async def get_actor_handle(
     db: ScopedMongoWrapper = Depends(get_scoped_db)  
 ) -> "ray.actor.ActorHandle":  
     """  
-    FastAPI dependency to return the handle to our Ray actor.  
+    FastAPI dependency to return the handle to our Ray actor.
     
-    FIX: Added a gatekeeper check for Ray availability.
-    FIX: Removed the complex fallback creation, relying on main.py's
-         `reload_active_experiments` to ensure the actor is running.
+    This relies on main.py's `reload_active_experiments` 
+    to ensure the actor is running.
     """  
     
-    # 1. FIX: Check global Ray availability state set during main.py lifespan
+    # 1. Check global Ray availability state set during main.py lifespan
     if not getattr(request.app.state, "ray_is_available", False):
         logger.error("[ClickTracker] Ray is globally unavailable, blocking actor handle request.")
         raise HTTPException(
