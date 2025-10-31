@@ -1,77 +1,32 @@
-#
-# Dockerfile (Portable for Compose, Render, and Anyscale)
-#
-# --- STAGE 1: Build virtual environment with dependencies ---
-# We use a specific, pinned version to guarantee consistency
-# Using "bookworm" (Debian 12) as a modern, secure base
-FROM python:3.10.13-slim-bookworm AS builder
-
-# Set build-time args for non-interactive install
-ARG DEBIAN_FRONTEND=noninteractive
-
-# Install build-essential for packages that compile C extensions (like bcrypt)
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    libopenblas-dev \
-    libfreetype-dev \
-    libpng-dev \
-    pkg-config \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create a virtual environment
-RUN python -m venv /opt/venv
-
-# Activate venv and install dependencies
-# This is cached, so it only re-runs if requirements.txt changes
-COPY requirements.txt .
-RUN . /opt/venv/bin/activate && \
-    pip install --upgrade pip && \
-    pip install -r requirements.txt
-
-
-# --- STAGE 2: Create the final, lean production image ---
-FROM python:3.10.13-slim-bookworm
-
-WORKDIR /app
-
-# Create a non-root user for security
-RUN addgroup --system app && adduser --system --group app
-
-# 🔑 FIX: Create a log directory and ensure the non-root 'app' user owns it
-RUN mkdir -p /var/log/app && \
-    chown -R app:app /var/log/app
-
-# Copy the virtual environment from the builder stage
-COPY --from=builder /opt/venv /opt/venv
-
-# Copy the application code
-COPY . .
-
-# Copy the entrypoint script to a standard PATH location
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-
-# Change ownership to our non-root user
-# Include the new log directory and entrypoint script in the ownership change
-RUN chown -R app:app /app /opt/venv /var/log/app /usr/local/bin/docker-entrypoint.sh
-
-# Switch to the non-root user
-USER app
-
-# Set the PATH to include the venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# ** CRITICAL FIX **: Direct Ray's object store to /tmp
-ENV RAY_OBJECT_STORE_BASE_DIR=/tmp
-
-# Set the default port your app will run on inside the container
-ENV PORT=10000
-
-# Expose ports 
-EXPOSE 10000
-
-# The entrypoint activates the venv before running the CMD
-ENTRYPOINT ["docker-entrypoint.sh"]
-
-# This is the default "production" command for your API.
-CMD ["gunicorn", "main:app", "--workers", "4", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:10000"]
+# FROM python:3.10-slim as builder  
+FROM python:3.10-slim-bookworm as builder  
+WORKDIR /app  
+  
+# (Optional) Install build deps  
+RUN apt-get update && apt-get install -y build-essential && rm -rf /var/lib/apt/lists/*  
+  
+COPY requirements.txt /app/  
+RUN python -m venv /opt/venv && \  
+    . /opt/venv/bin/activate && \  
+    pip install --upgrade pip && \  
+    pip install -r requirements.txt  
+  
+FROM python:3.10-slim-bookworm  
+WORKDIR /app  
+  
+# Copy venv  
+COPY --from=builder /opt/venv /opt/venv  
+ENV PATH="/opt/venv/bin:$PATH"  
+  
+# Copy your actual code  
+COPY . .  
+  
+# Non-root user  
+RUN addgroup --system app && adduser --system --group app  
+RUN chown -R app:app /app  
+USER app  
+  
+# Default command: Gunicorn on $PORT  
+ENV PORT=10000  
+EXPOSE 10000  
+CMD ["gunicorn", "main:app", "--workers", "4", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:${PORT}"]  
