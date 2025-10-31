@@ -4,7 +4,7 @@ import logging
 import datetime
 from typing import List
 
-# import ray  <-- REMOVED
+import ray
 from pymongo import MongoClient
 
 logger = logging.getLogger(__name__)

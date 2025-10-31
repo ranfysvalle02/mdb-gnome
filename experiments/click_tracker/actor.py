@@ -3,8 +3,8 @@
 import logging
 import datetime
 from typing import List
+import ray
 
-# DO NOT import ray here
 from pymongo import MongoClient
 
 logger = logging.getLogger(__name__)

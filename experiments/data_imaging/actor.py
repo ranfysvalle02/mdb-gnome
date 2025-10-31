@@ -9,6 +9,7 @@ from typing import List, Dict, Any
 # --- NO HEAVY IMPORTS HERE ---
 # All heavy modules (motor, jinja2, engine, ScopedMongoWrapper)
 # will be imported *inside* the actor's __init__ method.
+import ray
 
 # Actor-local paths
 experiment_dir = pathlib.Path(__file__).parent

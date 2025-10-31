@@ -6,6 +6,7 @@ logger = logging.getLogger(__name__)
 
 # DO NOT import 'ray_actor' here
 # DO NOT add the '@ray_actor' decorator here
+import ray
 
 class ExperimentActor:
     """
