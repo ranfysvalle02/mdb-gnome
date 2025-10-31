@@ -67,8 +67,8 @@ ENV RAY_OBJECT_STORE_BASE_DIR=/tmp
 # Set the default port your app will run on inside the container
 ENV PORT=10000
 
-# Expose ports for Ray, Dashboard, and FastAPI (for info)
-EXPOSE 10000 10001 6379 8265
+# Expose ports 
+EXPOSE 10000
 
 # The entrypoint activates the venv before running the CMD
 ENTRYPOINT ["docker-entrypoint.sh"]

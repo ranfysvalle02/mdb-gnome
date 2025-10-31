@@ -19,7 +19,7 @@ echo "--- Starting Ray Head Node in Detached Mode (PID: $$) ---"
 # We redirect both stdout and stderr to the dedicated log file.
 (
     # Set the GCS port explicitly
-    ray start --head --dashboard-host=0.0.0.0 --port=${RAY_PORT} --block
+    ray start --head --dashboard-host=127.0.0.1 --port=${RAY_PORT} --block
 ) > ${RAY_LOG_FILE} 2>&1 &
 RAY_PID=$!
 echo "Ray Head Node attempt started in background with PID: ${RAY_PID}. Logs: ${RAY_LOG_FILE}"
