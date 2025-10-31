@@ -9,7 +9,7 @@ from pymongo import MongoClient
 
 logger = logging.getLogger(__name__)
 
-# @ray.remote  <-- REMOVED
+@ray.remote
 class ExperimentActor:
     """
     A plain Python class for the Stats Dashboard Actor.

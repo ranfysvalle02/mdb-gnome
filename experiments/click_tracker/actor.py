@@ -9,7 +9,7 @@ from pymongo import MongoClient
 
 logger = logging.getLogger(__name__)
 
-# DO NOT add the @ray.remote decorator here
+@ray.remote
 class ExperimentActor:
     """
     Ray Actor for handling clicks.

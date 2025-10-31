@@ -18,7 +18,7 @@ templates_dir = experiment_dir / "templates"
 logger = logging.getLogger(__name__)
 
 
-# @ray.remote  <-- REMOVED
+@ray.remote
 class ExperimentActor:
     """
     This is the "Headless Server". It runs in a separate, isolated
