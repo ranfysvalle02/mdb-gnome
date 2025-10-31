@@ -348,7 +348,6 @@ async def lifespan(app: FastAPI):
                   ignore_reinit_error=True,
                   runtime_env=job_runtime_env,
                   log_to_driver=False,
-                  ignore_reinit_error=True,
                   runtime_env=job_runtime_env,
                   log_to_driver=False,
                   num_cpus=2, # <-- Limit Ray's core usage
@@ -363,7 +362,6 @@ async def lifespan(app: FastAPI):
                   ignore_reinit_error=True,
                   runtime_env=job_runtime_env,
                   log_to_driver=False,
-                  ignore_reinit_error=True,
                   runtime_env=job_runtime_env,
                   log_to_driver=False,
                   num_cpus=2, # <-- Limit Ray's core usage
