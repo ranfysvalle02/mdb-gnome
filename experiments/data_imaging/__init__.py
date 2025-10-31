@@ -142,7 +142,7 @@ async def generate_demo(
     then redirects to the gallery page.
     """
     # --- Configuration ---
-    NUM_GENERATIONS = 100
+    NUM_GENERATIONS = 10
     # ---------------------
 
     logger.info(f"Initiating bulk generation of {NUM_GENERATIONS} workout docs.")
