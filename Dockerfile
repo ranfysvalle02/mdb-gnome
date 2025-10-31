@@ -41,7 +41,6 @@ RUN addgroup --system app && adduser --system --group app
 COPY --from=builder /opt/venv /opt/venv
 
 # Copy the application code
-# This copies main.py, experiments/, templates/, etc.
 COPY . .
 
 # Copy the entrypoint script to a standard PATH location
@@ -57,20 +56,17 @@ USER app
 # Set the PATH to include the venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+# ** CRITICAL FIX **: Direct Ray's object store to /tmp
+ENV RAY_OBJECT_STORE_BASE_DIR=/tmp
+
 # Set the default port your app will run on inside the container
-# This matches your docker-compose.yml 'PORT=10000'
-# Render.com will also pick this up.
 ENV PORT=10000
 
-# Expose all ports. This is just metadata but good practice.
+# Expose ports for Ray, Dashboard, and FastAPI (for info)
 EXPOSE 10000 10001 6379 8265
 
 # The entrypoint activates the venv before running the CMD
 ENTRYPOINT ["docker-entrypoint.sh"]
 
-# --- THIS IS THE KEY ---
 # This is the default "production" command for your API.
-# It will be USED by Render.
-# It will be IGNORED & OVERRIDDEN by docker-compose.yml.
-# It will be IGNORED by Anyscale.
 CMD ["gunicorn", "main:app", "--workers", "4", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:10000"]

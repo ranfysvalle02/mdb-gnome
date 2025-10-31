@@ -1,4 +1,5 @@
 # experiments/click_tracker/__init__.py
+
 """
 {
   "name": "Click Tracker",
@@ -34,11 +35,13 @@ from fastapi.templating import Jinja2Templates
 from typing import Any
 from pathlib import Path
 import ray
+from starlette import status # Import status for 503
 
 # Core dependencies and DB scoping
 from core_deps import get_scoped_db
-# 💡 FIX: Import MONGO_URI from the module that defines it (assumed to be main)
+# 💡 FIX: Import MONGO_URI and DB_NAME from the module that defines it (assumed to be main)
 try:
+    # Assuming main.py exposes these as module-level globals
     from main import MONGO_URI, DB_NAME 
 except ImportError:
     # Fallback for local testing if main isn't on pythonpath
@@ -70,33 +73,37 @@ async def get_actor_handle(
 ) -> "ray.actor.ActorHandle":  
     """  
     FastAPI dependency to return the handle to our Ray actor.  
-    If the actor isn't found, create it.  
+    
+    FIX: Added a gatekeeper check for Ray availability.
+    FIX: Removed the complex fallback creation, relying on main.py's
+         `reload_active_experiments` to ensure the actor is running.
     """  
+    
+    # 1. FIX: Check global Ray availability state set during main.py lifespan
+    if not getattr(request.app.state, "ray_is_available", False):
+        logger.error("[ClickTracker] Ray is globally unavailable, blocking actor handle request.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, 
+            detail="Ray service is unavailable. Check Ray cluster status."
+        )
+
     actor_name = "click_tracker-actor"  
     try:  
-        # Attempt to get existing actor  
+        # Attempt to get existing actor (which should be running due to main.py lifecycle)
+        # 'modular_labs' is the namespace set in main.py
         handle = ray.get_actor(actor_name, namespace="modular_labs")  
         return handle  
-    except ValueError:  
-        # Actor not found in the cluster. Let's create a new one.  
-        logger.info(  
-            f"[ClickTracker] Creating new Ray actor '{actor_name}' in namespace='modular_labs'..."  
-        )  
-        
-        # 🚀 FIX APPLIED HERE: Use the imported MONGO_URI string instead of traversing
-        # the ScopedMongoWrapper's internal structure (db.real_db.client.address).
-        handle = ExperimentActor.options(  
-            name=actor_name,  
-            namespace="modular_labs",  
-            lifetime="detached",  
-            get_if_exists=True  
-        ).remote(  
-            mongo_uri=MONGO_URI,  # <-- CORRECTED LINE
-            db_name=DB_NAME,      # <-- CORRECTED LINE
-            write_scope=db.write_scope,  
-            read_scopes=db.read_scopes  
-        )  
-        return handle  
+    except ValueError:
+        # If the actor is not found, it means the main application failed to start it
+        # or the actor crashed. We should treat this as a service outage.
+        logger.error(f"[ClickTracker] CRITICAL: Actor '{actor_name}' not found or crashed.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, 
+            detail=f"Experiment service '{actor_name}' is not running or crashed."
+        )
+    except Exception as e:
+        logger.error(f"[ClickTracker] Failed to get actor handle '{actor_name}': {e}", exc_info=True)
+        raise HTTPException(500, "Error connecting to experiment service.")
   
 @bp.get("/", response_class=HTMLResponse, name="click_tracker_index")  
 async def index(request: Request, actor: Any = Depends(get_actor_handle)):  

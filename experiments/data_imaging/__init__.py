@@ -20,8 +20,19 @@ def get_actor_handle():
     """
     FastAPI Dependency to get the handle for the experiment's
     dedicated Ray actor.
+    
+    FIX: This now checks the application's Ray availability status
+    before attempting to retrieve the actor handle.
     """
     def _get_handle(request: Request) -> "ray.actor.ActorHandle":
+        # Check global Ray availability state set during main.py lifespan
+        if not getattr(request.app.state, "ray_is_available", False):
+            logger.error("Ray is globally unavailable, blocking actor handle request.")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, 
+                detail="Ray service is unavailable. Check Ray cluster status."
+            )
+            
         # Get slug_id from middleware
         slug_id = getattr(request.state, "slug_id", None)
         if not slug_id:
@@ -35,10 +46,11 @@ def get_actor_handle():
             handle = ray.get_actor(actor_name, namespace="modular_labs")
             return handle
         except ValueError:
-            logger.error(f"CRITICAL: Actor '{actor_name}' not found.")
+            # This indicates the actor was not successfully launched (e.g., due to a crash)
+            logger.error(f"CRITICAL: Actor '{actor_name}' found no process running.")
             raise HTTPException(503, f"Experiment service '{actor_name}' is not running.")
         except Exception as e:
-            logger.error(f"Failed to get actor handle '{actor_name}': {e}")
+            logger.error(f"Failed to get actor handle '{actor_name}': {e}", exc_info=True)
             raise HTTPException(500, "Error connecting to experiment service.")
 
     return Depends(_get_handle)
