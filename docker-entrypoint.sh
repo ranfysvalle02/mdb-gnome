@@ -1,38 +1,64 @@
 #!/bin/bash
 set -e
 
-# Activate the virtual environment
+# --- Configuration ---
+# Define a safe, user-writable log path
+RAY_LOG_FILE="/var/log/app/ray_head.log"
+RAY_WAIT_SECONDS=30 # Increased wait time for cloud stability
+# The rest of the ENV is sourced from the Dockerfile
+
+# --- 1. Activate Virtual Environment ---
+# The PATH is already set by the Dockerfile, but explicit activation is safest.
 . /opt/venv/bin/activate
+echo "--- Virtual environment activated ---"
 
-echo "--- Starting Co-located Ray Head Node ---"
 
-# Start Ray head in the background (using &)
-# --head: Designates this as the cluster head node.
-# --port=6379: Standard GCS port (optional, but good practice).
-# --dashboard-host=0.0.0.0: Ensures the dashboard is reachable within the container network.
-ray start --head --dashboard-host=0.0.0.0 &
+# --- 2. Start Co-located Ray Head Node ---
+echo "--- Starting Co-located Ray Head Node (PID: $$) ---"
 
-# Wait for Ray to initialize (critical step!)
-echo "Waiting for Ray head to stabilize (10 seconds)..."
-sleep 10
+# Use 'nohup' to detach Ray and redirect logs to the user-owned file
+nohup ray start --head --dashboard-host=0.0.0.0 --port=6379 2>&1 > ${RAY_LOG_FILE} &
+RAY_PID=$!
+echo "Ray Head Node started in background with PID: ${RAY_PID}. Logs: ${RAY_LOG_FILE}"
 
-# Verify Ray is running (optional, but helpful for debugging)
-if ray status > /dev/null 2>&1; then
-    echo "Ray Head Node is running and stable."
-else
-    echo "CRITICAL: Ray Head Node failed to start. Exiting."
-    exit 1
-fi
 
-# Set the RAY_ADDRESS to point the FastAPI process to the local head node.
-# Ray's client connection port defaults to 10001.
+# --- 3. Wait for Ray GCS to Stabilize ---
+echo "Waiting for Ray head to stabilize (up to ${RAY_WAIT_SECONDS} seconds)..."
+sleep 5 # Initial wait before trying the connection
+
+# Wait loop for Ray to be queryable
+# We check with 'ray status' which confirms cluster health, not just process existence.
+SECONDS_ELAPSED=0
+STATUS_CHECK_INTERVAL=5
+while ! ray status > /dev/null 2>&1; do
+    if [ ${SECONDS_ELAPSED} -ge ${RAY_WAIT_SECONDS} ]; then
+        echo "CRITICAL: Ray Head Node failed to start after ${RAY_WAIT_SECONDS} seconds."
+        echo "Ray logs (from ${RAY_LOG_FILE}):"
+        if [ -f "${RAY_LOG_FILE}" ]; then
+            cat "${RAY_LOG_FILE}"
+        else
+            echo "Log file not found."
+        fi
+        kill ${RAY_PID} 2>/dev/null || true # Attempt to clean up
+        exit 1
+    fi
+    echo "Ray not yet stable. Waiting ${STATUS_CHECK_INTERVAL} more seconds..."
+    sleep ${STATUS_CHECK_INTERVAL}
+    SECONDS_ELAPSED=$((SECONDS_ELAPSED + STATUS_CHECK_INTERVAL))
+done
+
+echo "Ray Head Node is running and stable."
+
+
+# --- 4. Configure Client Connection ---
+# This environment variable is critical for main.py to connect to the local Ray Head.
 export RAY_ADDRESS="ray://127.0.0.1:10001"
 echo "Set RAY_ADDRESS=${RAY_ADDRESS} for the FastAPI client."
 
-echo "--- Starting FastAPI Application (Gunicorn) ---"
-# Execute the command passed to the ENTRYPOINT (e.g., the CMD list)
-# exec ensures Gunicorn replaces the shell process, allowing signals to pass through.
-exec "$@"
 
-# The error you were previously seeing should now be resolved because 
-# `ray.init()` in main.py's lifespan will successfully connect to 127.0.0.1:10001.
+# --- 5. Start FastAPI Application (Gunicorn) ---
+echo "--- Starting FastAPI Application (Gunicorn) on port ${PORT} ---"
+
+# 'exec' replaces the current shell with the Gunicorn process, making it the main PID (1).
+# This is necessary for proper signal handling (SIGTERM) from container orchestrators (like Render).
+exec "$@"

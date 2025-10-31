@@ -37,6 +37,10 @@ WORKDIR /app
 # Create a non-root user for security
 RUN addgroup --system app && adduser --system --group app
 
+# 🔑 FIX: Create a log directory and ensure the non-root 'app' user owns it
+RUN mkdir -p /var/log/app && \
+    chown -R app:app /var/log/app
+
 # Copy the virtual environment from the builder stage
 COPY --from=builder /opt/venv /opt/venv
 
@@ -48,7 +52,8 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Change ownership to our non-root user
-RUN chown -R app:app /app /opt/venv
+# Include the new log directory and entrypoint script in the ownership change
+RUN chown -R app:app /app /opt/venv /var/log/app /usr/local/bin/docker-entrypoint.sh
 
 # Switch to the non-root user
 USER app
