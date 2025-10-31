@@ -330,6 +330,10 @@ async def lifespan(app: FastAPI):
 
     # Ray Cluster Connection
     if RAY_AVAILABLE:
+        
+        # ** FIX START **: Use RAY_ADDRESS env var for robust connection in shared mode
+        RAY_CONNECTION_ADDRESS = os.getenv("RAY_ADDRESS", "auto")
+        
         job_runtime_env: Dict[str, Any] = {"working_dir": str(BASE_DIR)}
 
         if B2_ENABLED:
@@ -341,9 +345,9 @@ async def lifespan(app: FastAPI):
             logger.info("Passing B2 (as AWS) credentials to Ray job runtime environment.")
 
         try:
-            logger.info("Connecting to Ray cluster (address='auto', namespace='modular_labs')...")
+            logger.info(f"Connecting to Ray cluster (address='{RAY_CONNECTION_ADDRESS}', namespace='modular_labs')...")
             ray.init(
-                address="auto",
+                address=RAY_CONNECTION_ADDRESS, # Use resolved address
                 namespace="modular_labs",
                 ignore_reinit_error=True,
                 runtime_env=job_runtime_env,
@@ -360,6 +364,8 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.exception(f" Ray connection failed: {e}. Ray features will be disabled.")
             app.state.ray_is_available = False
+        # ** FIX END **
+            
     else:
         logger.warning("Ray library not found. Ray integration is disabled.")
 
@@ -923,7 +929,7 @@ to run the experiment locally, independent of the main platform.
   ```bash
   # Base requirements
   pip install fastapi uvicorn 'motor[asyncio]' pymongo
- 
+  
   # Install experiment-specific requirements (if file exists)
   if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
   ```
