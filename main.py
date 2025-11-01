@@ -904,6 +904,27 @@ admin_router = APIRouter(
 )
 
 
+def _make_json_serializable(obj: Any) -> Any:
+  """
+  Recursively converts MongoDB objects (datetime, ObjectId, etc.) to JSON-serializable types.
+  """
+  if isinstance(obj, datetime.datetime):
+    return obj.isoformat()
+  elif isinstance(obj, dict):
+    return {key: _make_json_serializable(value) for key, value in obj.items()}
+  elif isinstance(obj, list):
+    return [_make_json_serializable(item) for item in obj]
+  elif isinstance(obj, (datetime.date, datetime.time)):
+    return obj.isoformat()
+  elif hasattr(obj, '__str__') and not isinstance(obj, (str, int, float, bool, type(None))):
+    # Handle ObjectId and other MongoDB types that have __str__
+    try:
+      return str(obj)
+    except Exception:
+      return repr(obj)
+  return obj
+
+
 async def _dump_db_to_json(db: AsyncIOMotorDatabase, slug_id: str) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
   config_doc = await db.experiments_config.find_one({"slug": slug_id})
   if not config_doc:
@@ -911,6 +932,9 @@ async def _dump_db_to_json(db: AsyncIOMotorDatabase, slug_id: str) -> Tuple[Dict
   config_data = dict(config_doc)
   if "_id" in config_data:
     config_data["_id"] = str(config_data["_id"])
+  
+  # Make config data JSON-serializable
+  config_data = _make_json_serializable(config_data)
 
   sub_collections = []
   all_coll_names = await db.list_collection_names()
@@ -926,6 +950,8 @@ async def _dump_db_to_json(db: AsyncIOMotorDatabase, slug_id: str) -> Tuple[Dict
       doc_dict = dict(doc)
       if "_id" in doc_dict:
         doc_dict["_id"] = str(doc_dict["_id"])
+      # Make document JSON-serializable
+      doc_dict = _make_json_serializable(doc_dict)
       docs_list.append(doc_dict)
     collections_data[coll_name] = docs_list
 
