@@ -273,9 +273,96 @@ except ImportError:
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     # Startup
+    app.state.ray_is_available = False
+    app.state.slug_id = SLUG
+    
     await connect_mongodb()
+    
+    # Initialize Ray if available
+    actor_handle = None
+    if RAY_AVAILABLE:
+        try:
+            RAY_CONNECTION_ADDRESS = os.getenv("RAY_CONNECTION_ADDRESS", None)
+            if RAY_CONNECTION_ADDRESS:
+                logger.info(f"Connecting to Ray cluster at '{RAY_CONNECTION_ADDRESS}'...")
+                ray.init(
+                    address=RAY_CONNECTION_ADDRESS,
+                    namespace="modular_labs",
+                    ignore_reinit_error=True,
+                    log_to_driver=False
+                )
+                connect_mode = f"EXTERNAL ({RAY_CONNECTION_ADDRESS})"
+            else:
+                logger.info("Starting local Ray cluster...")
+                ray.init(
+                    namespace="modular_labs",
+                    ignore_reinit_error=True,
+                    log_to_driver=False,
+                    num_cpus=2,
+                    object_store_memory=2_000_000_000
+                )
+                connect_mode = "LOCAL"
+            
+            app.state.ray_is_available = True
+            logger.info(f"Ray connection successful (Mode: {connect_mode}).")
+            
+            # Import and create the actor
+            try:
+                actor_mod_name = f"experiments.{SLUG.replace('-', '_')}.actor"
+                actor_mod = __import__(actor_mod_name, fromlist=["ExperimentActor"])
+                if hasattr(actor_mod, "ExperimentActor"):
+                    actor_cls = getattr(actor_mod, "ExperimentActor")
+                    actor_name = f"{SLUG}-actor"
+                    
+                    # Read scopes from config (default to [SLUG])
+                    read_scopes = [SLUG]
+                    if isinstance(DB_CONFIG.get("data_scope"), list):
+                        read_scopes = [s if s != "self" else SLUG for s in DB_CONFIG.get("data_scope", [SLUG])]
+                    
+                    actor_handle = actor_cls.options(
+                        name=actor_name,
+                        namespace="modular_labs",
+                        lifetime="detached",
+                        get_if_exists=True,
+                        max_restarts=-1
+                    ).remote(
+                        mongo_uri=MONGO_URI,
+                        db_name=DB_NAME,
+                        write_scope=SLUG,
+                        read_scopes=read_scopes
+                    )
+                    app.state.actor_handle = actor_handle
+                    logger.info(f"Ray Actor '{actor_name}' started successfully.")
+                else:
+                    logger.warning(f"Experiment actor class 'ExperimentActor' not found in '{actor_mod_name}'.")
+            except ModuleNotFoundError:
+                logger.warning(f"Could not load actor module '{actor_mod_name}'. Actor endpoints may not work.")
+            except Exception as e:
+                logger.error(f"Failed to create Ray actor: {e}", exc_info=True)
+        except Exception as e:
+            logger.error(f"Ray initialization failed: {e}. Ray features will be disabled.", exc_info=True)
+            app.state.ray_is_available = False
+    else:
+        logger.info("Ray not available - Ray-dependent endpoints will not work.")
+    
     yield
+    
     # Shutdown
+    if actor_handle and app.state.ray_is_available:
+        try:
+            # Ray actors are detached, so we don't need to explicitly kill them
+            # Ray will clean them up when the cluster shuts down
+            logger.info("Ray actor will be cleaned up on cluster shutdown.")
+        except Exception as e:
+            logger.warning(f"Error during Ray actor cleanup: {e}")
+    
+    if RAY_AVAILABLE and app.state.ray_is_available:
+        try:
+            ray.shutdown()
+            logger.info("Ray cluster shutdown.")
+        except Exception:
+            pass
+    
     await close_mongodb()
 
 app = FastAPI(
@@ -287,6 +374,25 @@ app = FastAPI(
     openapi_url="/openapi.json",
     lifespan=lifespan
 )
+
+# --------------------------------------------------------------------------
+# Middleware to set slug_id for experiment routes
+# --------------------------------------------------------------------------
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
+
+class ExperimentScopeMiddleware(BaseHTTPMiddleware):
+    """Middleware to set slug_id for experiment routes."""
+    async def dispatch(self, request: Request, call_next: ASGIApp):
+        path = request.url.path
+        if path.startswith(f"/experiments/{SLUG}"):
+            request.state.slug_id = SLUG
+        else:
+            request.state.slug_id = None
+        response = await call_next(request)
+        return response
+
+app.add_middleware(ExperimentScopeMiddleware)
 
 # Mount static files
 static_dir = EXPERIMENT_DIR / "static"
@@ -321,7 +427,7 @@ async def standalone_index(request: Request):
 
 # Debug endpoint
 @app.get("/_debug/db", response_class=JSONResponse)
-async def debug_db():
+async def debug_db(request: Request):
     """Debug endpoint to check database status."""
     if mongo_db is None:
         return {"error": "Database not connected"}
@@ -336,7 +442,8 @@ async def debug_db():
         "mongo_uri": MONGO_URI,
         "db_name": DB_NAME,
         "collections": collections_info,
-        "ray_available": RAY_AVAILABLE
+        "ray_library_available": RAY_AVAILABLE,
+        "ray_initialized": getattr(request.app.state, "ray_is_available", False)
     }
 
 # --------------------------------------------------------------------------
