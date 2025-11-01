@@ -3054,10 +3054,26 @@ async def _run_index_creation_for_collection(
     try:
       if index_type == "regular":
         keys = index_def.get("keys")
-        options = {**index_def.get("options", {}), "name": index_name}
         if not keys:
           logger.warning(f"{log_prefix} Missing 'keys' on index '{index_name}'.")
           continue
+        
+        # Check if this is an _id index (MongoDB creates these automatically)
+        is_id_index = False
+        if isinstance(keys, dict):
+          is_id_index = len(keys) == 1 and "_id" in keys
+        elif isinstance(keys, list):
+          is_id_index = len(keys) == 1 and keys[0][0] == "_id"
+        
+        if is_id_index:
+          # _id indexes are automatically created by MongoDB and can't be customized
+          # We skip creation attempts since MongoDB handles this automatically
+          logger.info(f"{log_prefix} Skipping '_id' index '{index_name}' - MongoDB creates _id indexes automatically and they can't be customized.")
+          continue
+        
+        # For non-_id indexes, process options normally but filter invalid ones
+        options = {**index_def.get("options", {}), "name": index_name}
+        
         existing_index = await index_manager.get_index(index_name)
         if existing_index:
           # Compare keys to see if they differ
