@@ -2343,6 +2343,14 @@ def _create_intelligent_export_zip(
       logger.debug("Included async_mongo_wrapper.py")
     else:
       logger.warning("async_mongo_wrapper.py not found - export may not work correctly")
+    
+    # Add experiment_db.py (required for actor initialization)
+    experiment_db = source_dir / "experiment_db.py"
+    if experiment_db.is_file():
+      zf.write(experiment_db, "experiment_db.py")
+      logger.debug("Included experiment_db.py")
+    else:
+      logger.warning("experiment_db.py not found - export may not work correctly")
 
     # Add generated files
     zf.writestr("Dockerfile", dockerfile_content)
