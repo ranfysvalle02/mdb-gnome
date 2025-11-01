@@ -30,14 +30,14 @@ except ImportError:
   HAVE_MONGO_WRAPPER = False
   logging.warning("async_mongo_wrapper not found. Database wrapper unavailable.")
 
-# --- NEW: Boto3 for Backblaze B2 (S3-compatible) ---
+# --- NEW: Backblaze B2 SDK (Native Client) ---
 try:
-  import boto3
-  from botocore.exceptions import NoCredentialsError, ClientError
-  BOTO3_AVAILABLE = True
+  from b2sdk.v2 import InMemoryAccountInfo, B2Api
+  from b2sdk.exception import B2Error, B2SimpleError
+  B2SDK_AVAILABLE = True
 except ImportError:
-  BOTO3_AVAILABLE = False
-  logging.warning("boto3 library not found. Backblaze B2 integration will be disabled.")
+  B2SDK_AVAILABLE = False
+  logging.warning("b2sdk library not found. Backblaze B2 integration will be disabled.")
 
 # FastAPI & Starlette imports
 from fastapi import (
@@ -191,16 +191,20 @@ if ADMIN_PASSWORD_DEFAULT == "password123":
   logger.warning(" Using default admin password.")
 
 # --- NEW: Backblaze B2 Configuration ---
-B2_ENDPOINT_URL = os.getenv("B2_ENDPOINT_URL") # e.g., "https://s3.us-west-004.backblazeb2.com"
+# B2 SDK uses applicationKeyId and applicationKey (not endpoint_url)
+B2_APPLICATION_KEY_ID = os.getenv("B2_APPLICATION_KEY_ID") or os.getenv("B2_ACCESS_KEY_ID")
+B2_APPLICATION_KEY = os.getenv("B2_APPLICATION_KEY") or os.getenv("B2_SECRET_ACCESS_KEY")
 B2_BUCKET_NAME = os.getenv("B2_BUCKET_NAME")
-B2_ACCESS_KEY_ID = os.getenv("B2_ACCESS_KEY_ID")
-B2_SECRET_ACCESS_KEY = os.getenv("B2_SECRET_ACCESS_KEY")
 
-B2_ENABLED = all([B2_ENDPOINT_URL, B2_BUCKET_NAME, B2_ACCESS_KEY_ID, B2_SECRET_ACCESS_KEY, BOTO3_AVAILABLE])
-s3_client = None # Will be initialized in lifespan
+# Legacy env var support (B2_ENDPOINT_URL not needed for native SDK)
+B2_ENDPOINT_URL = os.getenv("B2_ENDPOINT_URL")  # Kept for Ray compatibility
 
-if not BOTO3_AVAILABLE:
-  logger.critical("boto3 library not installed. B2 features are impossible. pip install boto3")
+B2_ENABLED = all([B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET_NAME, B2SDK_AVAILABLE])
+b2_api = None  # Will be initialized in lifespan
+b2_bucket = None  # Will be initialized in lifespan
+
+if not B2SDK_AVAILABLE:
+  logger.critical("b2sdk library not installed. B2 features are impossible. pip install b2sdk")
 elif B2_ENABLED:
   logger.info(f"Backblaze B2 integration ENABLED for bucket '{B2_BUCKET_NAME}'.")
 else:
@@ -208,17 +212,38 @@ else:
   logger.warning("Dynamic experiment uploads via /api/upload-experiment will FAIL.")
 
 
-## Utility: B2 Presigned URL Generator
-def _generate_presigned_download_url(s3_client: boto3.client, bucket_name: str, object_key: str) -> str:
+## Utility: B2 Presigned URL Generator (Native B2 SDK)
+def _generate_presigned_download_url(b2_bucket, file_name: str, duration_seconds: int = 3600) -> str:
   """
-  Generates a secure, time-limited HTTPS URL for Ray's runtime environment download.
-  This uses the Boto3 client proven to connect successfully in the driver process.
+  Generates a secure, time-limited HTTPS download URL using native B2 SDK.
+  B2 SDK always returns HTTPS URLs, avoiding mixed content warnings.
+  
+  Args:
+    b2_bucket: B2 bucket instance from B2Api
+    file_name: Object key in the bucket
+    duration_seconds: URL expiration time (default: 1 hour)
+    
+  Returns:
+    HTTPS presigned download URL
   """
-  return s3_client.generate_presigned_url(
-    'get_object',
-    Params={'Bucket': bucket_name, 'Key': object_key},
-    ExpiresIn=3600 # URL valid for 1 hour
-  )
+  try:
+    # B2 SDK generates HTTPS URLs by default
+    url = b2_bucket.get_download_url(file_name, duration_seconds)
+    
+    # Verify it's HTTPS (B2 SDK should always return HTTPS, but be defensive)
+    if not url.startswith('https://'):
+      logger.error(f"CRITICAL: B2 SDK returned non-HTTPS URL: {url[:100]}...")
+      if url.startswith('http://'):
+        url = url.replace('http://', 'https://', 1)
+        logger.warning(f"Forced HTTPS on B2 presigned URL (was HTTP): {file_name}")
+      else:
+        raise ValueError(f"Invalid URL scheme from B2 SDK: {url[:50]}")
+    
+    logger.debug(f"Generated B2 presigned HTTPS URL for: {file_name}")
+    return url
+  except B2Error as e:
+    logger.error(f"B2 SDK error generating presigned URL for '{file_name}': {e}")
+    raise
 
 
 ## Utility: Log Export to Database
@@ -333,24 +358,41 @@ async def lifespan(app: FastAPI):
 
   logger.info(f"G_NOME_ENV set to: '{app.state.environment_mode}'")
 
-  # --- NEW: Initialize B2 Client ---
-  global s3_client
-  if B2_ENABLED and not s3_client:
+  # --- NEW: Initialize B2 SDK Client ---
+  global b2_api, b2_bucket
+  if B2_ENABLED and not b2_api:
     try:
-      s3_client = boto3.client(
-        's3',
-        endpoint_url=B2_ENDPOINT_URL,
-        aws_access_key_id=B2_ACCESS_KEY_ID,
-        aws_secret_access_key=B2_SECRET_ACCESS_KEY
-      )
-      app.state.s3_client = s3_client # Store in state
-      logger.info("Backblaze B2 (S3) client initialized successfully.")
+      # Initialize B2 API with account info
+      account_info = InMemoryAccountInfo()
+      b2_api = B2Api(account_info)
+      
+      # Authorize account (authenticates and caches credentials)
+      b2_api.authorize_account("production", B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY)
+      
+      # Get bucket by name
+      b2_bucket = b2_api.get_bucket_by_name(B2_BUCKET_NAME)
+      
+      # Store in app state
+      app.state.b2_api = b2_api
+      app.state.b2_bucket = b2_bucket
+      
+      logger.info(f"Backblaze B2 SDK initialized successfully for bucket '{B2_BUCKET_NAME}'.")
+    except B2Error as e:
+      logger.error(f"Failed to initialize B2 SDK during lifespan: {e}", exc_info=True)
+      app.state.b2_api = None
+      app.state.b2_bucket = None
+      b2_api = None
+      b2_bucket = None
     except Exception as e:
-      logger.error(f"Failed to initialize B2 client during lifespan: {e}")
-      app.state.s3_client = None
+      logger.error(f"Unexpected error initializing B2 SDK: {e}", exc_info=True)
+      app.state.b2_api = None
+      app.state.b2_bucket = None
+      b2_api = None
+      b2_bucket = None
   elif not B2_ENABLED:
-    app.state.s3_client = None
-    logger.warning("B2 client not initialized (B2_ENABLED=False).")
+    app.state.b2_api = None
+    app.state.b2_bucket = None
+    logger.warning("B2 SDK not initialized (B2_ENABLED=False).")
 
   # Ray Cluster Connection
   if RAY_AVAILABLE:
@@ -361,12 +403,16 @@ async def lifespan(app: FastAPI):
 
       if B2_ENABLED:
         # Pass B2 keys as environment variables for Ray to use in its actors/workers
+        # Note: Ray might still use S3-compatible interface, so we keep AWS-style env vars
         job_runtime_env["env_vars"] = {
-            "AWS_ENDPOINT_URL": B2_ENDPOINT_URL,
-            "AWS_ACCESS_KEY_ID": B2_ACCESS_KEY_ID,
-            "AWS_SECRET_ACCESS_KEY": B2_SECRET_ACCESS_KEY
+            "AWS_ENDPOINT_URL": B2_ENDPOINT_URL or "",  # May be None with native SDK
+            "AWS_ACCESS_KEY_ID": B2_APPLICATION_KEY_ID,
+            "AWS_SECRET_ACCESS_KEY": B2_APPLICATION_KEY,
+            "B2_APPLICATION_KEY_ID": B2_APPLICATION_KEY_ID,
+            "B2_APPLICATION_KEY": B2_APPLICATION_KEY,
+            "B2_BUCKET_NAME": B2_BUCKET_NAME
         }
-        logger.info("Passing B2 (as AWS) credentials to Ray job runtime environment.")
+        logger.info("Passing B2 credentials to Ray job runtime environment.")
 
       try:
           if RAY_CONNECTION_ADDRESS:
@@ -1488,18 +1534,36 @@ async def package_standalone_experiment(
     file_size = zip_buffer.getbuffer().nbytes
     
     # Upload to B2 and return presigned HTTPS URL to avoid mixed content
-    s3: Optional[boto3.client] = getattr(request.app.state, "s3_client", None)
-    if B2_ENABLED and s3:
+    b2_bucket = getattr(request.app.state, "b2_bucket", None)
+    if B2_ENABLED and b2_bucket:
       try:
         timestamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
         b2_object_key = f"exports/{slug_id}/standalone-{timestamp}.zip"
         
         logger.info(f"[{slug_id}] Uploading standalone export to B2: {b2_object_key}")
         zip_buffer.seek(0)  # Reset buffer position before upload
-        s3.upload_fileobj(zip_buffer, B2_BUCKET_NAME, b2_object_key)
+        zip_bytes = zip_buffer.getvalue()
         
-        # Generate presigned HTTPS URL
-        presigned_url = _generate_presigned_download_url(s3, B2_BUCKET_NAME, b2_object_key)
+        # Upload using B2 SDK (native client always uses HTTPS)
+        b2_bucket_instance = getattr(request.app.state, "b2_bucket", None)
+        if not b2_bucket_instance:
+          raise ValueError("B2 bucket not available")
+        b2_bucket_instance.upload_bytes(zip_bytes, b2_object_key)
+        
+        # Generate presigned HTTPS URL (B2 SDK always returns HTTPS)
+        presigned_url = _generate_presigned_download_url(b2_bucket_instance, b2_object_key)
+        
+        # Double-check URL is HTTPS (defensive programming)
+        if not presigned_url.startswith('https://'):
+          logger.error(f"CRITICAL: Presigned URL is not HTTPS! URL: {presigned_url[:100]}...")
+          # Force HTTPS as last resort
+          if presigned_url.startswith('http://'):
+            presigned_url = presigned_url.replace('http://', 'https://', 1)
+          else:
+            # If it's not even HTTP, something is very wrong - fallback to direct download
+            raise ValueError(f"Invalid presigned URL scheme: {presigned_url[:50]}")
+        
+        logger.debug(f"Generated presigned HTTPS URL for export: {presigned_url[:100]}...")
         
         # Log export to database
         await _log_export(
@@ -1592,18 +1656,37 @@ async def package_docker_experiment(
     file_size = zip_buffer.getbuffer().nbytes
     
     # Upload to B2 and return presigned HTTPS URL to avoid mixed content
-    s3: Optional[boto3.client] = getattr(request.app.state, "s3_client", None)
-    if B2_ENABLED and s3:
+    b2_bucket = getattr(request.app.state, "b2_bucket", None)
+    if B2_ENABLED and b2_bucket:
       try:
         timestamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
         b2_object_key = f"exports/{slug_id}/docker-{timestamp}.zip"
         
         logger.info(f"[{slug_id}] Uploading Docker export to B2: {b2_object_key}")
         zip_buffer.seek(0)  # Reset buffer position before upload
-        s3.upload_fileobj(zip_buffer, B2_BUCKET_NAME, b2_object_key)
+        zip_bytes = zip_buffer.getvalue()
         
-        # Generate presigned HTTPS URL
-        presigned_url = _generate_presigned_download_url(s3, B2_BUCKET_NAME, b2_object_key)
+        # Upload using B2 SDK (native client always uses HTTPS)
+        b2_bucket_instance = getattr(request.app.state, "b2_bucket", None)
+        if b2_bucket_instance:
+          b2_bucket_instance.upload_bytes(zip_bytes, b2_object_key)
+        else:
+          raise ValueError("B2 bucket not available")
+        
+        # Generate presigned HTTPS URL (B2 SDK always returns HTTPS)
+        presigned_url = _generate_presigned_download_url(b2_bucket_instance, b2_object_key)
+        
+        # Double-check URL is HTTPS (defensive programming)
+        if not presigned_url.startswith('https://'):
+          logger.error(f"CRITICAL: Presigned URL is not HTTPS! URL: {presigned_url[:100]}...")
+          # Force HTTPS as last resort
+          if presigned_url.startswith('http://'):
+            presigned_url = presigned_url.replace('http://', 'https://', 1)
+          else:
+            # If it's not even HTTP, something is very wrong - fallback to direct download
+            raise ValueError(f"Invalid presigned URL scheme: {presigned_url[:50]}")
+        
+        logger.debug(f"Generated presigned HTTPS URL for export: {presigned_url[:100]}...")
         
         # Log export to database
         await _log_export(
@@ -1676,18 +1759,37 @@ async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any
     file_size = zip_buffer.getbuffer().nbytes
     
     # Upload to B2 and return presigned HTTPS URL to avoid mixed content
-    s3: Optional[boto3.client] = getattr(request.app.state, "s3_client", None)
-    if B2_ENABLED and s3:
+    b2_bucket = getattr(request.app.state, "b2_bucket", None)
+    if B2_ENABLED and b2_bucket:
       try:
         timestamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
         b2_object_key = f"exports/{slug_id}/standalone-{timestamp}.zip"
         
         logger.info(f"[{slug_id}] Admin uploading standalone export to B2: {b2_object_key}")
         zip_buffer.seek(0)  # Reset buffer position before upload
-        s3.upload_fileobj(zip_buffer, B2_BUCKET_NAME, b2_object_key)
+        zip_bytes = zip_buffer.getvalue()
         
-        # Generate presigned HTTPS URL
-        presigned_url = _generate_presigned_download_url(s3, B2_BUCKET_NAME, b2_object_key)
+        # Upload using B2 SDK (native client always uses HTTPS)
+        b2_bucket_instance = getattr(request.app.state, "b2_bucket", None)
+        if b2_bucket_instance:
+          b2_bucket_instance.upload_bytes(zip_bytes, b2_object_key)
+        else:
+          raise ValueError("B2 bucket not available")
+        
+        # Generate presigned HTTPS URL (B2 SDK always returns HTTPS)
+        presigned_url = _generate_presigned_download_url(b2_bucket_instance, b2_object_key)
+        
+        # Double-check URL is HTTPS (defensive programming)
+        if not presigned_url.startswith('https://'):
+          logger.error(f"CRITICAL: Presigned URL is not HTTPS! URL: {presigned_url[:100]}...")
+          # Force HTTPS as last resort
+          if presigned_url.startswith('http://'):
+            presigned_url = presigned_url.replace('http://', 'https://', 1)
+          else:
+            # If it's not even HTTP, something is very wrong - fallback to direct download
+            raise ValueError(f"Invalid presigned URL scheme: {presigned_url[:50]}")
+        
+        logger.debug(f"Generated presigned HTTPS URL for export: {presigned_url[:100]}...")
         
         # Log export to database
         await _log_export(
@@ -2078,10 +2180,10 @@ async def upload_experiment_zip(
   admin_email = user.get('email', 'Unknown Admin')
   logger.info(f"Admin '{admin_email}' initiated zip upload for '{slug_id}'.")
 
-  s3: Optional[boto3.client] = getattr(request.app.state, "s3_client", None)
-  if not B2_ENABLED or not s3:
-    logger.error(f"Cannot upload '{slug_id}': B2 not configured or no s3 client.")
-    raise HTTPException(501, "S3/B2 not configured; upload impossible.")
+  b2_bucket = getattr(request.app.state, "b2_bucket", None)
+  if not B2_ENABLED or not b2_bucket:
+    logger.error(f"Cannot upload '{slug_id}': B2 not configured or no B2 bucket.")
+    raise HTTPException(501, "B2 not configured; upload impossible.")
 
   if file.content_type not in ("application/zip", "application/x-zip-compressed"):
     raise HTTPException(400, "Invalid file type; must be .zip.")
@@ -2126,10 +2228,15 @@ async def upload_experiment_zip(
   b2_object_key = f"{slug_id}/runtime-{timestamp}.zip"
   try:
     logger.info(f"[{slug_id}] Uploading runtime zip to B2 object '{b2_object_key}'...")
-    s3.upload_fileobj(io.BytesIO(zip_data), B2_BUCKET_NAME, b2_object_key)
+    # Upload using B2 SDK (native client always uses HTTPS)
+    b2_bucket_instance = getattr(request.app.state, "b2_bucket", None)
+    if not b2_bucket_instance:
+      raise ValueError("B2 bucket not available")
+    b2_bucket_instance.upload_bytes(zip_data, b2_object_key)
     logger.info(f"[{slug_id}] B2 upload successful. Generating presigned URL...")
-    b2_final_uri = _generate_presigned_download_url(s3, B2_BUCKET_NAME, b2_object_key)
-  except ClientError as e:
+    # B2 SDK always returns HTTPS URLs
+    b2_final_uri = _generate_presigned_download_url(b2_bucket_instance, b2_object_key)
+  except B2Error as e:
     logger.error(f"[{slug_id}] B2 upload failed: {e}", exc_info=True)
     raise HTTPException(500, f"Failed to upload runtime: {e}")
   except Exception as e:
