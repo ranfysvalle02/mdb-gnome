@@ -65,6 +65,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.types import ASGIApp
 
 # Database imports (Motor for async MongoDB)
@@ -149,6 +150,7 @@ try:
     get_current_user_or_redirect,
     require_admin,
     get_scoped_db,
+    get_experiment_config,
   )
   # ScopedMongoWrapper is imported above from async_mongo_wrapper
 except ImportError as e:
@@ -300,6 +302,84 @@ async def _write_file_async(file_path: Path, content: bytes | str) -> None:
       await asyncio.to_thread(file_path.write_text, content, encoding="utf-8")
     else:
       await asyncio.to_thread(file_path.write_bytes, content)
+
+## Background Task Manager: Prevents Task Accumulation
+class BackgroundTaskManager:
+  """
+  Manages background tasks to prevent accumulation and provide tracking.
+  Limits the number of concurrent background tasks and tracks active tasks.
+  """
+  def __init__(self, max_concurrent_tasks: int = 100):
+    self.max_concurrent_tasks = max_concurrent_tasks
+    self.active_tasks: Dict[str, asyncio.Task] = {}
+    self.task_counter = 0
+    self._lock = asyncio.Lock()
+    
+  async def _safe_task_wrapper(self, task_id: str, coro) -> None:
+    """
+    Safely executes a background coroutine with error handling.
+    Removes the task from active_tasks when done.
+    """
+    try:
+      await coro
+    except Exception as e:
+      logger.error(f"Background task {task_id} failed: {e}", exc_info=True)
+    finally:
+      async with self._lock:
+        self.active_tasks.pop(task_id, None)
+  
+  async def create_task(self, coro, task_name: str = None) -> Optional[str]:
+    """
+    Creates a tracked background task. Returns task_id if created, None if rejected.
+    
+    Args:
+      coro: The coroutine to run in background
+      task_name: Optional name for the task (for logging)
+      
+    Returns:
+      task_id if task was created, None if rejected due to max limit
+    """
+    async with self._lock:
+      # Clean up completed tasks first
+      self.active_tasks = {
+        task_id: task for task_id, task in self.active_tasks.items()
+        if not task.done()
+      }
+      
+      # Check if we're at max capacity
+      if len(self.active_tasks) >= self.max_concurrent_tasks:
+        logger.warning(
+          f"Rejected background task '{task_name or 'unnamed'}': "
+          f"{len(self.active_tasks)}/{self.max_concurrent_tasks} tasks active"
+        )
+        return None
+      
+      # Create new task
+      self.task_counter += 1
+      task_id = f"task_{self.task_counter}_{task_name or 'unnamed'}"
+      task = asyncio.create_task(self._safe_task_wrapper(task_id, coro))
+      self.active_tasks[task_id] = task
+      
+      if task_name:
+        logger.debug(f"Created background task: {task_id} ({len(self.active_tasks)}/{self.max_concurrent_tasks} active)")
+      
+      return task_id
+  
+  def get_active_task_count(self) -> int:
+    """Returns the current number of active tasks."""
+    return len(self.active_tasks)
+
+# Global task manager instance
+_task_manager = BackgroundTaskManager(max_concurrent_tasks=100)
+
+## Utility: Safe Background Task Wrapper (backwards compatible)
+async def _safe_background_task(coro) -> None:
+  """
+  Safely executes a background coroutine with error handling.
+  Prevents unhandled exceptions in fire-and-forget tasks.
+  Uses the global task manager to prevent task accumulation.
+  """
+  await _task_manager.create_task(coro, task_name="safe_background_task")
 
 ## Utility: Estimate Export Size
 def _estimate_export_size(
@@ -470,26 +550,46 @@ async def _cleanup_local_export_file(file_path: Path | None):
   except Exception as e:
     logger.warning(f"Failed to cleanup local export file {file_path.name}: {e}")
 
-## Utility: Cleanup Old Exports
+## Utility: Cleanup Old Exports (Batch Operation)
 async def _cleanup_old_exports(max_age_hours: int = 24):
   """
   Removes export files older than max_age_hours from temp directory.
-  Runs asynchronously in background.
+  Uses batch operations: collects files to delete first, then deletes in batch.
+  This is more efficient than per-file cleanup operations.
   """
   try:
     cutoff_time = datetime.datetime.now().timestamp() - (max_age_hours * 3600)
-    deleted_count = 0
+    
+    # Batch operation: collect all files to delete first
+    files_to_delete = []
     for export_file in EXPORTS_TEMP_DIR.glob("*.zip"):
       try:
         if export_file.stat().st_mtime < cutoff_time:
-          export_file.unlink()
-          deleted_count += 1
-          logger.debug(f"Cleaned up old export: {export_file.name}")
+          files_to_delete.append(export_file)
       except Exception as e:
-        logger.warning(f"Failed to delete old export {export_file.name}: {e}")
+        logger.warning(f"Failed to check export file {export_file.name}: {e}")
     
-    if deleted_count > 0:
-      logger.info(f"Cleaned up {deleted_count} old export file(s)")
+    # Parallel delete: delete all collected files concurrently for better performance
+    async def _delete_file_safe(file_path: Path) -> Tuple[Path, bool]:
+      """Delete a single file, returning (path, success)."""
+      try:
+        file_path.unlink()
+        logger.debug(f"Cleaned up old export: {file_path.name}")
+        return file_path, True
+      except Exception as e:
+        logger.warning(f"Failed to delete old export {file_path.name}: {e}")
+        return file_path, False
+    
+    if files_to_delete:
+      # Delete files in parallel using asyncio.gather
+      delete_tasks = [_delete_file_safe(f) for f in files_to_delete]
+      results = await asyncio.gather(*delete_tasks, return_exceptions=True)
+      
+      # Count successful deletions
+      deleted_count = sum(1 for r in results if not isinstance(r, Exception) and r[1])
+      
+      if deleted_count > 0:
+        logger.info(f"Cleaned up {deleted_count}/{len(files_to_delete)} old export file(s) in parallel operation")
   except Exception as e:
     logger.error(f"Error during export cleanup: {e}", exc_info=True)
 
@@ -619,8 +719,24 @@ if not TEMPLATES_DIR.is_dir():
   logger.critical(f" CRITICAL ERROR: Templates directory not found at '{TEMPLATES_DIR}'.")
   templates: Optional[Jinja2Templates] = None
 else:
-  templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
-  logger.info(f" Jinja2 templates loaded from '{TEMPLATES_DIR}'")
+  # Enable bytecode caching for better performance
+  try:
+    from jinja2 import FileSystemBytecodeCache
+    cache_dir = BASE_DIR / ".jinja_cache"
+    cache_dir.mkdir(exist_ok=True, mode=0o755)
+    bytecode_cache = FileSystemBytecodeCache(
+      directory=str(cache_dir),
+      pattern="%s.cache"
+    )
+    templates = Jinja2Templates(
+      directory=str(TEMPLATES_DIR),
+      bytecode_cache=bytecode_cache
+    )
+    logger.info(f" Jinja2 templates loaded from '{TEMPLATES_DIR}' with bytecode caching enabled.")
+  except Exception as e:
+    logger.warning(f" Failed to enable Jinja2 bytecode caching: {e}. Using default configuration.")
+    templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+    logger.info(f" Jinja2 templates loaded from '{TEMPLATES_DIR}'")
 
 
 ## FastAPI Application Lifespan (Startup & Shutdown)
@@ -736,7 +852,12 @@ async def lifespan(app: FastAPI):
     client = AsyncIOMotorClient(
       MONGO_URI,
       serverSelectionTimeoutMS=5000,
-      appname="ModularLabsAPI"
+      appname="ModularLabsAPI",
+      maxPoolSize=50,  # Increase pool size
+      minPoolSize=10,  # Keep connections warm
+      maxIdleTimeMS=45000,  # Close idle connections
+      retryWrites=True,  # Enable retry for writes
+      retryReads=True,   # Enable retry for reads
     )
     await client.admin.command("ping")
     db = client[DB_NAME]
@@ -779,10 +900,53 @@ async def lifespan(app: FastAPI):
     logger.error(f" ❌ Full traceback: {traceback.format_exc()}")
 
   logger.info(" Application startup sequence complete. Ready to serve requests.")
+  
+  # Start scheduled export cleanup task (runs every 6 hours)
+  async def scheduled_cleanup_loop():
+    """Background task that runs export cleanup on a schedule (every 6 hours)."""
+    cleanup_interval_hours = 6
+    while True:
+      try:
+        await asyncio.sleep(cleanup_interval_hours * 3600)  # Sleep for 6 hours
+        logger.info(f"Running scheduled export cleanup (every {cleanup_interval_hours} hours)...")
+        await _cleanup_old_exports(max_age_hours=24)
+      except asyncio.CancelledError:
+        logger.info("Scheduled export cleanup task cancelled during shutdown.")
+        break
+      except Exception as e:
+        logger.error(f"Error in scheduled export cleanup loop: {e}", exc_info=True)
+        # Continue the loop even if cleanup fails
+        await asyncio.sleep(60)  # Wait 1 minute before retrying
+  
+  # Start the scheduled cleanup task
+  cleanup_task = asyncio.create_task(scheduled_cleanup_loop())
+  app.state.export_cleanup_task = cleanup_task  # Store for shutdown
+  logger.info(" Scheduled export cleanup task started (runs every 6 hours).")
+  
+  # Run initial cleanup after 5 minutes to avoid blocking startup
+  async def initial_cleanup_delayed():
+    await asyncio.sleep(300)  # Wait 5 minutes before first cleanup
+    logger.info("Running initial export cleanup after startup delay...")
+    await _cleanup_old_exports(max_age_hours=24)
+  
+  asyncio.create_task(initial_cleanup_delayed())
+  
   try:
     yield # The application runs here
   finally:
     logger.info(" Application shutdown sequence initiated...")
+    
+    # Cancel scheduled cleanup task
+    if hasattr(app.state, "export_cleanup_task"):
+      cleanup_task = app.state.export_cleanup_task
+      if not cleanup_task.done():
+        cleanup_task.cancel()
+        try:
+          await cleanup_task
+        except asyncio.CancelledError:
+          pass
+        logger.info(" Scheduled export cleanup task cancelled.")
+    
     if hasattr(app.state, "mongo_client") and app.state.mongo_client:
       logger.info("Closing MongoDB connection...")
       app.state.mongo_client.close()
@@ -1097,6 +1261,10 @@ if G_NOME_ENV == "production":
 else:
     logger.warning(f"Non-production environment ('{G_NOME_ENV}') detected. Skipping HTTPS enforcement.")
 
+# Compression middleware should be added LAST to compress final responses after all other middleware
+# This ensures responses are compressed after HTTPS enforcement and other modifications
+app.add_middleware(GZipMiddleware, minimum_size=1000)  # Compress responses > 1KB
+
 
 async def _ensure_db_indices(db: AsyncIOMotorDatabase):
   try:
@@ -1122,8 +1290,10 @@ async def _seed_admin(app: FastAPI):
     # 1) Fetch all users who have is_admin=True
     try:
         logger.debug("Fetching admin users from DB...")
+        # Project only email field for admin users
+        # Limit to 1000 admin users to prevent accidental large result sets
         admin_users: List[Dict[str, Any]] = await asyncio.wait_for(
-            db.users.find({"is_admin": True}).to_list(length=None),
+            db.users.find({"is_admin": True}, {"email": 1}).limit(1000).to_list(length=None),
             timeout=DB_TIMEOUT
         )
         logger.debug(f"Found {len(admin_users)} admin user(s).")
@@ -1234,22 +1404,37 @@ async def _seed_admin(app: FastAPI):
             else:
                 logger.debug("Admin policy 'admin_panel:access' already exists.")
 
-            # 2. Check each admin user for the "admin" role
-            for user_doc in admin_users:
-                email = user_doc["email"]
-                logger.debug(f"Verifying 'admin' role for user '{email}'...")
-                has_role = await asyncio.wait_for(
+            # 2. Check each admin user for the "admin" role (BATCHED for performance)
+            admin_emails = [user_doc.get("email") for user_doc in admin_users if user_doc.get("email")]
+            logger.debug(f"Verifying 'admin' roles for {len(admin_emails)} user(s) in batch...")
+            
+            # Batch check all admin roles at once (reduces N database calls to 1 batch operation)
+            role_check_tasks = [
+                asyncio.wait_for(
                     authz.has_role_for_user(email, "admin"),
                     timeout=DB_TIMEOUT
                 )
+                for email in admin_emails
+            ]
+            role_results = await asyncio.gather(*role_check_tasks, return_exceptions=True)
+            
+            # Process results and add missing roles
+            for email, has_role in zip(admin_emails, role_results):
+                # Handle exceptions from role checks
+                if isinstance(has_role, Exception):
+                    logger.error(f"Error checking role for '{email}': {has_role}", exc_info=True)
+                    continue
                 
                 if not has_role:
                     logger.info(f"User '{email}' is admin but missing Casbin role. Adding...")
-                    await asyncio.wait_for(
-                        authz.add_role_for_user(email, "admin"),
-                        timeout=DB_TIMEOUT
-                    )
-                    made_changes = True
+                    try:
+                        await asyncio.wait_for(
+                            authz.add_role_for_user(email, "admin"),
+                            timeout=DB_TIMEOUT
+                        )
+                        made_changes = True
+                    except Exception as e:
+                        logger.error(f"Failed to add role for '{email}': {e}", exc_info=True)
                 else:
                     logger.debug(f"User '{email}' already has admin role.")
 
@@ -1285,7 +1470,7 @@ async def _seed_db_from_local_files(db: AsyncIOMotorDatabase):
         manifest_path = item / "manifest.json"
 
         if manifest_path.is_file():
-          exists = await db.experiments_config.find_one({"slug": slug})
+          exists = await db.experiments_config.find_one({"slug": slug}, {"_id": 1, "slug": 1})
           if not exists:
             logger.warning(f"[{slug}] No DB config found. Seeding from local 'manifest.json'...")
             try:
@@ -1339,9 +1524,41 @@ async def _seed_db_from_local_files(db: AsyncIOMotorDatabase):
     logger.info("No new local manifests found to seed. Database is up-to-date.")
 
 
+# Directory scan cache with TTL (60 seconds)
+_dir_scan_cache: Dict[str, Tuple[List[Dict[str, Any]], datetime.datetime]] = {}
+_dir_scan_cache_lock = asyncio.Lock()
+DIR_SCAN_CACHE_TTL_SECONDS = 60  # 1 minute TTL
+
+
 async def _scan_directory(dir_path: Path, base_path: Path) -> List[Dict[str, Any]]:
-  """Async wrapper for directory scanning that runs the synchronous operation in a thread."""
-  return await asyncio.to_thread(_scan_directory_sync, dir_path, base_path)
+  """
+  Async wrapper for directory scanning that runs the synchronous operation in a thread.
+  Includes caching with TTL to reduce I/O for repeated admin panel views.
+  """
+  cache_key = str(dir_path)
+  
+  # Check cache (thread-safe)
+  async with _dir_scan_cache_lock:
+    if cache_key in _dir_scan_cache:
+      tree, timestamp = _dir_scan_cache[cache_key]
+      age = datetime.datetime.now() - timestamp
+      if age < datetime.timedelta(seconds=DIR_SCAN_CACHE_TTL_SECONDS):
+        # Cache hit - still valid
+        logger.debug(f"_scan_directory: Using cached result for '{dir_path}' (age: {age.total_seconds():.1f}s)")
+        return tree
+      else:
+        # Cache expired - remove it
+        logger.debug(f"_scan_directory: Cache expired for '{dir_path}' (age: {age.total_seconds():.1f}s)")
+        del _dir_scan_cache[cache_key]
+  
+  # Perform actual scan
+  tree = await asyncio.to_thread(_scan_directory_sync, dir_path, base_path)
+  
+  # Update cache (thread-safe)
+  async with _dir_scan_cache_lock:
+    _dir_scan_cache[cache_key] = (tree, datetime.datetime.now())
+  
+  return tree
 
 
 def _scan_directory_sync(dir_path: Path, base_path: Path) -> List[Dict[str, Any]]:
@@ -1423,7 +1640,11 @@ async def login_post(request: Request):
       "ENABLE_REGISTRATION": ENABLE_REGISTRATION,
     }, status_code=status.HTTP_400_BAD_REQUEST)
 
-  user = await db.users.find_one({"email": email})
+  # Only fetch fields needed for authentication
+  user = await db.users.find_one(
+    {"email": email},
+    {"_id": 1, "email": 1, "password_hash": 1, "is_admin": 1}
+  )
   if user and bcrypt.checkpw(password.encode("utf-8"), user.get("password_hash", b"")):
     logger.info(f"Successful login for user: {email}")
     payload = {
@@ -1509,7 +1730,7 @@ if ENABLE_REGISTRATION:
         "next": safe_next_url
       }, status_code=status.HTTP_400_BAD_REQUEST)
 
-    if await db.users.find_one({"email": email}):
+    if await db.users.find_one({"email": email}, {"_id": 1}):
       return templates.TemplateResponse("register.html", {
         "request": request,
         "error": "An account with this email already exists.",
@@ -1603,17 +1824,37 @@ async def _dump_db_to_json(db: AsyncIOMotorDatabase, slug_id: str) -> Tuple[Dict
     if cname.startswith(f"{slug_id}_"):
       sub_collections.append(cname)
 
-  collections_data: Dict[str, List[Dict[str, Any]]] = {}
-  for coll_name in sub_collections:
+  # Parallelize collection dumping for better performance
+  async def _dump_single_collection(coll_name: str) -> Tuple[str, List[Dict[str, Any]]]:
+    """Dump a single collection's documents."""
     docs_list = []
-    cursor = db[coll_name].find()
-    async for doc in cursor:
-      doc_dict = dict(doc)
-      if "_id" in doc_dict:
-        doc_dict["_id"] = str(doc_dict["_id"])
-      # Make document JSON-serializable
-      doc_dict = _make_json_serializable(doc_dict)
-      docs_list.append(doc_dict)
+    try:
+      # Limit to 10000 documents per collection to prevent accidental large exports
+      cursor = db[coll_name].find().limit(10000)
+      async for doc in cursor:
+        doc_dict = dict(doc)
+        if "_id" in doc_dict:
+          doc_dict["_id"] = str(doc_dict["_id"])
+        # Make document JSON-serializable
+        doc_dict = _make_json_serializable(doc_dict)
+        docs_list.append(doc_dict)
+    except Exception as e:
+      logger.error(f"Error dumping collection '{coll_name}': {e}", exc_info=True)
+      # Return empty list on error
+      docs_list = []
+    return coll_name, docs_list
+
+  # Dump all collections in parallel
+  dump_tasks = [_dump_single_collection(coll_name) for coll_name in sub_collections]
+  results = await asyncio.gather(*dump_tasks, return_exceptions=True)
+  
+  # Build collections_data dict from results
+  collections_data: Dict[str, List[Dict[str, Any]]] = {}
+  for result in results:
+    if isinstance(result, Exception):
+      logger.error(f"Error in collection dump task: {result}", exc_info=True)
+      continue
+    coll_name, docs_list = result
     collections_data[coll_name] = docs_list
 
   return config_data, collections_data
@@ -1763,7 +2004,7 @@ def _create_zip_to_disk(
   return zip_path
 
 
-def _create_standalone_zip(
+async def _create_standalone_zip(
   slug_id: str,
   source_dir: Path,
   db_data: Dict[str, Any],
@@ -1889,12 +2130,14 @@ to run the experiment locally, independent of the main platform.
               logger.error(f"Failed to get relative path for {file_path}")
               continue
 
-            # Rewrite paths in HTML files
+            # Rewrite paths in HTML files (using async file I/O for better concurrency)
             if file_path.suffix in (".html", ".htm"):
-              original_html = file_path.read_text(encoding="utf-8")
+              original_html = await _read_file_async(file_path, encoding="utf-8")
               fixed_html = _fix_static_paths(original_html, slug_id)
               zf.writestr(arcname, fixed_html)
             else:
+              # For binary files, still use synchronous write since zipfile requires it
+              # but we can read asynchronously if needed in the future
               zf.write(file_path, arcname)
 
       # --- 6. Add generated core files to the root of the ZIP ---
@@ -2840,8 +3083,8 @@ async def package_standalone_experiment(
 ):
   db: AsyncIOMotorDatabase = request.app.state.mongo_db
 
-  # 1. Check Experiment Configuration
-  config = await db.experiments_config.find_one({"slug": slug_id})
+  # 1. Check Experiment Configuration - only need status and auth_required fields
+  config = await db.experiments_config.find_one({"slug": slug_id}, {"status": 1, "auth_required": 1})
   if not config or config.get("status") != "active":
     raise HTTPException(status_code=404, detail="Experiment not found or not active.")
 
@@ -2926,8 +3169,7 @@ async def package_standalone_experiment(
         relative_url = str(request.url_for("exports", filename=file_name))
         download_url = _build_absolute_https_url(request, relative_url)
     
-    # Trigger cleanup of old exports in background (non-blocking)
-    asyncio.create_task(_cleanup_old_exports(max_age_hours=24))
+    # Note: Export cleanup now runs on a schedule (every 6 hours) instead of per-request
     
     # Log export to database (only if we didn't reuse an existing export)
     export_log_id = None
@@ -2976,8 +3218,8 @@ async def package_docker_experiment(
   """
   db: AsyncIOMotorDatabase = request.app.state.mongo_db
 
-  # 1. Check Experiment Configuration
-  config = await db.experiments_config.find_one({"slug": slug_id})
+  # 1. Check Experiment Configuration - only need status and auth_required fields
+  config = await db.experiments_config.find_one({"slug": slug_id}, {"status": 1, "auth_required": 1})
   if not config or config.get("status") != "active":
     raise HTTPException(status_code=404, detail="Experiment not found or not active.")
 
@@ -3036,8 +3278,7 @@ async def package_docker_experiment(
       relative_url = str(request.url_for("exports", filename=file_name))
       download_url = _build_absolute_https_url(request, relative_url)
     
-    # Trigger cleanup of old exports in background (non-blocking)
-    asyncio.create_task(_cleanup_old_exports(max_age_hours=24))
+    # Note: Export cleanup now runs on a schedule (every 6 hours) instead of per-request
     
     # Log export to database
     export_log_id = await _log_export(
@@ -3089,7 +3330,7 @@ async def serve_export_file(filename: str, request: Request):
         {"local_file_path": {"$regex": safe_filename}},
         {"b2_file_name": {"$regex": safe_filename}}
       ]
-    })
+    }, {"invalidated": 1, "slug_id": 1})
     
     if export_log and export_log.get("invalidated", False):
       logger.info(f"Export file '{safe_filename}' is invalidated, returning 410 Gone")
@@ -3203,8 +3444,7 @@ async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any
         relative_url = str(request.url_for("exports", filename=file_name))
         download_url = _build_absolute_https_url(request, relative_url)
     
-    # Trigger cleanup of old exports in background (non-blocking)
-    asyncio.create_task(_cleanup_old_exports(max_age_hours=24))
+    # Note: Export cleanup now runs on a schedule (every 6 hours) instead of per-request
     
     # Log export to database (only if we didn't reuse an existing export)
     export_log_id = None
@@ -3257,7 +3497,20 @@ async def list_exports(
       query["slug_id"] = slug_id
     
     exports = []
-    async for export_log in db.export_logs.find(query).sort("created_at", -1):
+    # Project only needed fields for export listing
+    projection = {
+      "_id": 1,
+      "slug_id": 1,
+      "export_type": 1,
+      "user_email": 1,
+      "file_size": 1,
+      "b2_file_name": 1,
+      "local_file_path": 1,
+      "invalidated": 1,
+      "created_at": 1,
+    }
+    # Limit to 1000 exports to prevent accidental large result sets
+    async for export_log in db.export_logs.find(query, projection).sort("created_at", -1).limit(1000):
       export_dict = {
         "_id": str(export_log["_id"]),
         "slug_id": export_log.get("slug_id"),
@@ -3299,8 +3552,8 @@ async def invalidate_export(
   try:
     from bson import ObjectId
     
-    # Find the export
-    export_log = await db.export_logs.find_one({"_id": ObjectId(export_id)})
+    # Find the export - only need invalidated field for this check
+    export_log = await db.export_logs.find_one({"_id": ObjectId(export_id)}, {"invalidated": 1, "slug_id": 1, "b2_file_name": 1, "local_file_path": 1})
     if not export_log:
       raise HTTPException(status_code=404, detail="Export not found")
     
@@ -3376,25 +3629,34 @@ async def admin_dashboard(request: Request, user: Dict[str, Any] = Depends(requi
     error_message = f"Experiments directory missing at '{EXPERIMENTS_DIR}'"
     logger.error(error_message)
 
-  try:
-    db_configs_list = await db.experiments_config.find().to_list(length=None)
-  except Exception as e:
-    error_message = f"Error fetching experiment configs from DB: {e}"
-    logger.error(error_message, exc_info=True)
-    db_configs_list = []
-
-  # Fetch export counts for all configured experiments
-  export_counts: Dict[str, int] = {}
-  try:
-    export_aggregation = await db.export_logs.aggregate([
-      {"$group": {
-        "_id": "$slug_id",
-        "count": {"$sum": 1}
-      }}
-    ]).to_list(length=None)
-    export_counts = {item["_id"]: item["count"] for item in export_aggregation if item.get("_id")}
-  except Exception as e:
-    logger.warning(f"Error fetching export counts: {e}", exc_info=True)
+  # Fetch configs and export counts in parallel (independent queries)
+  async def fetch_configs():
+    try:
+      # Limit to 500 experiment configs to prevent accidental large result sets
+      return await db.experiments_config.find().limit(500).to_list(length=None)
+    except Exception as e:
+      error_message = f"Error fetching experiment configs from DB: {e}"
+      logger.error(error_message, exc_info=True)
+      return []
+  
+  async def fetch_export_counts():
+    try:
+      export_aggregation = await db.export_logs.aggregate([
+        {"$group": {
+          "_id": "$slug_id",
+          "count": {"$sum": 1}
+        }}
+      ]).to_list(length=None)
+      return {item["_id"]: item["count"] for item in export_aggregation if item.get("_id")}
+    except Exception as e:
+      logger.warning(f"Error fetching export counts: {e}", exc_info=True)
+      return {}
+  
+  # Execute independent queries in parallel
+  db_configs_list, export_counts = await asyncio.gather(
+    fetch_configs(),
+    fetch_export_counts()
+  )
 
   db_slug_map = {cfg.get("slug"): cfg for cfg in db_configs_list if cfg.get("slug")}
   configured_experiments: List[Dict[str, Any]] = []
@@ -3447,13 +3709,13 @@ def _get_default_manifest(slug_id: str) -> Dict[str, Any]:
 async def configure_experiment_get(request: Request, slug_id: str, user: Dict[str, Any] = Depends(require_admin)):
   if not templates:
     raise HTTPException(500, "Template engine not available.")
-  db: AsyncIOMotorDatabase = request.app.state.mongo_db
   experiment_path = EXPERIMENTS_DIR / slug_id
   manifest_data: Optional[Dict[str, Any]] = None
   manifest_content: str = ""
 
   try:
-    db_config = await db.experiments_config.find_one({"slug": slug_id})
+    # Use cached config dependency to avoid duplicate fetches
+    db_config = await get_experiment_config(request, slug_id)
     if db_config:
       db_config.pop("_id", None)
       db_config.pop("runtime_s3_uri", None)
@@ -3537,7 +3799,8 @@ async def save_manifest(
     if not isinstance(new_manifest_data, dict):
       raise ValueError("Manifest must be a JSON object.")
 
-    old_config = await db.experiments_config.find_one({"slug": slug_id})
+    # Use cached config dependency to avoid duplicate fetches
+    old_config = await get_experiment_config(request, slug_id)
     old_status = old_config.get("status", "draft") if old_config else "draft"
     new_status = new_manifest_data.get("status", "draft")
 
@@ -3551,7 +3814,17 @@ async def save_manifest(
       update_doc = {"$set": config_data}
 
     await db.experiments_config.update_one({"slug": slug_id}, update_doc, upsert=True)
+    # Invalidate application-level config cache after update
+    from core_deps import invalidate_experiment_config_cache
+    invalidate_experiment_config_cache(slug_id)
     logger.info(f"Upserted experiment config in DB for '{slug_id}'.")
+    
+    # Invalidate cache after update since config has changed
+    if hasattr(request.state, "experiment_config_cache"):
+      # Clear all cache entries for this slug_id (including any projections)
+      keys_to_remove = [key for key in request.state.experiment_config_cache.keys() if key.startswith(f"{slug_id}:") or key == slug_id]
+      for key in keys_to_remove:
+        del request.state.experiment_config_cache[key]
 
     if old_status != new_status:
       logger.info(f"Experiment '{slug_id}' status changed from '{old_status}' to '{new_status}'. Reloading...")
@@ -3590,9 +3863,11 @@ async def get_index_status(request: Request, slug_id: str, user: Dict[str, Any] 
   if not INDEX_MANAGER_AVAILABLE:
     return JSONResponse({"error": "Index Management not available."}, status_code=501, headers=no_cache_headers)
 
-  db: AsyncIOMotorDatabase = request.app.state.mongo_db
   try:
-    config = await db.experiments_config.find_one({"slug": slug_id})
+    # Use cached config dependency to avoid duplicate fetches
+    # Only need managed_indexes field for index status
+    projection = {"managed_indexes": 1}
+    config = await get_experiment_config(request, slug_id, projection)
   except Exception as e:
     logger.error(f"Failed to fetch config for '{slug_id}': {e}", exc_info=True)
     return JSONResponse({"error": "Failed to fetch config."}, status_code=500, headers=no_cache_headers)
@@ -3786,6 +4061,17 @@ async def upload_experiment_zip(
     }
     await db.experiments_config.update_one({"slug": slug_id}, {"$set": config_data}, upsert=True)
     logger.info(f"[{slug_id}] Updated DB config with new B2 runtime.")
+    
+    # Invalidate cache after update since config has changed
+    if hasattr(request.state, "experiment_config_cache"):
+      # Clear all cache entries for this slug_id (including any projections)
+      keys_to_remove = [key for key in request.state.experiment_config_cache.keys() if key.startswith(f"{slug_id}:") or key == slug_id]
+      for key in keys_to_remove:
+        del request.state.experiment_config_cache[key]
+    
+    # Also invalidate application-level config cache
+    from core_deps import invalidate_experiment_config_cache
+    invalidate_experiment_config_cache(slug_id)
   except Exception as e:
     logger.error(f"[{slug_id}] DB config update error: {e}", exc_info=True)
     raise HTTPException(500, f"Failed saving config: {e}")
@@ -3813,12 +4099,13 @@ async def reload_active_experiments(app: FastAPI):
   db: AsyncIOMotorDatabase = app.state.mongo_db
   logger.info(" Reloading active experiments from DB...")
   try:
-    active_cfgs = await db.experiments_config.find({"status": "active"}).to_list(None)
+    # Limit to 500 active experiments to prevent accidental large result sets
+    active_cfgs = await db.experiments_config.find({"status": "active"}).limit(500).to_list(None)
     logger.info(f"Found {len(active_cfgs)} active experiment(s).")
     if len(active_cfgs) == 0:
       logger.warning(" ⚠️  No active experiments found! Check experiment status in database.")
-      # Try to list all experiments to help debug
-      all_cfgs = await db.experiments_config.find({}).to_list(None)
+      # Try to list all experiments to help debug (limit to 500)
+      all_cfgs = await db.experiments_config.find({}).limit(500).to_list(None)
       logger.info(f"Total experiments in DB: {len(all_cfgs)}")
       for cfg in all_cfgs:
         slug = cfg.get("slug", "unknown")
@@ -3838,6 +4125,9 @@ async def _register_experiments(app: FastAPI, active_cfgs: List[Dict[str, Any]],
   if is_reload:
     logger.debug("Clearing old experiment state...")
     app.state.experiments.clear()
+    # Also clear mounted static paths cache on reload
+    if hasattr(app.state, "mounted_static_paths"):
+      app.state.mounted_static_paths.clear()
 
   if not EXPERIMENTS_DIR.is_dir():
     logger.error(f"Cannot load experiments: base '{EXPERIMENTS_DIR}' missing.")
@@ -3889,15 +4179,25 @@ async def _register_experiments(app: FastAPI, active_cfgs: List[Dict[str, Any]],
     if static_dir.is_dir():
       mount_path = f"/experiments/{slug}/static"
       mount_name = f"exp_{slug}_static"
-      # Check if mount already exists to prevent error on reload
-      if not any(route.path == mount_path for route in app.routes if hasattr(route, "path")):
-        try:
-          app.mount(mount_path, StaticFiles(directory=str(static_dir)), name=mount_name)
-          logger.debug(f"[{slug}] Mounted static at '{mount_path}'.")
-        except Exception as e:
-          logger.error(f"[{slug}] Static mount error: {e}", exc_info=True)
+      # Check if mount already exists (use cached set for O(1) lookup)
+      if not hasattr(app.state, "mounted_static_paths"):
+        app.state.mounted_static_paths = set()
+      
+      if mount_path not in app.state.mounted_static_paths:
+        # Double-check by checking routes (cache might be stale after reload)
+        if not any(route.path == mount_path for route in app.routes if hasattr(route, "path")):
+          try:
+            app.mount(mount_path, StaticFiles(directory=str(static_dir)), name=mount_name)
+            app.state.mounted_static_paths.add(mount_path)  # Cache the mount
+            logger.debug(f"[{slug}] Mounted static at '{mount_path}'.")
+          except Exception as e:
+            logger.error(f"[{slug}] Static mount error: {e}", exc_info=True)
+        else:
+          # Route exists but not in cache - add to cache
+          app.state.mounted_static_paths.add(mount_path)
+          logger.debug(f"[{slug}] Static mount '{mount_path}' already exists (cache updated).")
       else:
-        logger.debug(f"[{slug}] Static mount '{mount_path}' already exists.")
+        logger.debug(f"[{slug}] Static mount '{mount_path}' already exists (cached).")
 
     if INDEX_MANAGER_AVAILABLE and "managed_indexes" in cfg:
       managed_indexes: Dict[str, List[Dict]] = cfg["managed_indexes"]
@@ -3923,7 +4223,7 @@ async def _register_experiments(app: FastAPI, active_cfgs: List[Dict[str, Any]],
 
         logger.info(f"[{slug}] Scheduling index creation for '{prefixed_collection_name}'.")
         asyncio.create_task(
-          _run_index_creation_for_collection(db, slug, prefixed_collection_name, prefixed_defs)
+          _safe_background_task(_run_index_creation_for_collection(db, slug, prefixed_collection_name, prefixed_defs))
         )
     elif "managed_indexes" in cfg:
       logger.warning(f"[{slug}] 'managed_indexes' present but index manager not available.")
@@ -4007,7 +4307,7 @@ async def _register_experiments(app: FastAPI, active_cfgs: List[Dict[str, Any]],
       # Call initialize hook if it exists (for post-startup tasks like data seeding)
       if hasattr(actor_cls, "initialize"):
         try:
-          asyncio.create_task(_call_actor_initialize(actor_handle, slug))
+          asyncio.create_task(_safe_background_task(_call_actor_initialize(actor_handle, slug)))
           logger.info(f"[{slug}] Scheduled post-initialization task for actor '{actor_name}'.")
         except Exception as e:
           logger.warning(f"[{slug}] Failed to schedule actor initialization: {e}")

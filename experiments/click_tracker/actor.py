@@ -16,35 +16,24 @@ class ExperimentActor:
 
     def __init__(self, mongo_uri: str, db_name: str, write_scope: str, read_scopes: List[str]):
         try:
-            # Import ExperimentDB and dependencies
-            import motor.motor_asyncio
-            from async_mongo_wrapper import ScopedMongoWrapper
-            from experiment_db import ExperimentDB
-            
-            # Setup database connection
-            self.client = motor.motor_asyncio.AsyncIOMotorClient(mongo_uri)
-            real_db = self.client[db_name]
-            
-            # Create ScopedMongoWrapper for isolation
-            scoped_wrapper = ScopedMongoWrapper(
-                real_db=real_db,
-                read_scopes=read_scopes,
-                write_scope=write_scope
+            # Magical database abstraction - one line to get Motor-like API!
+            from experiment_db import create_actor_database
+            self.db = create_actor_database(
+                mongo_uri,
+                db_name,
+                write_scope,
+                read_scopes
             )
-            
-            # Create ExperimentDB for easy access
-            self.db = ExperimentDB(scoped_wrapper)
             
             self.write_scope = write_scope
             self.read_scopes = read_scopes
 
             logger.info(
                 f"[ClickTrackerActor] started with write_scope='{self.write_scope}' "
-                f"(DB='{db_name}') using ExperimentDB"
+                f"(DB='{db_name}') using magical database abstraction"
             )
         except Exception as e:
             logger.critical(f"[ClickTrackerActor] ❌ CRITICAL: Failed to init DB: {e}")
-            self.client = None
             self.db = None
 
     # Methods must be async

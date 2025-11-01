@@ -457,6 +457,26 @@ class ExperimentDB:
             results = await db.raw.my_collection.aggregate(pipeline).to_list(None)
         """
         return self._wrapper
+    
+    @property
+    def database(self):
+        """
+        Access the underlying AsyncIOMotorDatabase (unscoped).
+        
+        This is useful for advanced operations that need direct access to the
+        real database without scoping, such as index management or administrative
+        operations.
+        
+        Returns:
+            The underlying AsyncIOMotorDatabase instance
+        
+        Example:
+            # Access underlying database for index management
+            real_db = db.database
+            collection = real_db["my_collection"]
+            index_manager = AsyncAtlasIndexManager(collection)
+        """
+        return self._wrapper.database
 
 
 # FastAPI dependency helper
@@ -478,4 +498,103 @@ async def get_experiment_db(request) -> ExperimentDB:
     
     scoped_db = await get_scoped_db(request)
     return ExperimentDB(scoped_db)
+
+
+# ============================================================================
+# Actor Database Factory - Magical abstraction for Ray actors
+# ============================================================================
+
+def create_actor_database(
+    mongo_uri: str,
+    db_name: str,
+    write_scope: str,
+    read_scopes: List[str],
+    max_pool_size: int = 10,
+    min_pool_size: int = 1,
+    server_selection_timeout_ms: int = 5000,
+) -> ExperimentDB:
+    """
+    Factory function that creates a Motor-like database interface for Ray actors.
+    
+    This function abstracts away all the complexity of:
+    - Connection pool management
+    - Scoped wrapper setup
+    - ExperimentDB initialization
+    
+    Actors can simply call this function and get back a database object that
+    works exactly like Motor's AsyncIOMotorDatabase API, with automatic:
+    - Experiment scoping (read/write isolation)
+    - Index management (automatic index creation)
+    - Collection access via attribute access
+    
+    Args:
+        mongo_uri: MongoDB connection URI
+        db_name: Database name
+        write_scope: Experiment slug for write operations (documents get this experiment_id)
+        read_scopes: List of experiment slugs for read operations (can read from these experiments)
+        max_pool_size: Maximum connection pool size (default: 10 for actors)
+        min_pool_size: Minimum connection pool size (default: 1)
+        server_selection_timeout_ms: Server selection timeout in milliseconds
+    
+    Returns:
+        ExperimentDB instance that mimics Motor's API
+        
+    Example:
+        from experiment_db import create_actor_database
+        
+        class ExperimentActor:
+            def __init__(self, mongo_uri: str, db_name: str, write_scope: str, read_scopes: List[str]):
+                # One line to get a Motor-like database interface!
+                self.db = create_actor_database(mongo_uri, db_name, write_scope, read_scopes)
+            
+            async def do_something(self):
+                # Use it exactly like Motor!
+                doc = await self.db.my_collection.find_one({"_id": "doc_123"})
+                docs = await self.db.my_collection.find({"status": "active"}).to_list(length=10)
+                await self.db.my_collection.insert_one({"name": "Test"})
+                count = await self.db.my_collection.count_documents({})
+    """
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Import dependencies
+        from mongo_connection_pool import get_shared_mongo_client
+        from async_mongo_wrapper import ScopedMongoWrapper
+        
+        # Get shared MongoDB client (handles connection pooling automatically)
+        client = get_shared_mongo_client(
+            mongo_uri,
+            max_pool_size=max_pool_size,
+            min_pool_size=min_pool_size,
+            server_selection_timeout_ms=server_selection_timeout_ms
+        )
+        
+        # Get the database
+        real_db = client[db_name]
+        
+        # Create scoped wrapper (handles experiment isolation automatically)
+        scoped_wrapper = ScopedMongoWrapper(
+            real_db=real_db,
+            read_scopes=read_scopes,
+            write_scope=write_scope
+        )
+        
+        # Create ExperimentDB (provides Motor-like API)
+        db = ExperimentDB(scoped_wrapper)
+        
+        logger.debug(
+            f"Created actor database for write_scope='{write_scope}', "
+            f"read_scopes={read_scopes}, db='{db_name}'"
+        )
+        
+        return db
+        
+    except ImportError as e:
+        logger.critical(f"Failed to import database modules: {e}")
+        raise RuntimeError(f"Database modules not available: {e}")
+    except Exception as e:
+        logger.error(f"Failed to create actor database: {e}", exc_info=True)
+        raise RuntimeError(f"Failed to create actor database: {e}")
 

@@ -807,9 +807,12 @@ class ScopedCollectionWrapper:
         if self.auto_index_manager:
             sort = kwargs.get('sort')
             # Create a task to ensure index (fire and forget)
-            asyncio.create_task(
-                self.auto_index_manager.ensure_index_for_query(filter=filter, sort=sort)
-            )
+            async def _safe_index_task():
+                try:
+                    await self.auto_index_manager.ensure_index_for_query(filter=filter, sort=sort)
+                except Exception as e:
+                    logger.debug(f"Auto-index creation failed for query (non-critical): {e}")
+            asyncio.create_task(_safe_index_task())
         
         scoped_filter = self._inject_read_filter(filter)
         return self._collection.find(scoped_filter, *args, **kwargs)
@@ -945,6 +948,12 @@ class ScopedMongoWrapper:
       index configuration. This "magical" feature is enabled by default.
     """
     
+    # Class-level cache for collections that have experiment_id index checked
+    # Key: collection name, Value: boolean (True if index exists, False if check is pending)
+    _experiment_id_index_cache: ClassVar[Dict[str, bool]] = {}
+    # Lock to prevent race conditions when multiple requests try to create the same index
+    _experiment_id_index_lock: ClassVar[asyncio.Lock] = asyncio.Lock()
+    
     __slots__ = ('_db', '_read_scopes', '_write_scope', '_wrapper_cache', '_auto_index')
 
     def __init__(
@@ -961,6 +970,25 @@ class ScopedMongoWrapper:
         
         # Cache for created collection wrappers.
         self._wrapper_cache: Dict[str, ScopedCollectionWrapper] = {}
+    
+    @property
+    def database(self) -> AsyncIOMotorDatabase:
+        """
+        Access the underlying AsyncIOMotorDatabase (unscoped).
+        
+        This is useful for advanced operations that need direct access to the
+        real database without scoping, such as index management.
+        
+        Returns:
+            The underlying AsyncIOMotorDatabase instance
+        
+        Example:
+            # Access underlying database for index management
+            real_db = db.raw.database
+            collection = real_db["my_collection"]
+            index_manager = AsyncAtlasIndexManager(collection)
+        """
+        return self._db
 
     def __getattr__(self, name: str) -> ScopedCollectionWrapper:
         """
@@ -1006,17 +1034,132 @@ class ScopedMongoWrapper:
         
         # Magically ensure experiment_id index exists (it's always used in queries)
         # This is fire-and-forget, runs in background
+        # Use class-level cache and lock to avoid race conditions
         if self._auto_index:
-            asyncio.create_task(self._ensure_experiment_id_index(real_collection))
+            collection_name = real_collection.name
+            
+            # Thread-safe check: use lock to prevent race conditions
+            async def _safe_experiment_id_index_check():
+                # Check cache inside lock to prevent duplicate tasks
+                async with ScopedMongoWrapper._experiment_id_index_lock:
+                    # Double-check pattern: another coroutine may have already added it
+                    if collection_name in ScopedMongoWrapper._experiment_id_index_cache:
+                        return  # Already checking or checked
+                    
+                    # Mark as checking to prevent duplicate tasks
+                    ScopedMongoWrapper._experiment_id_index_cache[collection_name] = False
+                
+                # Perform index check outside lock (async operation)
+                try:
+                    has_index = await self._ensure_experiment_id_index(real_collection)
+                    # Update cache with result (inside lock for thread-safety)
+                    async with ScopedMongoWrapper._experiment_id_index_lock:
+                        ScopedMongoWrapper._experiment_id_index_cache[collection_name] = has_index
+                except Exception as e:
+                    logger.debug(f"Experiment_id index creation failed (non-critical): {e}")
+                    # Remove from cache on error so we can retry later
+                    async with ScopedMongoWrapper._experiment_id_index_lock:
+                        ScopedMongoWrapper._experiment_id_index_cache.pop(collection_name, None)
+            
+            # Check cache first (quick check before lock)
+            if collection_name not in ScopedMongoWrapper._experiment_id_index_cache:
+                # Fire and forget - task will check lock internally
+                asyncio.create_task(_safe_experiment_id_index_check())
         
         # Store it in the cache for this instance using the *prefixed_name*
         self._wrapper_cache[prefixed_name] = wrapper
         return wrapper
     
-    async def _ensure_experiment_id_index(self, collection: AsyncIOMotorCollection):
+    def get_collection(self, name: str) -> ScopedCollectionWrapper:
+        """
+        Get a collection by name (Motor-like API).
+        
+        This method allows accessing collections by their fully prefixed name,
+        which is useful for cross-experiment access. For same-experiment access,
+        you can use attribute access (e.g., `db.my_collection`) which automatically
+        prefixes the name.
+        
+        Args:
+            name: Collection name - can be base name (will be prefixed) or
+                 fully prefixed name (e.g., "click_tracker_clicks")
+        
+        Returns:
+            ScopedCollectionWrapper instance
+        
+        Example:
+            # Same-experiment collection (base name)
+            collection = db.get_collection("my_collection")
+            
+            # Cross-experiment collection (fully prefixed)
+            collection = db.get_collection("click_tracker_clicks")
+        """
+        # Check if name is already fully prefixed (contains underscore and is longer)
+        # We use a heuristic: if name contains underscore and doesn't start with write_scope,
+        # assume it's already fully prefixed
+        if '_' in name and not name.startswith(f"{self._write_scope}_"):
+            # Assume it's already fully prefixed (cross-experiment access)
+            prefixed_name = name
+        else:
+            # Standard case: prefix with write_scope
+            prefixed_name = f"{self._write_scope}_{name}"
+        
+        # Check cache first
+        if prefixed_name in self._wrapper_cache:
+            return self._wrapper_cache[prefixed_name]
+        
+        # Get the real collection from the motor db object
+        real_collection = getattr(self._db, prefixed_name)
+        
+        # Ensure we are actually wrapping a collection object
+        if not isinstance(real_collection, AsyncIOMotorCollection):
+            raise AttributeError(
+                f"'{name}' (as '{prefixed_name}') is not an AsyncIOMotorCollection. "
+                f"ScopedMongoWrapper can only proxy collections (found {type(real_collection)})."
+            )
+        
+        # Create the new wrapper with auto-indexing enabled by default
+        wrapper = ScopedCollectionWrapper(
+            real_collection=real_collection,
+            read_scopes=self._read_scopes,
+            write_scope=self._write_scope,
+            auto_index=self._auto_index
+        )
+        
+        # Magically ensure experiment_id index exists (background task)
+        # Uses same race-condition-safe approach as __getattr__
+        if self._auto_index:
+            collection_name = real_collection.name
+            
+            async def _safe_experiment_id_index_check():
+                # Check cache inside lock to prevent duplicate tasks
+                async with ScopedMongoWrapper._experiment_id_index_lock:
+                    if collection_name in ScopedMongoWrapper._experiment_id_index_cache:
+                        return  # Already checking or checked
+                    ScopedMongoWrapper._experiment_id_index_cache[collection_name] = False
+                
+                try:
+                    has_index = await self._ensure_experiment_id_index(real_collection)
+                    async with ScopedMongoWrapper._experiment_id_index_lock:
+                        ScopedMongoWrapper._experiment_id_index_cache[collection_name] = has_index
+                except Exception as e:
+                    logger.debug(f"Experiment_id index creation failed (non-critical): {e}")
+                    async with ScopedMongoWrapper._experiment_id_index_lock:
+                        ScopedMongoWrapper._experiment_id_index_cache.pop(collection_name, None)
+            
+            if collection_name not in ScopedMongoWrapper._experiment_id_index_cache:
+                asyncio.create_task(_safe_experiment_id_index_check())
+        
+        # Store it in the cache
+        self._wrapper_cache[prefixed_name] = wrapper
+        return wrapper
+    
+    async def _ensure_experiment_id_index(self, collection: AsyncIOMotorCollection) -> bool:
         """
         Ensures experiment_id index exists on collection.
         This index is always needed since all queries filter by experiment_id.
+        
+        Returns:
+            True if index exists (or was created), False otherwise
         """
         try:
             index_manager = AsyncAtlasIndexManager(collection)
@@ -1039,6 +1182,9 @@ class ScopedMongoWrapper:
                     background=True
                 )
                 logger.info(f"✨ Auto-created experiment_id index on {collection.name}")
+                return True
+            return True
         except Exception as e:
             # Don't fail if index creation fails, just log
             logger.debug(f"Could not ensure experiment_id index on {collection.name}: {e}")
+            return False

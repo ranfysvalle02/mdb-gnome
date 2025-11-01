@@ -10,8 +10,10 @@
 import os
 import jwt
 import logging
+import asyncio
 from pathlib import Path
-from typing import Optional, Dict, Any, Mapping, List
+from typing import Optional, Dict, Any, Mapping, List, Tuple
+from datetime import datetime, timedelta
 
 from fastapi import (
     Request,
@@ -65,8 +67,24 @@ if not TEMPLATES_DIR.is_dir():
         f"❌ Critical Error: Global 'templates' directory not found at {TEMPLATES_DIR}. Core HTML responses will fail."
     )
 else:
-    templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
-    logger.info(f"✔️  Global Jinja2 templates loaded from: {TEMPLATES_DIR}")
+    # Enable bytecode caching for better performance
+    try:
+        from jinja2 import FileSystemBytecodeCache
+        cache_dir = BASE_DIR / ".jinja_cache"
+        cache_dir.mkdir(exist_ok=True, mode=0o755)
+        bytecode_cache = FileSystemBytecodeCache(
+            directory=str(cache_dir),
+            pattern="%s.cache"
+        )
+        templates = Jinja2Templates(
+            directory=str(TEMPLATES_DIR),
+            bytecode_cache=bytecode_cache
+        )
+        logger.info(f"✔️  Global Jinja2 templates loaded from: {TEMPLATES_DIR} with bytecode caching enabled.")
+    except Exception as e:
+        logger.warning(f" Failed to enable Jinja2 bytecode caching: {e}. Using default configuration.")
+        templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+        logger.info(f"✔️  Global Jinja2 templates loaded from: {TEMPLATES_DIR}")
 
 
 def _ensure_templates() -> Jinja2Templates:
@@ -288,6 +306,191 @@ def require_permission(obj: str, act: str, force_login: bool = True):
         return user  # Returns the user dict or None
 
     return _check_permission
+
+
+# --- Request-Scoped Config Caching ---
+
+# Application-level cache for experiment configs with TTL
+# Format: cache_key -> (config_dict, timestamp)
+_experiment_config_app_cache: Dict[str, Tuple[Dict[str, Any], datetime]] = {}
+_experiment_config_cache_lock = asyncio.Lock()  # Lock for thread-safe cache access
+CACHE_TTL_SECONDS = 300  # 5 minutes TTL for application-level cache
+
+
+async def get_experiment_config(
+    request: Request,
+    slug_id: str,
+    projection: Optional[Dict[str, int]] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    FastAPI Dependency: Provides request-scoped and application-level caching for experiment config.
+    
+    This dependency caches config at two levels:
+    1. Request-scoped cache (request.state) to avoid duplicate fetches within a single request
+    2. Application-level cache with TTL to reduce database queries across requests
+    
+    Args:
+        request: The FastAPI Request object (from route parameter)
+        slug_id: The experiment slug to fetch config for
+        projection: Optional MongoDB projection dict (e.g., {"managed_indexes": 1})
+    
+    Returns:
+        The experiment config dict, or None if not found.
+        
+    Cache Key:
+        Uses `request.state.experiment_config_cache` as a dict with slug_id as key.
+        Also uses application-level cache with TTL (5 minutes).
+    """
+    # Check if config cache exists in request.state
+    if not hasattr(request.state, "experiment_config_cache"):
+        request.state.experiment_config_cache = {}
+    
+    # Create deterministic cache key for projections
+    if projection:
+        # Sort projection keys for consistent cache key generation
+        sorted_projection = ",".join(f"{k}:{v}" for k, v in sorted(projection.items()))
+        cache_key = f"{slug_id}:{sorted_projection}"
+    else:
+        cache_key = slug_id
+    
+    # 1. Return cached config if available in request-scoped cache
+    if cache_key in request.state.experiment_config_cache:
+        logger.debug(
+            f"get_experiment_config: Using request-scoped cached config for '{slug_id}' (projection: {projection})"
+        )
+        return request.state.experiment_config_cache[cache_key]
+    
+    # 2. Check application-level cache with TTL (thread-safe)
+    async with _experiment_config_cache_lock:
+        if cache_key in _experiment_config_app_cache:
+            config, timestamp = _experiment_config_app_cache[cache_key]
+            age = datetime.now() - timestamp
+            if age < timedelta(seconds=CACHE_TTL_SECONDS):
+                # Cache hit - still valid
+                logger.debug(
+                    f"get_experiment_config: Using application-level cached config for '{slug_id}' "
+                    f"(projection: {projection}, age: {age.total_seconds():.1f}s)"
+                )
+                # Also cache in request-scoped cache for this request
+                request.state.experiment_config_cache[cache_key] = config
+                return config
+            else:
+                # Cache expired - remove it
+                logger.debug(
+                    f"get_experiment_config: Application cache expired for '{slug_id}' (age: {age.total_seconds():.1f}s)"
+                )
+                del _experiment_config_app_cache[cache_key]
+    
+    # 3. Fetch from database
+    db = getattr(request.app.state, "mongo_db", None)
+    if not db:
+        logger.error("get_experiment_config: MongoDB connection not available.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server configuration error: Database connection not available.",
+        )
+    
+    try:
+        if projection:
+            config = await db.experiments_config.find_one({"slug": slug_id}, projection)
+        else:
+            config = await db.experiments_config.find_one({"slug": slug_id})
+        
+        # Cache the result in both request-scoped and application-level caches
+        request.state.experiment_config_cache[cache_key] = config
+        
+        # Update application-level cache (thread-safe)
+        async with _experiment_config_cache_lock:
+            _experiment_config_app_cache[cache_key] = (config, datetime.now())
+        
+        if config:
+            logger.debug(
+                f"get_experiment_config: Fetched and cached config for '{slug_id}' (projection: {projection})"
+            )
+        else:
+            logger.debug(
+                f"get_experiment_config: No config found for '{slug_id}' (projection: {projection})"
+            )
+        
+        return config
+    except Exception as e:
+        logger.error(
+            f"get_experiment_config: Error fetching config for '{slug_id}': {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching experiment config: {e}",
+        )
+
+
+async def get_cached_experiment_config(
+    request: Request,
+    slug_id: str,
+    projection: Optional[Dict[str, int]] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    FastAPI Dependency: Provides request-scoped caching for experiment config.
+    
+    This dependency caches config in request.state to avoid fetching the same
+    config multiple times within a single request. Use this as a FastAPI Depends()
+    dependency in your route handlers.
+    
+    Usage:
+        @admin_router.get("/some/{slug_id}")
+        async def some_endpoint(
+            slug_id: str,
+            request: Request,
+            config: Optional[Dict[str, Any]] = Depends(lambda slug_id=slug_id, req=request: get_cached_experiment_config(req, slug_id))
+        ):
+            ...
+    
+    Or more simply, call get_experiment_config() directly in your handlers:
+        config = await get_experiment_config(request, slug_id)
+    
+    Args:
+        request: The FastAPI Request object
+        slug_id: The experiment slug to fetch config for (from path parameter)
+        projection: Optional MongoDB projection dict
+    
+    Returns:
+        The experiment config dict, or None if not found.
+    """
+    return await get_experiment_config(request, slug_id, projection)
+
+
+def invalidate_experiment_config_cache(slug_id: str):
+    """
+    Invalidate application-level cache for an experiment config.
+    
+    This should be called when an experiment config is updated to ensure
+    subsequent requests get the fresh config.
+    
+    Args:
+        slug_id: The experiment slug to invalidate cache for
+    """
+    async def _invalidate():
+        async with _experiment_config_cache_lock:
+            # Remove all cache entries for this slug_id (including projections)
+            keys_to_remove = [
+                key for key in _experiment_config_app_cache.keys()
+                if key.startswith(f"{slug_id}:") or key == slug_id
+            ]
+            for key in keys_to_remove:
+                _experiment_config_app_cache.pop(key, None)
+            if keys_to_remove:
+                logger.debug(f"Invalidated {len(keys_to_remove)} cache entry(ies) for '{slug_id}'")
+    
+    # Schedule async invalidation (fire and forget)
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(_invalidate())
+        else:
+            loop.run_until_complete(_invalidate())
+    except RuntimeError:
+        # No event loop available, cache will expire naturally
+        logger.debug(f"Could not invalidate cache for '{slug_id}' synchronously (no event loop)")
 
 
 # --- Experiment-Scoped DB Dependency ---

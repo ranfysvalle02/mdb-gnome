@@ -66,30 +66,26 @@ class ExperimentActor:
             self.templates = None
 
         try:
-            if not self.motor_asyncio or not self.ScopedMongoWrapper:
-                raise ImportError("DB modules (motor, ScopedMongoWrapper) not loaded.")
-                
-            self.client = self.motor_asyncio.AsyncIOMotorClient(mongo_uri, serverSelectionTimeoutMS=5000)
-            self.real_db = self.client[db_name]
-            
-            # Create ScopedMongoWrapper for isolation
-            scoped_wrapper = self.ScopedMongoWrapper(
-                real_db=self.real_db,
-                read_scopes=read_scopes,
-                write_scope=write_scope
+            # Magical database abstraction - one line to get Motor-like API!
+            from experiment_db import create_actor_database
+            self.db = create_actor_database(
+                mongo_uri,
+                db_name,
+                write_scope,
+                read_scopes
             )
             
-            # Create ExperimentDB for easy access to simple operations
-            from experiment_db import ExperimentDB
-            self.db = ExperimentDB(scoped_wrapper)
+            # Raw access for advanced operations (vector search, aggregations)
+            # Still available via .raw property - mimics Motor's API!
+            self.db_raw = self.db.raw
             
-            # Keep raw access for advanced operations (vector search, aggregations)
-            self.db_raw = scoped_wrapper
+            # Access underlying database for vector index management (shared connection!)
+            # No need for separate client - uses the same singleton from create_actor_database
+            self.real_db = self.db.database
             
-            logger.info(f"[{write_scope}-Actor] DB connection and ExperimentDB created.")
+            logger.info(f"[{write_scope}-Actor] DB connection created with magical database abstraction.")
         except Exception as e:
             logger.critical(f"[{write_scope}-Actor] ❌ CRITICAL: Failed to init DB: {e}")
-            self.client = None
             self.real_db = None
             self.db = None
             self.db_raw = None
@@ -171,9 +167,10 @@ class ExperimentActor:
         logger.info(f"[{self.write_scope}-Actor] Post-initialization setup complete.")
 
     def __del__(self):
-        if hasattr(self, 'client') and self.client:
-            self.client.close()
-            logger.info(f"[{self.write_scope}-Actor] DB connection closed.")
+        # Note: We don't close the shared MongoDB client here because it's a singleton
+        # shared across all actors in the process. Closing it would affect other actors.
+        # The shared client will be closed when the process shuts down.
+        pass
 
     def _check_ready(self):
         if not self.db or not self.templates or not self.engine or not self.OperationFailure:

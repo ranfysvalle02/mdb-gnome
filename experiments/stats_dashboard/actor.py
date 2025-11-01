@@ -16,38 +16,27 @@ class ExperimentActor:
 
     def __init__(self, mongo_uri: str, db_name: str, write_scope: str, read_scopes: List[str]):
         try:
-            # Import ExperimentDB and dependencies
-            import motor.motor_asyncio
-            from async_mongo_wrapper import ScopedMongoWrapper
-            from experiment_db import ExperimentDB
-            
-            # Setup database connection
-            self.client = motor.motor_asyncio.AsyncIOMotorClient(mongo_uri)
-            real_db = self.client[db_name]
-            
-            # Create ScopedMongoWrapper for isolation
-            scoped_wrapper = ScopedMongoWrapper(
-                real_db=real_db,
-                read_scopes=read_scopes,
-                write_scope=write_scope
+            # Magical database abstraction - one line to get Motor-like API!
+            from experiment_db import create_actor_database
+            self.db = create_actor_database(
+                mongo_uri,
+                db_name,
+                write_scope,
+                read_scopes
             )
-            
-            # Create ExperimentDB for easy access
-            self.db = ExperimentDB(scoped_wrapper)
             
             self.write_scope = write_scope     # "stats_dashboard"
             self.read_scopes = read_scopes     # ["stats_dashboard", "click_tracker"]
         
             logger.info(
                 f"[StatsDashboardActor] initialized with write_scope='{self.write_scope}' "
-                f"and read_scopes={self.read_scopes} (DB='{db_name}') using ExperimentDB"
+                f"and read_scopes={self.read_scopes} (DB='{db_name}') using magical database abstraction"
             )
             
             if "click_tracker" in self.read_scopes:
                 logger.info(f"[StatsDashboardActor] Has read access to 'click_tracker_clicks'")
         except Exception as e:
             logger.critical(f"[StatsDashboardActor] ❌ CRITICAL: Failed to init DB: {e}")
-            self.client = None
             self.db = None
 
     # Method must be async
@@ -66,21 +55,12 @@ class ExperimentActor:
                 result["error"] = "Database not initialized"
                 return result
                 
-            # 1. CROSS-EXPERIMENT READ (automatic scoping!)
+            # 1. CROSS-EXPERIMENT READ (automatic scoping via raw access!)
             if "click_tracker" in self.read_scopes:
-                # For cross-experiment access, we need to access the collection directly from raw DB
-                # and use ScopedCollectionWrapper manually for automatic scoping
-                from async_mongo_wrapper import ScopedCollectionWrapper
-                # Access the raw collection (fully prefixed name)
-                raw_collection = getattr(self.db.raw._db, "click_tracker_clicks")
-                # Create a scoped wrapper for automatic scoping
-                scoped_collection = ScopedCollectionWrapper(
-                    raw_collection,
-                    read_scopes=self.read_scopes,
-                    write_scope=self.write_scope
-                )
-                # Use simple count - scoping is automatic!
-                result["total_clicks"] = await scoped_collection.count_documents({})
+                # Access cross-experiment collection using get_collection (Motor-like API!)
+                # The wrapper automatically handles scoping!
+                clicks_collection = self.db.raw.get_collection("click_tracker_clicks")
+                result["total_clicks"] = await clicks_collection.count_documents({})
             else:
                 logger.warning("[StatsDashboardActor] No read access to 'click_tracker' scope.")
                 result["total_clicks"] = -1 # Indicate no access
