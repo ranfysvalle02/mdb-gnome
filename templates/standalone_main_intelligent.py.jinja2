@@ -6,7 +6,7 @@ Intelligent Standalone FastAPI Application for experiment '{{ slug_id }}'.
 
 This is a clean, production-ready FastAPI application that:
 - Uses real MongoDB (Motor) for persistent storage
-- Does NOT require Ray (optional via docker-compose)
+- REQUIRES Ray - Ray is a core component and must be available
 - Includes proper database initialization and index management
 - Supports experiment-specific routes and static files
 
@@ -15,6 +15,7 @@ Environment Variables:
 - DB_NAME: Database name (default: labs_db)
 - PORT: Server port (default: 8000)
 - LOG_LEVEL: Logging level (default: INFO)
+- RAY_CONNECTION_ADDRESS: (Optional) Ray cluster address. If not set, starts local Ray.
 """
 
 import os
@@ -227,43 +228,46 @@ core_deps.get_scoped_db = get_scoped_db
 sys.modules["core_deps"] = core_deps
 
 # --------------------------------------------------------------------------
-# Ray Support - Required for standalone exports
+# Ray Support - REQUIRED for standalone exports (Ray is a core component)
 # --------------------------------------------------------------------------
 try:
     import ray
-    RAY_AVAILABLE = True
     logger.info("Ray is available.")
 except ImportError:
-    RAY_AVAILABLE = False
     logger.critical("Ray is required but not available. Please install Ray: pip install ray")
     raise ImportError("Ray is required for standalone exports. Install with: pip install ray")
 
 # Initialize Ray early at module level so type annotations can be resolved
-if RAY_AVAILABLE:
-    try:
-        RAY_CONNECTION_ADDRESS = os.getenv("RAY_CONNECTION_ADDRESS", None)
-        if RAY_CONNECTION_ADDRESS:
-            logger.info(f"Connecting to Ray cluster at '{RAY_CONNECTION_ADDRESS}'...")
-            ray.init(
-                address=RAY_CONNECTION_ADDRESS,
-                namespace="modular_labs",
-                ignore_reinit_error=True,
-                log_to_driver=False
-            )
-            logger.info(f"Ray connected to external cluster at '{RAY_CONNECTION_ADDRESS}'.")
-        else:
-            logger.info("Starting local Ray cluster at module level...")
-            ray.init(
-                namespace="modular_labs",
-                ignore_reinit_error=True,
-                log_to_driver=False,
-                num_cpus=2,
-                object_store_memory=2_000_000_000
-            )
-            logger.info("Local Ray cluster started successfully.")
-    except Exception as e:
-        logger.error(f"Failed to initialize Ray at module level: {e}", exc_info=True)
-        raise RuntimeError(f"Ray initialization failed: {e}") from e
+# Ray MUST be initialized before importing experiment modules that use ray.actor.ActorHandle
+RAY_CONNECTION_ADDRESS = os.getenv("RAY_CONNECTION_ADDRESS", None)
+try:
+    if RAY_CONNECTION_ADDRESS:
+        logger.info(f"Connecting to Ray cluster at '{RAY_CONNECTION_ADDRESS}'...")
+        ray.init(
+            address=RAY_CONNECTION_ADDRESS,
+            namespace="modular_labs",
+            ignore_reinit_error=True,
+            log_to_driver=False
+        )
+        logger.info(f"Ray connected to external cluster at '{RAY_CONNECTION_ADDRESS}'.")
+    else:
+        logger.info("Starting local Ray cluster at module level...")
+        ray.init(
+            namespace="modular_labs",
+            ignore_reinit_error=True,
+            log_to_driver=False,
+            num_cpus=2,
+            object_store_memory=2_000_000_000
+        )
+        logger.info("Local Ray cluster started successfully.")
+except Exception as e:
+    logger.error(f"CRITICAL: Failed to initialize Ray at module level: {e}", exc_info=True)
+    raise RuntimeError(f"Ray initialization failed. Ray is required but could not be started: {e}") from e
+
+# Verify Ray is initialized
+if not ray.is_initialized():
+    logger.critical("CRITICAL: Ray import succeeded but Ray is not initialized.")
+    raise RuntimeError("Ray is required but initialization failed.")
 
 # --------------------------------------------------------------------------
 # FastAPI Application
@@ -272,7 +276,12 @@ if RAY_AVAILABLE:
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     # Startup
-    app.state.ray_is_available = RAY_AVAILABLE and ray.is_initialized()
+    # Ray MUST be initialized - it was initialized at module level
+    if not ray.is_initialized():
+        logger.critical("CRITICAL: Ray is not initialized. Ray is required and must be initialized.")
+        raise RuntimeError("Ray is required but not initialized.")
+    
+    app.state.ray_is_available = True
     app.state.slug_id = SLUG
     
     await connect_mongodb()
@@ -283,41 +292,38 @@ async def lifespan(app: FastAPI):
     if isinstance(DB_CONFIG.get("data_scope"), list):
         read_scopes = [s if s != "self" else SLUG for s in DB_CONFIG.get("data_scope", [SLUG])]
     
-    if RAY_AVAILABLE and ray.is_initialized():
-        app.state.ray_is_available = True
-        logger.info("Ray is already initialized. Creating actor...")
-        
-        # Import and create the Ray actor
-        try:
-            actor_mod_name = f"experiments.{SLUG.replace('-', '_')}.actor"
-            actor_mod = __import__(actor_mod_name, fromlist=["ExperimentActor"])
-            if hasattr(actor_mod, "ExperimentActor"):
-                actor_cls = getattr(actor_mod, "ExperimentActor")
-                actor_name = f"{SLUG}-actor"
-                
-                actor_handle = actor_cls.options(
-                    name=actor_name,
-                    namespace="modular_labs",
-                    lifetime="detached",
-                    get_if_exists=True,
-                    max_restarts=-1
-                ).remote(
-                    mongo_uri=MONGO_URI,
-                    db_name=DB_NAME,
-                    write_scope=SLUG,
-                    read_scopes=read_scopes
-                )
-                app.state.actor_handle = actor_handle
-                logger.info(f"Ray Actor '{actor_name}' started successfully.")
-            else:
-                logger.warning(f"Experiment actor class 'ExperimentActor' not found in '{actor_mod_name}'.")
-        except ModuleNotFoundError:
-            logger.warning(f"Could not load actor module '{actor_mod_name}'. Actor endpoints may not work.")
-        except Exception as e:
-            logger.error(f"Failed to create Ray actor: {e}", exc_info=True)
-    else:
-        logger.critical("Ray is not available or not initialized. Cannot proceed without Ray.")
-        raise RuntimeError("Ray is required but not available or initialized.")
+    # Ray is required - create the actor
+    logger.info("Ray is initialized. Creating actor...")
+    try:
+        actor_mod_name = f"experiments.{SLUG.replace('-', '_')}.actor"
+        actor_mod = __import__(actor_mod_name, fromlist=["ExperimentActor"])
+        if hasattr(actor_mod, "ExperimentActor"):
+            actor_cls = getattr(actor_mod, "ExperimentActor")
+            actor_name = f"{SLUG}-actor"
+            
+            actor_handle = actor_cls.options(
+                name=actor_name,
+                namespace="modular_labs",
+                lifetime="detached",
+                get_if_exists=True,
+                max_restarts=-1
+            ).remote(
+                mongo_uri=MONGO_URI,
+                db_name=DB_NAME,
+                write_scope=SLUG,
+                read_scopes=read_scopes
+            )
+            app.state.actor_handle = actor_handle
+            logger.info(f"Ray Actor '{actor_name}' started successfully.")
+        else:
+            logger.error(f"CRITICAL: Experiment actor class 'ExperimentActor' not found in '{actor_mod_name}'.")
+            raise RuntimeError(f"Required actor class 'ExperimentActor' not found in '{actor_mod_name}'.")
+    except ModuleNotFoundError as e:
+        logger.error(f"CRITICAL: Could not load actor module '{actor_mod_name}': {e}")
+        raise RuntimeError(f"Required actor module not found: {e}") from e
+    except Exception as e:
+        logger.error(f"CRITICAL: Failed to create Ray actor: {e}", exc_info=True)
+        raise RuntimeError(f"Failed to create required Ray actor: {e}") from e
     
     # Old Ray cleanup code below - keeping for reference but won't execute with current logic
     if False:
@@ -462,8 +468,8 @@ async def debug_db(request: Request):
         "mongo_uri": MONGO_URI,
         "db_name": DB_NAME,
         "collections": collections_info,
-        "ray_library_available": RAY_AVAILABLE,
-        "ray_initialized": getattr(request.app.state, "ray_is_available", False)
+        "ray_initialized": ray.is_initialized() and getattr(request.app.state, "ray_is_available", False),
+        "ray_required": True
     }
 
 # --------------------------------------------------------------------------
