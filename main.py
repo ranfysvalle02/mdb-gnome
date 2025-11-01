@@ -1433,23 +1433,11 @@ async def package_standalone_experiment(
   # 2. Enforce Authentication if required
   if auth_required:
     if not user:
-      # Use request.base_url which automatically respects X-Forwarded-* headers
+      # If auth is required and no user is logged in, redirect to login
       current_path = quote(request.url.path)
-      base_url = request.base_url  # FastAPI handles proxy headers automatically
-      login_path = request.url_for("login_get").path
-      
-      # Ensure the base URL uses HTTPS if proxy detection failed but X-Forwarded-Proto exists
-      # This fixes the mixed content redirect error behind proxies like Render.
-      if base_url.scheme == "http" and request.headers.get("x-forwarded-proto", "").lower() == "https":
-        from starlette.datastructures import URL
-        # Reconstruct URL with https, assuming standard port (None = 443 for https)
-        base_url = URL(scheme="https", hostname=base_url.hostname, port=None, pathname=base_url.path)
-        
-      login_url = str(base_url).rstrip("/") + login_path + f"?next={current_path}"
-      
-      # Use 307 Temporary Redirect to preserve method (e.g., GET)
-      response = RedirectResponse(url=login_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
-      logger.info(f"Redirecting unauthenticated user to login: {login_url}")
+      login_url = request.url_for("login_get", next=current_path)
+      # Use 302 Found or 303 See Other for redirects after unauthenticated access attempt
+      response = RedirectResponse(url=login_url, status_code=status.HTTP_302_FOUND)
       return response
 
   # 3. Perform Packaging
@@ -1505,23 +1493,11 @@ async def package_docker_experiment(
   # 2. Enforce Authentication if required
   if auth_required:
     if not user:
-      # Use request.base_url which automatically respects X-Forwarded-* headers
+      # If auth is required and no user is logged in, redirect to login
       current_path = quote(request.url.path)
-      base_url = request.base_url  # FastAPI handles proxy headers automatically
-      login_path = request.url_for("login_get").path
-      
-      # Ensure the base URL uses HTTPS if proxy detection failed but X-Forwarded-Proto exists
-      # This fixes the mixed content redirect error behind proxies like Render.
-      if base_url.scheme == "http" and request.headers.get("x-forwarded-proto", "").lower() == "https":
-        from starlette.datastructures import URL
-        # Reconstruct URL with https, assuming standard port (None = 443 for https)
-        base_url = URL(scheme="https", hostname=base_url.hostname, port=None, pathname=base_url.path)
-        
-      login_url = str(base_url).rstrip("/") + login_path + f"?next={current_path}"
-      
-      # Use 302 Found for this redirect as it was before
+      login_url = request.url_for("login_get", next=current_path)
+      # Use 302 Found or 303 See Other for redirects after unauthenticated access attempt
       response = RedirectResponse(url=login_url, status_code=status.HTTP_302_FOUND)
-      logger.info(f"Redirecting unauthenticated user to login: {login_url}")
       return response
 
   # 3. Perform Docker Packaging
