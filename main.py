@@ -75,6 +75,14 @@ try:
 except ImportError:
   pass
 
+# Async file I/O
+try:
+  import aiofiles
+  AIOFILES_AVAILABLE = True
+except ImportError:
+  AIOFILES_AVAILABLE = False
+  logging.warning("aiofiles not found. File I/O will use asyncio.to_thread() fallback.")
+
 # Ray integration
 try:
   import ray
@@ -252,8 +260,48 @@ def _generate_presigned_download_url(b2_bucket, file_name: str, duration_seconds
     raise
 
 
+## Utility: Async File I/O Helpers
+async def _read_file_async(file_path: Path, encoding: str = "utf-8") -> str:
+  """
+  Asynchronously read a text file.
+  Uses aiofiles if available, otherwise falls back to asyncio.to_thread().
+  """
+  if AIOFILES_AVAILABLE:
+    async with aiofiles.open(file_path, "r", encoding=encoding) as f:
+      return await f.read()
+  else:
+    return await asyncio.to_thread(file_path.read_text, encoding=encoding)
+
+async def _read_json_async(file_path: Path, encoding: str = "utf-8") -> Any:
+  """
+  Asynchronously read and parse a JSON file.
+  Uses async file reading and offloads JSON parsing to thread pool.
+  """
+  content = await _read_file_async(file_path, encoding)
+  # JSON parsing is CPU-bound, so offload it
+  return await asyncio.to_thread(json.loads, content)
+
+async def _write_file_async(file_path: Path, content: bytes | str) -> None:
+  """
+  Asynchronously write to a file.
+  Uses aiofiles if available, otherwise falls back to asyncio.to_thread().
+  Automatically detects if content is str or bytes.
+  """
+  if AIOFILES_AVAILABLE:
+    if isinstance(content, str):
+      async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
+        await f.write(content)
+    else:
+      async with aiofiles.open(file_path, "wb") as f:
+        await f.write(content)
+  else:
+    if isinstance(content, str):
+      await asyncio.to_thread(file_path.write_text, content, encoding="utf-8")
+    else:
+      await asyncio.to_thread(file_path.write_bytes, content)
+
 ## Utility: Save Export Locally
-def _save_export_locally(zip_buffer: io.BytesIO, filename: str) -> Path:
+async def _save_export_locally(zip_buffer: io.BytesIO, filename: str) -> Path:
   """
   Saves export ZIP to local temp directory.
   Returns the file path for serving.
@@ -261,8 +309,8 @@ def _save_export_locally(zip_buffer: io.BytesIO, filename: str) -> Path:
   export_file = EXPORTS_TEMP_DIR / filename
   try:
     zip_buffer.seek(0)
-    with export_file.open('wb') as f:
-      f.write(zip_buffer.getvalue())
+    zip_data = zip_buffer.getvalue()
+    await _write_file_async(export_file, zip_data)
     logger.debug(f"Saved export to local temp: {export_file}")
     return export_file
   except Exception as e:
@@ -322,7 +370,8 @@ async def _log_export(
 
 
 ## Utility: Parse and Merge Requirements for Ray Isolation
-def _parse_requirements_file(req_path: Path) -> List[str]:
+def _parse_requirements_file_sync(req_path: Path) -> List[str]:
+  """Synchronous version for module-level initialization."""
   if not req_path.is_file():
     return []
   lines = []
@@ -337,6 +386,26 @@ def _parse_requirements_file(req_path: Path) -> List[str]:
     logger.error(f" Failed to read requirements file '{req_path}': {e}")
     return []
   return lines
+
+async def _parse_requirements_file(req_path: Path) -> List[str]:
+  """
+  Asynchronously parse a requirements file.
+  Uses async file reading and offloads parsing to thread pool if needed.
+  """
+  if not req_path.is_file():
+    return []
+  try:
+    content = await _read_file_async(req_path)
+    lines = []
+    for raw_line in content.splitlines():
+      line = raw_line.strip()
+      if not line or line.startswith("#"):
+        continue
+      lines.append(line)
+    return lines
+  except Exception as e:
+    logger.error(f" Failed to read requirements file '{req_path}': {e}")
+    return []
 
 def _parse_requirements_from_string(content: str) -> List[str]:
   """Reads a requirements.txt file *content* into a list."""
@@ -377,7 +446,7 @@ def _merge_requirements(main_reqs: List[str], local_reqs: List[str]) -> List[str
   return final_list
 
 
-MASTER_REQUIREMENTS = _parse_requirements_file(BASE_DIR / "requirements.txt")
+MASTER_REQUIREMENTS = _parse_requirements_file_sync(BASE_DIR / "requirements.txt")
 if MASTER_REQUIREMENTS:
   logger.info(f"Master environment requirements loaded ({len(MASTER_REQUIREMENTS)} lines).")
 else:
@@ -1057,8 +1126,7 @@ async def _seed_db_from_local_files(db: AsyncIOMotorDatabase):
           if not exists:
             logger.warning(f"[{slug}] No DB config found. Seeding from local 'manifest.json'...")
             try:
-              with manifest_path.open("r", encoding="utf-8") as f:
-                manifest_data = json.load(f)
+              manifest_data = await _read_json_async(manifest_path)
               if not isinstance(manifest_data, dict):
                 logger.error(f"[{slug}] FAILED to seed: manifest.json is not valid JSON object.")
                 continue
@@ -1081,8 +1149,7 @@ async def _seed_db_from_local_files(db: AsyncIOMotorDatabase):
           else:
             # Update existing experiment if manifest says "active" but DB has "draft"
             try:
-              with manifest_path.open("r", encoding="utf-8") as f:
-                manifest_data = json.load(f)
+              manifest_data = await _read_json_async(manifest_path)
               if isinstance(manifest_data, dict):
                 manifest_status = manifest_data.get("status", "active")
                 db_status = exists.get("status", "draft")
@@ -1446,7 +1513,7 @@ def _create_standalone_zip(
   # --- 2. Determine local requirements to include ---
   local_reqs_path = experiment_path / "requirements.txt"
   if local_reqs_path.is_file():
-    local_requirements = _parse_requirements_file(local_reqs_path)
+    local_requirements = _parse_requirements_file_sync(local_reqs_path)
     # Exclude requirements already present in the master environment
     master_pkg_names = {_extract_pkgname(req) for req in MASTER_REQUIREMENTS}
     standalone_requirements = [
@@ -1554,7 +1621,7 @@ def _create_dockerfile_for_experiment(slug_id: str, source_dir: Path, experiment
   # Get combined requirements (root + experiment-specific)
   all_requirements = MASTER_REQUIREMENTS.copy()
   if local_reqs_path.is_file():
-    local_requirements = _parse_requirements_file(local_reqs_path)
+    local_requirements = _parse_requirements_file_sync(local_reqs_path)
     for req in local_requirements:
       pkg_name = _extract_pkgname(req)
       # Replace if exists, otherwise add
@@ -1641,7 +1708,7 @@ def _create_intelligent_dockerfile(slug_id: str, source_dir: Path, experiment_pa
   # Add experiment-specific requirements
   all_requirements = base_requirements.copy()
   if local_reqs_path.is_file():
-    local_requirements = _parse_requirements_file(local_reqs_path)
+    local_requirements = _parse_requirements_file_sync(local_reqs_path)
     for req in local_requirements:
       pkg_name = _extract_pkgname(req)
       # Ray is now in base requirements, so if it's in experiment requirements, use experiment version
@@ -1879,7 +1946,7 @@ def _create_docker_zip(
   local_reqs_path = experiment_path / "requirements.txt"
   all_requirements = MASTER_REQUIREMENTS.copy()
   if local_reqs_path.is_file():
-    local_requirements = _parse_requirements_file(local_reqs_path)
+    local_requirements = _parse_requirements_file_sync(local_reqs_path)
     for req in local_requirements:
       pkg_name = _extract_pkgname(req)
       all_requirements = [r for r in all_requirements if _extract_pkgname(r) != pkg_name]
@@ -2283,7 +2350,7 @@ def _create_intelligent_export_zip(
   
   all_requirements = base_requirements.copy()
   if local_reqs_path.is_file():
-    local_requirements = _parse_requirements_file(local_reqs_path)
+    local_requirements = _parse_requirements_file_sync(local_reqs_path)
     for req in local_requirements:
       pkg_name = _extract_pkgname(req)
       # Ray is now in base requirements, so if it's in experiment requirements, use experiment version
@@ -2503,7 +2570,7 @@ async def package_standalone_experiment(
     
     # Save to local temp directory (saves B2 storage costs)
     logger.info(f"[{slug_id}] Saving intelligent export locally: {file_name}")
-    export_file_path = _save_export_locally(zip_buffer, file_name)
+    export_file_path = await _save_export_locally(zip_buffer, file_name)
     
     # Trigger cleanup of old exports in background (non-blocking)
     asyncio.create_task(_cleanup_old_exports(max_age_hours=24))
@@ -2586,7 +2653,7 @@ async def package_docker_experiment(
     
     # Save to local temp directory (saves B2 storage costs)
     logger.info(f"[{slug_id}] Saving intelligent export locally: {file_name}")
-    export_file_path = _save_export_locally(zip_buffer, file_name)
+    export_file_path = await _save_export_locally(zip_buffer, file_name)
     
     # Trigger cleanup of old exports in background (non-blocking)
     asyncio.create_task(_cleanup_old_exports(max_age_hours=24))
@@ -2688,7 +2755,7 @@ async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any
     
     # Save to local temp directory (saves B2 storage costs)
     logger.info(f"[{slug_id}] Admin saving intelligent export locally: {file_name}")
-    export_file_path = _save_export_locally(zip_buffer, file_name)
+    export_file_path = await _save_export_locally(zip_buffer, file_name)
     
     # Trigger cleanup of old exports in background (non-blocking)
     asyncio.create_task(_cleanup_old_exports(max_age_hours=24))
@@ -2839,7 +2906,7 @@ async def configure_experiment_get(request: Request, slug_id: str, user: Dict[st
     manifest_data = {"error": f"DB load failed: {e}"}
     manifest_content = json.dumps(manifest_data, indent=2)
 
-  file_tree = _scan_directory(experiment_path, experiment_path)
+  file_tree = await asyncio.to_thread(_scan_directory, experiment_path, experiment_path)
 
   discovery_info = {
     "has_actor_file": False,
@@ -2854,8 +2921,7 @@ async def configure_experiment_get(request: Request, slug_id: str, user: Dict[st
     discovery_info["has_actor_file"] = actor_path.is_file()
     if discovery_info["has_actor_file"]:
       try:
-        with actor_path.open("r", encoding="utf-8") as f:
-          actor_content = f.read()
+        actor_content = await _read_file_async(actor_path)
         discovery_info["defines_actor_class"] = "class ExperimentActor" in actor_content
       except Exception as e:
         logger.warning(f"Could not read actor.py: {e}")
@@ -2864,7 +2930,7 @@ async def configure_experiment_get(request: Request, slug_id: str, user: Dict[st
     discovery_info["has_requirements"] = reqs_path.is_file()
     if discovery_info["has_requirements"]:
       try:
-        discovery_info["requirements"] = _parse_requirements_file(reqs_path)
+        discovery_info["requirements"] = await _parse_requirements_file(reqs_path)
       except Exception as e:
         logger.warning(f"Could not read requirements.txt for '{slug_id}': {e}")
 
@@ -3043,12 +3109,15 @@ async def get_file_content(slug_id: str, path: str = Query(...), user: Dict[str,
     return JSONResponse({"error": "File not found."}, status_code=404)
 
   try:
-    with file_path.open("r", encoding="utf-8") as f:
-      content = f.read()
+    content = await _read_file_async(file_path)
     logger.debug(f"Read text content for file: {file_path}")
     return JSONResponse({"content": content, "is_binary": False})
   except UnicodeDecodeError:
     logger.debug(f"File detected as binary: {file_path}")
+    return JSONResponse({"content": "[Binary file - Content not displayed]", "is_binary": True})
+  except UnicodeError:
+    # Handle other unicode errors gracefully
+    logger.debug(f"File detected as binary (UnicodeError): {file_path}")
     return JSONResponse({"content": "[Binary file - Content not displayed]", "is_binary": True})
   except OSError as e:
     logger.error(f"Error reading file '{file_path}': {e}", exc_info=True)
