@@ -37,6 +37,26 @@
         }
         .header-nav { margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
         .flash-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; padding: 15px; margin-bottom: 20px; border-radius: 4px; }
+        
+        /* Modal styles */
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5); }
+        .modal-content { background-color: #fefefe; margin: 5% auto; padding: 20px; border: 1px solid #888; border-radius: 8px; width: 90%; max-width: 900px; max-height: 80vh; overflow-y: auto; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        .modal-header h2 { margin: 0; }
+        .close { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
+        .close:hover { color: #000; }
+        .export-item { background: #fff; border: 1px solid #ddd; border-radius: 5px; padding: 15px; margin-bottom: 10px; }
+        .export-item.invalidated { opacity: 0.6; background: #f8f8f8; }
+        .export-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .export-item-meta { font-size: 0.85em; color: #666; margin-bottom: 10px; }
+        .export-item-actions { display: flex; gap: 10px; }
+        .btn-invalidate { background: #dc3545; color: white; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9em; }
+        .btn-invalidate:hover { background: #c82333; }
+        .btn-invalidate:disabled { background: #6c757d; cursor: not-allowed; }
+        .invalidated-badge { background: #dc3545; color: white; padding: 3px 8px; border-radius: 12px; font-size: 0.75em; font-weight: 600; }
+        .manage-exports-btn { background: #17a2b8; color: white; padding: 10px 20px; border: none; border-radius: 5px; font-weight: 600; cursor: pointer; margin-bottom: 20px; }
+        .manage-exports-btn:hover { background: #138496; }
+        .loading { text-align: center; padding: 20px; color: #666; }
     </style>
     <script>
         async function downloadExport(url, slugId) {
@@ -98,6 +118,134 @@
                 }, 3000);
             }
         }
+        
+        let exportsModal = null;
+        
+        function openExportsModal() {
+            if (!exportsModal) {
+                exportsModal = document.getElementById('exportsModal');
+            }
+            exportsModal.style.display = 'block';
+            loadExports();
+        }
+        
+        function closeExportsModal() {
+            if (exportsModal) {
+                exportsModal.style.display = 'none';
+            }
+        }
+        
+        async function loadExports(slugId = null) {
+            const exportsList = document.getElementById('exportsList');
+            exportsList.innerHTML = '<div class="loading">Loading exports...</div>';
+            
+            try {
+                let url = '{{ request.url_for("list_exports") }}';
+                if (slugId) {
+                    url += `?slug_id=${slugId}`;
+                }
+                
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    displayExports(data.exports);
+                } else {
+                    exportsList.innerHTML = '<div class="loading" style="color: #dc3545;">Failed to load exports</div>';
+                }
+            } catch (error) {
+                console.error('Error loading exports:', error);
+                exportsList.innerHTML = '<div class="loading" style="color: #dc3545;">Error loading exports: ' + error.message + '</div>';
+            }
+        }
+        
+        function displayExports(exports) {
+            const exportsList = document.getElementById('exportsList');
+            
+            if (exports.length === 0) {
+                exportsList.innerHTML = '<div class="loading">No exports found</div>';
+                return;
+            }
+            
+            exportsList.innerHTML = exports.map(exp => {
+                const fileSizeMB = exp.file_size ? (exp.file_size / (1024 * 1024)).toFixed(2) + ' MB' : 'Unknown';
+                const createdDate = exp.created_at ? new Date(exp.created_at).toLocaleString() : 'Unknown';
+                const storageType = exp.b2_file_name ? 'B2' : 'Local';
+                const invalidated = exp.invalidated || false;
+                
+                return `
+                    <div class="export-item ${invalidated ? 'invalidated' : ''}">
+                        <div class="export-item-header">
+                            <div>
+                                <strong>${exp.slug_id || 'Unknown'}</strong>
+                                ${invalidated ? '<span class="invalidated-badge">INVALIDATED</span>' : ''}
+                            </div>
+                            ${!invalidated ? `
+                                <button class="btn-invalidate" onclick="invalidateExport('${exp._id}')">
+                                    🗑️ Delete from B2 & Invalidate
+                                </button>
+                            ` : ''}
+                        </div>
+                        <div class="export-item-meta">
+                            <strong>Type:</strong> ${exp.export_type || 'Unknown'}<br>
+                            <strong>Created:</strong> ${createdDate}<br>
+                            <strong>Created by:</strong> ${exp.user_email || 'Unknown'}<br>
+                            <strong>Size:</strong> ${fileSizeMB}<br>
+                            <strong>Storage:</strong> ${storageType}<br>
+                            ${exp.b2_file_name ? `<strong>B2 File:</strong> <code>${exp.b2_file_name}</code><br>` : ''}
+                            ${exp.local_file_path ? `<strong>Local Path:</strong> <code>${exp.local_file_path}</code>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        async function invalidateExport(exportId) {
+            if (!confirm('Are you sure you want to invalidate this export and delete it from B2? This action cannot be undone.')) {
+                return;
+            }
+            
+            // Find the button that triggered this action
+            const button = document.querySelector(`button[onclick="invalidateExport('${exportId}')"]`);
+            const originalText = button ? button.innerHTML : '';
+            if (button) {
+                button.disabled = true;
+                button.innerHTML = '⏳ Invalidating...';
+            }
+            
+            try {
+                const response = await fetch(`{{ request.url_for("invalidate_export", export_id="") }}${exportId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ delete_from_b2: true })
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    alert('Export invalidated successfully' + (data.b2_deleted ? ' and deleted from B2' : ''));
+                    loadExports(); // Reload the list
+                } else {
+                    throw new Error(data.message || 'Failed to invalidate export');
+                }
+            } catch (error) {
+                console.error('Error invalidating export:', error);
+                alert('Failed to invalidate export: ' + error.message);
+                if (button) {
+                    button.disabled = false;
+                    button.innerHTML = originalText;
+                }
+            }
+        }
+        
+        // Close modal when clicking outside of it
+        window.onclick = function(event) {
+            if (event.target.id === 'exportsModal') {
+                closeExportsModal();
+            }
+        }
     </script>
 </head>
 <body>
@@ -108,6 +256,8 @@
         {% endif %}
     </div>
     <h1>Admin Dashboard</h1>
+    
+    <button class="manage-exports-btn" onclick="openExportsModal()">📦 Manage Exports</button>
     
     {% if message %}
       <div class="flash-success">{{ message }}</div>
@@ -151,5 +301,18 @@
             <li>No new experiments discovered.</li>
         {% endfor %}
     </ul>
+    
+    <!-- Export Management Modal -->
+    <div id="exportsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Manage Exports</h2>
+                <span class="close" onclick="closeExportsModal()">&times;</span>
+            </div>
+            <div id="exportsList">
+                <div class="loading">Loading exports...</div>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

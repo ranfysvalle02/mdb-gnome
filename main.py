@@ -300,18 +300,102 @@ async def _write_file_async(file_path: Path, content: bytes | str) -> None:
     else:
       await asyncio.to_thread(file_path.write_bytes, content)
 
+## Utility: Estimate Export Size
+def _estimate_export_size(
+  db_data: Dict[str, Any],
+  db_collections: Dict[str, List[Dict[str, Any]]],
+  source_dir: Path,
+  slug_id: str
+) -> int:
+  """
+  Estimates the size of the export in bytes.
+  Used to determine if disk streaming is needed.
+  """
+  size = 0
+  
+  # Estimate size of JSON data
+  try:
+    size += len(json.dumps(db_data, indent=2).encode('utf-8'))
+    size += len(json.dumps(db_collections, indent=2).encode('utf-8'))
+  except Exception:
+    pass
+  
+  # Estimate size of experiment files
+  experiment_path = source_dir / "experiments" / slug_id
+  if experiment_path.is_dir():
+    for root, dirs, files in os.walk(experiment_path):
+      for file_name in files:
+        file_path = Path(root) / file_name
+        try:
+          if file_path.is_file():
+            size += file_path.stat().st_size
+        except Exception:
+          pass
+  
+  return size
+
+
+## Utility: Determine if Disk Streaming is Needed
+def _should_use_disk_streaming(estimated_size: int, max_size_mb: int = 100) -> bool:
+  """
+  Determines if disk streaming should be used based on estimated size.
+  Default threshold: 100 MB
+  """
+  max_size_bytes = max_size_mb * 1024 * 1024
+  return estimated_size > max_size_bytes
+
+
+## Utility: Upload Export to B2
+async def _upload_export_to_b2(
+  b2_bucket,
+  zip_source: io.BytesIO | Path,
+  b2_filename: str
+) -> str:
+  """
+  Uploads export ZIP to B2 storage.
+  Accepts either BytesIO or Path.
+  Returns the B2 file key/name.
+  """
+  try:
+    # Get ZIP data
+    if isinstance(zip_source, Path):
+      zip_data = zip_source.read_bytes()
+    else:
+      zip_source.seek(0)
+      zip_data = zip_source.getvalue()
+    
+    # Upload to B2
+    b2_bucket.upload_bytes(zip_data, b2_filename)
+    logger.info(f"Uploaded export to B2: {b2_filename}")
+    return b2_filename
+  except B2Error as e:
+    logger.error(f"B2 upload failed for '{b2_filename}': {e}", exc_info=True)
+    raise
+  except Exception as e:
+    logger.error(f"Failed to upload export to B2: {e}", exc_info=True)
+    raise
+
 ## Utility: Save Export Locally
-async def _save_export_locally(zip_buffer: io.BytesIO, filename: str) -> Path:
+async def _save_export_locally(zip_source: io.BytesIO | Path, filename: str) -> Path:
   """
   Saves export ZIP to local temp directory.
+  Accepts either BytesIO or Path (if already on disk).
   Returns the file path for serving.
   """
   export_file = EXPORTS_TEMP_DIR / filename
   try:
-    zip_buffer.seek(0)
-    zip_data = zip_buffer.getvalue()
-    await _write_file_async(export_file, zip_data)
-    logger.debug(f"Saved export to local temp: {export_file}")
+    if isinstance(zip_source, Path):
+      # Already on disk, just copy/rename if needed
+      if zip_source != export_file:
+        shutil.copy2(zip_source, export_file)
+        zip_source.unlink()  # Remove temporary file
+      logger.debug(f"Export already on disk: {export_file}")
+    else:
+      # BytesIO - write to disk
+      zip_source.seek(0)
+      zip_data = zip_source.getvalue()
+      await _write_file_async(export_file, zip_data)
+      logger.debug(f"Saved export to local temp: {export_file}")
     return export_file
   except Exception as e:
     logger.error(f"Failed to save export locally: {e}", exc_info=True)
@@ -347,11 +431,13 @@ async def _log_export(
   export_type: str,
   user_email: str,
   local_file_path: Optional[str] = None,
-  file_size: Optional[int] = None
+  file_size: Optional[int] = None,
+  b2_file_name: Optional[str] = None,
+  invalidated: bool = False
 ):
   """
   Logs an export event to the database for tracking purposes.
-  export_type should be 'standalone' or 'docker'
+  export_type should be 'standalone' or 'docker' or 'intelligent'
   """
   try:
     export_log = {
@@ -360,13 +446,17 @@ async def _log_export(
       "user_email": user_email,
       "local_file_path": local_file_path,
       "file_size": file_size,
+      "b2_file_name": b2_file_name,
+      "invalidated": invalidated,
       "created_at": datetime.datetime.utcnow(),
     }
-    await db.export_logs.insert_one(export_log)
-    logger.debug(f"Logged export: {slug_id} ({export_type}) by {user_email}")
+    result = await db.export_logs.insert_one(export_log)
+    logger.debug(f"Logged export: {slug_id} ({export_type}) by {user_email}, ID: {result.inserted_id}")
+    return result.inserted_id
   except Exception as e:
     logger.error(f"Failed to log export to database: {e}", exc_info=True)
     # Don't fail the export if logging fails
+    return None
 
 
 ## Utility: Parse and Merge Requirements for Ray Isolation
@@ -1501,22 +1591,136 @@ def _fix_static_paths(html_content: str, slug_id: str) -> str:
   return replaced
 
 
+## Helper: Create ZIP on Disk (for large exports)
+def _create_zip_to_disk(
+  slug_id: str,
+  source_dir: Path,
+  db_data: Dict[str, Any],
+  db_collections: Dict[str, List[Dict[str, Any]]],
+  zip_path: Path,
+  experiment_path: Path,
+  templates_dir: Path | None,
+  standalone_main_source: str,
+  requirements_content: str,
+  readme_content: str,
+  include_templates: bool = False,
+  include_docker_files: bool = False,
+  dockerfile_content: str | None = None,
+  docker_compose_content: str | None = None,
+  main_file_name: str = "standalone_main.py"
+) -> Path:
+  """
+  Creates a ZIP archive directly on disk for large exports.
+  This avoids loading the entire ZIP into memory.
+  """
+  EXCLUSION_PATTERNS = [
+    "__pycache__", ".DS_Store", "*.pyc", "*.tmp", ".git", ".idea", ".vscode"
+  ]
+  
+  with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+    # Include experiment directory
+    if experiment_path.is_dir():
+      logger.debug(f"Including experiment code from: {experiment_path}")
+      for folder_name, _, file_names in os.walk(experiment_path):
+        if Path(folder_name).name in EXCLUSION_PATTERNS:
+          continue
+        
+        for file_name in file_names:
+          if any(fnmatch.fnmatch(file_name, p) for p in EXCLUSION_PATTERNS):
+            continue
+          
+          file_path = Path(folder_name) / file_name
+          try:
+            arcname = str(file_path.relative_to(experiment_path))
+          except ValueError:
+            logger.error(f"Failed to get relative path for {file_path}")
+            continue
+          
+          if file_path.suffix in (".html", ".htm"):
+            original_html = file_path.read_text(encoding="utf-8")
+            fixed_html = _fix_static_paths(original_html, slug_id)
+            zf.writestr(arcname, fixed_html)
+          else:
+            zf.write(file_path, arcname)
+    
+    # Include templates directory if requested
+    if include_templates and templates_dir and templates_dir.is_dir():
+      for folder_name, _, file_names in os.walk(templates_dir):
+        if Path(folder_name).name in EXCLUSION_PATTERNS:
+          continue
+        for file_name in file_names:
+          if any(fnmatch.fnmatch(file_name, p) for p in EXCLUSION_PATTERNS):
+            continue
+          file_path = Path(folder_name) / file_name
+          try:
+            arcname = f"templates/{file_path.relative_to(templates_dir)}"
+          except ValueError:
+            continue
+          zf.write(file_path, arcname)
+    
+    # Add __init__.py for experiments package (if needed)
+    experiments_init = source_dir / "experiments" / "__init__.py"
+    if experiments_init.is_file():
+      zf.write(experiments_init, "experiments/__init__.py")
+    
+    # Add additional files for intelligent export
+    if include_docker_files:
+      mongo_wrapper = source_dir / "async_mongo_wrapper.py"
+      if mongo_wrapper.is_file():
+        zf.write(mongo_wrapper, "async_mongo_wrapper.py")
+      
+      experiment_db = source_dir / "experiment_db.py"
+      if experiment_db.is_file():
+        zf.write(experiment_db, "experiment_db.py")
+      
+      if dockerfile_content:
+        zf.writestr("Dockerfile", dockerfile_content)
+      if docker_compose_content:
+        zf.writestr("docker-compose.yml", docker_compose_content)
+    
+    # Add generated core files
+    zf.writestr("db_config.json", json.dumps(db_data, indent=2))
+    zf.writestr("db_collections.json", json.dumps(db_collections, indent=2))
+    zf.writestr(main_file_name, standalone_main_source)
+    zf.writestr("README.md", readme_content)
+    
+    if requirements_content:
+      zf.writestr("requirements.txt", requirements_content)
+  
+  return zip_path
+
+
 def _create_standalone_zip(
   slug_id: str,
   source_dir: Path,
   db_data: Dict[str, Any],
   db_collections: Dict[str, List[Dict[str, Any]]]
-) -> io.BytesIO:
+) -> io.BytesIO | Path:
+  """
+  Creates a standalone ZIP package.
+  Uses disk streaming for large exports (>100MB) to avoid memory issues.
+  Returns either io.BytesIO (small exports) or Path (large exports).
+  """
   logger.info(f"Starting creation of standalone package for '{slug_id}'.")
-  zip_buffer = io.BytesIO()
   experiment_path = source_dir / "experiments" / slug_id
   templates_dir = source_dir / "templates"
 
-  # --- 1. Generate core files ---
+  # --- 1. Check if we should use disk streaming ---
+  estimated_size = _estimate_export_size(db_data, db_collections, source_dir, slug_id)
+  use_disk_streaming = _should_use_disk_streaming(estimated_size, max_size_mb=100)
+  
+  if use_disk_streaming:
+    logger.info(f"[{slug_id}] Large export detected ({estimated_size / (1024*1024):.1f} MB), using disk streaming")
+    timestamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    zip_path = EXPORTS_TEMP_DIR / f"{slug_id}_standalone_export_{timestamp}.zip"
+  else:
+    zip_path = None
+
+  # --- 2. Generate core files ---
   standalone_main_source = _make_standalone_main_py(slug_id)
   # Note: No root template needed - standalone app serves experiment's own index.html
 
-  # --- 2. Determine local requirements to include ---
+  # --- 3. Determine local requirements to include ---
   local_reqs_path = experiment_path / "requirements.txt"
   if local_reqs_path.is_file():
     local_requirements = _parse_requirements_file_sync(local_reqs_path)
@@ -1530,7 +1734,7 @@ def _create_standalone_zip(
   else:
     requirements_content = ""
 
-  # --- 3. Generate README.md with instructions ---
+  # --- 4. Generate README.md with instructions ---
   readme_content = f"""# Standalone Experiment Package: {slug_id}
 
 This package contains a self-contained, single-file server (`standalone_main.py`)
@@ -1566,55 +1770,75 @@ to run the experiment locally, independent of the main platform.
  Open your browser and navigate to: http://127.0.0.1:8000/
 """
 
-  # --- 4. Create ZIP archive ---
-  EXCLUSION_PATTERNS = [
-    "__pycache__", ".DS_Store", "*.pyc", "*.tmp", ".git", ".idea", ".vscode"
-  ]
-  with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-    if experiment_path.is_dir():
-      logger.debug(f"Including thin client code from: {experiment_path}")
-      # Walk the experiment directory to include files
-      for folder_name, _, file_names in os.walk(experiment_path):
-        # Skip excluded folders
-        if Path(folder_name).name in EXCLUSION_PATTERNS:
-          continue
-
-        for file_name in file_names:
-          # Skip excluded files
-          if any(fnmatch.fnmatch(file_name, p) for p in EXCLUSION_PATTERNS):
+  # --- 5. Create ZIP archive (on disk or in memory) ---
+  if use_disk_streaming:
+    _create_zip_to_disk(
+      slug_id=slug_id,
+      source_dir=source_dir,
+      db_data=db_data,
+      db_collections=db_collections,
+      zip_path=zip_path,
+      experiment_path=experiment_path,
+      templates_dir=None,
+      standalone_main_source=standalone_main_source,
+      requirements_content=requirements_content,
+      readme_content=readme_content,
+      include_templates=False,
+      include_docker_files=False,
+      main_file_name="standalone_main.py"
+    )
+    logger.info(f"Standalone package created successfully on disk: {zip_path}")
+    return zip_path
+  else:
+    zip_buffer = io.BytesIO()
+    EXCLUSION_PATTERNS = [
+      "__pycache__", ".DS_Store", "*.pyc", "*.tmp", ".git", ".idea", ".vscode"
+    ]
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+      if experiment_path.is_dir():
+        logger.debug(f"Including thin client code from: {experiment_path}")
+        # Walk the experiment directory to include files
+        for folder_name, _, file_names in os.walk(experiment_path):
+          # Skip excluded folders
+          if Path(folder_name).name in EXCLUSION_PATTERNS:
             continue
 
-          file_path = Path(folder_name) / file_name
-          # Archive name should be relative to the root of the experiment directory
-          try:
-            arcname = str(file_path.relative_to(experiment_path))
-          except ValueError:
-            logger.error(f"Failed to get relative path for {file_path}")
-            continue
+          for file_name in file_names:
+            # Skip excluded files
+            if any(fnmatch.fnmatch(file_name, p) for p in EXCLUSION_PATTERNS):
+              continue
 
-          # Rewrite paths in HTML files
-          if file_path.suffix in (".html", ".htm"):
-            original_html = file_path.read_text(encoding="utf-8")
-            fixed_html = _fix_static_paths(original_html, slug_id)
-            zf.writestr(arcname, fixed_html)
-          else:
-            zf.write(file_path, arcname)
+            file_path = Path(folder_name) / file_name
+            # Archive name should be relative to the root of the experiment directory
+            try:
+              arcname = str(file_path.relative_to(experiment_path))
+            except ValueError:
+              logger.error(f"Failed to get relative path for {file_path}")
+              continue
 
-    # --- 5. Add generated core files to the root of the ZIP ---
-    # No root template needed - standalone app serves experiment's own index.html directly
+            # Rewrite paths in HTML files
+            if file_path.suffix in (".html", ".htm"):
+              original_html = file_path.read_text(encoding="utf-8")
+              fixed_html = _fix_static_paths(original_html, slug_id)
+              zf.writestr(arcname, fixed_html)
+            else:
+              zf.write(file_path, arcname)
 
-    zf.writestr("db_config.json", json.dumps(db_data, indent=2))
-    zf.writestr("db_collections.json", json.dumps(db_collections, indent=2))
-    zf.writestr("standalone_main.py", standalone_main_source)
-    zf.writestr("README.md", readme_content)
+      # --- 6. Add generated core files to the root of the ZIP ---
+      # No root template needed - standalone app serves experiment's own index.html directly
 
-    # Conditionally add requirements.txt
-    if requirements_content:
-      zf.writestr("requirements.txt", requirements_content)
+      zf.writestr("db_config.json", json.dumps(db_data, indent=2))
+      zf.writestr("db_collections.json", json.dumps(db_collections, indent=2))
+      zf.writestr("standalone_main.py", standalone_main_source)
+      zf.writestr("README.md", readme_content)
 
-  zip_buffer.seek(0)
-  logger.info(f"Standalone package created successfully for '{slug_id}'.")
-  return zip_buffer
+      # Conditionally add requirements.txt
+      if requirements_content:
+        zf.writestr("requirements.txt", requirements_content)
+
+    zip_buffer.seek(0)
+    logger.info(f"Standalone package created successfully in memory for '{slug_id}'.")
+    return zip_buffer
 
 
 def _create_dockerfile_for_experiment(slug_id: str, source_dir: Path, experiment_path: Path) -> str:
@@ -2574,35 +2798,57 @@ async def package_standalone_experiment(
     file_name = f"{slug_id}_intelligent_export_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     file_size = zip_buffer.getbuffer().nbytes
     
-    # Save to local temp directory (saves B2 storage costs)
-    logger.info(f"[{slug_id}] Saving intelligent export locally: {file_name}")
-    export_file_path = await _save_export_locally(zip_buffer, file_name)
+    # Upload to B2 if enabled, otherwise save locally
+    b2_file_name = None
+    download_url = None
+    b2_bucket = getattr(request.app.state, "b2_bucket", None)
+    
+    if B2_ENABLED and b2_bucket:
+      try:
+        # Upload to B2
+        b2_file_name = f"exports/{file_name}"
+        logger.info(f"[{slug_id}] Uploading export to B2: {b2_file_name}")
+        await _upload_export_to_b2(b2_bucket, zip_buffer, b2_file_name)
+        
+        # Generate presigned download URL from B2
+        download_url = _generate_presigned_download_url(b2_bucket, b2_file_name, duration_seconds=86400)  # 24 hours
+        logger.info(f"[{slug_id}] Export uploaded to B2. Generated presigned URL.")
+      except Exception as e:
+        logger.error(f"[{slug_id}] B2 upload failed, falling back to local storage: {e}", exc_info=True)
+        # Fallback to local storage
+        export_file_path = await _save_export_locally(zip_buffer, file_name)
+        relative_url = str(request.url_for("exports", filename=file_name))
+        download_url = _build_absolute_https_url(request, relative_url)
+        logger.info(f"[{slug_id}] Export saved locally as fallback.")
+    else:
+      # Save to local temp directory (fallback if B2 not enabled)
+      logger.info(f"[{slug_id}] B2 not enabled, saving export locally: {file_name}")
+      export_file_path = await _save_export_locally(zip_buffer, file_name)
+      relative_url = str(request.url_for("exports", filename=file_name))
+      download_url = _build_absolute_https_url(request, relative_url)
     
     # Trigger cleanup of old exports in background (non-blocking)
     asyncio.create_task(_cleanup_old_exports(max_age_hours=24))
     
-    # Generate local download URL (HTTPS via the app)
-    # FastAPI url_for needs filename parameter for path
-    # Use helper function to build absolute HTTPS URL (handles proxy headers)
-    relative_url = str(request.url_for("exports", filename=file_name))
-    download_url = _build_absolute_https_url(request, relative_url)
-    
     # Log export to database
-    await _log_export(
+    export_log_id = await _log_export(
       db=db,
       slug_id=slug_id,
       export_type="intelligent",
       user_email=user_email,
-      local_file_path=str(export_file_path.relative_to(BASE_DIR)),
-      file_size=file_size
+      local_file_path=str(export_file_path.relative_to(BASE_DIR)) if 'export_file_path' in locals() else None,
+      file_size=file_size,
+      b2_file_name=b2_file_name,
+      invalidated=False
     )
     
-    logger.info(f"[{slug_id}] Intelligent export saved locally. Returning download URL.")
-    # Return JSON with download URL (served via HTTPS by this app)
+    logger.info(f"[{slug_id}] Export created successfully. Download URL generated.")
+    # Return JSON with download URL
     return JSONResponse({
       "status": "success",
       "download_url": str(download_url),
       "filename": file_name,
+      "export_id": str(export_log_id) if export_log_id else None,
       "message": "Export ready for download"
     })
   except ValueError as e:
@@ -2657,35 +2903,57 @@ async def package_docker_experiment(
     file_name = f"{slug_id}_intelligent_export_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     file_size = zip_buffer.getbuffer().nbytes
     
-    # Save to local temp directory (saves B2 storage costs)
-    logger.info(f"[{slug_id}] Saving intelligent export locally: {file_name}")
-    export_file_path = await _save_export_locally(zip_buffer, file_name)
+    # Upload to B2 if enabled, otherwise save locally
+    b2_file_name = None
+    download_url = None
+    b2_bucket = getattr(request.app.state, "b2_bucket", None)
+    
+    if B2_ENABLED and b2_bucket:
+      try:
+        # Upload to B2
+        b2_file_name = f"exports/{file_name}"
+        logger.info(f"[{slug_id}] Uploading export to B2: {b2_file_name}")
+        await _upload_export_to_b2(b2_bucket, zip_buffer, b2_file_name)
+        
+        # Generate presigned download URL from B2
+        download_url = _generate_presigned_download_url(b2_bucket, b2_file_name, duration_seconds=86400)  # 24 hours
+        logger.info(f"[{slug_id}] Export uploaded to B2. Generated presigned URL.")
+      except Exception as e:
+        logger.error(f"[{slug_id}] B2 upload failed, falling back to local storage: {e}", exc_info=True)
+        # Fallback to local storage
+        export_file_path = await _save_export_locally(zip_buffer, file_name)
+        relative_url = str(request.url_for("exports", filename=file_name))
+        download_url = _build_absolute_https_url(request, relative_url)
+        logger.info(f"[{slug_id}] Export saved locally as fallback.")
+    else:
+      # Save to local temp directory (fallback if B2 not enabled)
+      logger.info(f"[{slug_id}] B2 not enabled, saving export locally: {file_name}")
+      export_file_path = await _save_export_locally(zip_buffer, file_name)
+      relative_url = str(request.url_for("exports", filename=file_name))
+      download_url = _build_absolute_https_url(request, relative_url)
     
     # Trigger cleanup of old exports in background (non-blocking)
     asyncio.create_task(_cleanup_old_exports(max_age_hours=24))
     
-    # Generate local download URL (HTTPS via the app)
-    # FastAPI url_for needs filename parameter for path
-    # Use helper function to build absolute HTTPS URL (handles proxy headers)
-    relative_url = str(request.url_for("exports", filename=file_name))
-    download_url = _build_absolute_https_url(request, relative_url)
-    
     # Log export to database
-    await _log_export(
+    export_log_id = await _log_export(
       db=db,
       slug_id=slug_id,
       export_type="intelligent",
       user_email=user_email,
-      local_file_path=str(export_file_path.relative_to(BASE_DIR)),
-      file_size=file_size
+      local_file_path=str(export_file_path.relative_to(BASE_DIR)) if 'export_file_path' in locals() else None,
+      file_size=file_size,
+      b2_file_name=b2_file_name,
+      invalidated=False
     )
     
-    logger.info(f"[{slug_id}] Docker export saved locally. Returning download URL.")
-    # Return JSON with download URL (served via HTTPS by this app)
+    logger.info(f"[{slug_id}] Docker export created successfully. Download URL generated.")
+    # Return JSON with download URL
     return JSONResponse({
       "status": "success",
       "download_url": str(download_url),
       "filename": file_name,
+      "export_id": str(export_log_id) if export_log_id else None,
       "message": "Export ready for download"
     })
   except ValueError as e:
@@ -2700,34 +2968,51 @@ async def package_docker_experiment(
 @public_api_router.get("/export/{filename:path}", name="exports")
 async def serve_export_file(filename: str, request: Request):
   """
-  Serves export files from temp directory.
+  Serves export files from temp directory or B2.
+  Checks if export is invalidated and returns 410 Gone if so.
   Files are automatically cleaned up after 24 hours.
   """
+  db: AsyncIOMotorDatabase = request.app.state.mongo_db
   try:
     # Security: prevent directory traversal
     safe_filename = Path(filename).name
     if safe_filename != filename or ".." in filename:
       raise HTTPException(status_code=400, detail="Invalid filename")
     
+    # Check if export is invalidated in database
+    export_log = await db.export_logs.find_one({
+      "$or": [
+        {"local_file_path": {"$regex": safe_filename}},
+        {"b2_file_name": {"$regex": safe_filename}}
+      ]
+    })
+    
+    if export_log and export_log.get("invalidated", False):
+      logger.info(f"Export file '{safe_filename}' is invalidated, returning 410 Gone")
+      raise HTTPException(status_code=410, detail="Export has been invalidated and is no longer available")
+    
+    # Try to serve from local temp directory (fallback)
     export_file = EXPORTS_TEMP_DIR / safe_filename
-    if not export_file.exists() or not export_file.is_file():
-      raise HTTPException(status_code=404, detail="Export file not found or expired")
+    if export_file.exists() and export_file.is_file():
+      # Check if file is too old (24 hours)
+      file_age_hours = (datetime.datetime.now().timestamp() - export_file.stat().st_mtime) / 3600
+      if file_age_hours > 24:
+        logger.info(f"Export file expired (age: {file_age_hours:.1f}h), deleting: {safe_filename}")
+        export_file.unlink()
+        raise HTTPException(status_code=404, detail="Export file expired")
+      
+      return FileResponse(
+        path=str(export_file),
+        filename=safe_filename,
+        media_type="application/zip",
+        headers={
+          "Content-Disposition": f'attachment; filename="{safe_filename}"',
+        }
+      )
     
-    # Check if file is too old (24 hours)
-    file_age_hours = (datetime.datetime.now().timestamp() - export_file.stat().st_mtime) / 3600
-    if file_age_hours > 24:
-      logger.info(f"Export file expired (age: {file_age_hours:.1f}h), deleting: {safe_filename}")
-      export_file.unlink()
-      raise HTTPException(status_code=404, detail="Export file expired")
-    
-    return FileResponse(
-      path=str(export_file),
-      filename=safe_filename,
-      media_type="application/zip",
-      headers={
-        "Content-Disposition": f'attachment; filename="{safe_filename}"',
-      }
-    )
+    # If not found locally and B2 is enabled, check if it's in B2
+    # But we can't serve directly from B2 here - user should use presigned URL
+    raise HTTPException(status_code=404, detail="Export file not found or expired")
   except HTTPException:
     raise
   except Exception as e:
@@ -2759,35 +3044,57 @@ async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any
     file_name = f"{slug_id}_intelligent_export_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     file_size = zip_buffer.getbuffer().nbytes
     
-    # Save to local temp directory (saves B2 storage costs)
-    logger.info(f"[{slug_id}] Admin saving intelligent export locally: {file_name}")
-    export_file_path = await _save_export_locally(zip_buffer, file_name)
+    # Upload to B2 if enabled, otherwise save locally
+    b2_file_name = None
+    download_url = None
+    b2_bucket = getattr(request.app.state, "b2_bucket", None)
+    
+    if B2_ENABLED and b2_bucket:
+      try:
+        # Upload to B2
+        b2_file_name = f"exports/{file_name}"
+        logger.info(f"[{slug_id}] Uploading export to B2: {b2_file_name}")
+        await _upload_export_to_b2(b2_bucket, zip_buffer, b2_file_name)
+        
+        # Generate presigned download URL from B2
+        download_url = _generate_presigned_download_url(b2_bucket, b2_file_name, duration_seconds=86400)  # 24 hours
+        logger.info(f"[{slug_id}] Export uploaded to B2. Generated presigned URL.")
+      except Exception as e:
+        logger.error(f"[{slug_id}] B2 upload failed, falling back to local storage: {e}", exc_info=True)
+        # Fallback to local storage
+        export_file_path = await _save_export_locally(zip_buffer, file_name)
+        relative_url = str(request.url_for("exports", filename=file_name))
+        download_url = _build_absolute_https_url(request, relative_url)
+        logger.info(f"[{slug_id}] Export saved locally as fallback.")
+    else:
+      # Save to local temp directory (fallback if B2 not enabled)
+      logger.info(f"[{slug_id}] B2 not enabled, saving export locally: {file_name}")
+      export_file_path = await _save_export_locally(zip_buffer, file_name)
+      relative_url = str(request.url_for("exports", filename=file_name))
+      download_url = _build_absolute_https_url(request, relative_url)
     
     # Trigger cleanup of old exports in background (non-blocking)
     asyncio.create_task(_cleanup_old_exports(max_age_hours=24))
     
-    # Generate local download URL (HTTPS via the app)
-    # FastAPI url_for needs filename parameter for path
-    # Use helper function to build absolute HTTPS URL (handles proxy headers)
-    relative_url = str(request.url_for("exports", filename=file_name))
-    download_url = _build_absolute_https_url(request, relative_url)
-    
     # Log export to database
-    await _log_export(
+    export_log_id = await _log_export(
       db=db,
       slug_id=slug_id,
       export_type="intelligent",
       user_email=user_email,
-      local_file_path=str(export_file_path.relative_to(BASE_DIR)),
-      file_size=file_size
+      local_file_path=str(export_file_path.relative_to(BASE_DIR)) if 'export_file_path' in locals() else None,
+      file_size=file_size,
+      b2_file_name=b2_file_name,
+      invalidated=False
     )
     
-    logger.info(f"[{slug_id}] Admin standalone export saved locally. Returning download URL.")
-    # Return JSON with download URL (served via HTTPS by this app)
+    logger.info(f"[{slug_id}] Export created successfully. Download URL generated.")
+    # Return JSON with download URL
     return JSONResponse({
       "status": "success",
       "download_url": str(download_url),
       "filename": file_name,
+      "export_id": str(export_log_id) if export_log_id else None,
       "message": "Export ready for download"
     })
   except ValueError as e:
@@ -2796,6 +3103,121 @@ async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any
   except Exception as e:
     logger.error(f"Unexpected error packaging '{slug_id}': {e}", exc_info=True)
     raise HTTPException(500, "Unexpected server error during packaging.")
+
+
+@admin_router.get("/api/exports", response_class=JSONResponse, name="list_exports")
+async def list_exports(
+  request: Request,
+  user: Dict[str, Any] = Depends(require_admin),
+  slug_id: Optional[str] = Query(None)
+):
+  """
+  Lists all exports, optionally filtered by slug_id.
+  Returns export information including invalidated status.
+  """
+  db: AsyncIOMotorDatabase = request.app.state.mongo_db
+  try:
+    query = {}
+    if slug_id:
+      query["slug_id"] = slug_id
+    
+    exports = []
+    async for export_log in db.export_logs.find(query).sort("created_at", -1):
+      export_dict = {
+        "_id": str(export_log["_id"]),
+        "slug_id": export_log.get("slug_id"),
+        "export_type": export_log.get("export_type"),
+        "user_email": export_log.get("user_email"),
+        "file_size": export_log.get("file_size"),
+        "b2_file_name": export_log.get("b2_file_name"),
+        "local_file_path": export_log.get("local_file_path"),
+        "invalidated": export_log.get("invalidated", False),
+        "created_at": export_log.get("created_at").isoformat() if export_log.get("created_at") else None,
+      }
+      exports.append(export_dict)
+    
+    return JSONResponse({
+      "status": "success",
+      "exports": exports,
+      "count": len(exports)
+    })
+  except Exception as e:
+    logger.error(f"Error listing exports: {e}", exc_info=True)
+    raise HTTPException(status_code=500, detail=f"Error listing exports: {e}")
+
+
+@admin_router.post("/api/exports/{export_id}/invalidate", response_class=JSONResponse, name="invalidate_export")
+async def invalidate_export(
+  request: Request,
+  export_id: str,
+  user: Dict[str, Any] = Depends(require_admin),
+  delete_from_b2: bool = Body(True, embed=True)
+):
+  """
+  Invalidates an export and optionally deletes it from B2.
+  This marks the export as invalidated in the database and disables the download link.
+  If delete_from_b2 is True and the export is in B2, it will be deleted from B2 as well.
+  """
+  db: AsyncIOMotorDatabase = request.app.state.mongo_db
+  b2_bucket = getattr(request.app.state, "b2_bucket", None)
+  
+  try:
+    from bson import ObjectId
+    
+    # Find the export
+    export_log = await db.export_logs.find_one({"_id": ObjectId(export_id)})
+    if not export_log:
+      raise HTTPException(status_code=404, detail="Export not found")
+    
+    if export_log.get("invalidated", False):
+      return JSONResponse({
+        "status": "success",
+        "message": "Export was already invalidated",
+        "export_id": export_id
+      })
+    
+    # Delete from B2 if requested and file exists in B2
+    b2_deleted = False
+    if delete_from_b2 and B2_ENABLED and b2_bucket and export_log.get("b2_file_name"):
+      try:
+        b2_file_name = export_log["b2_file_name"]
+        # Delete file from B2
+        try:
+          file_version = b2_bucket.get_file_info_by_name(b2_file_name)
+          if file_version:
+            b2_bucket.delete_file_version(file_version.id_, file_version.file_name)
+            b2_deleted = True
+            logger.info(f"Deleted export from B2: {b2_file_name}")
+        except B2Error as b2_err:
+          # File might not exist anymore - that's okay
+          if "not found" in str(b2_err).lower() or "does not exist" in str(b2_err).lower():
+            logger.info(f"Export file already deleted from B2: {b2_file_name}")
+          else:
+            raise
+      except B2Error as e:
+        logger.warning(f"Failed to delete export from B2: {e}")
+      except Exception as e:
+        logger.warning(f"Error deleting export from B2: {e}", exc_info=True)
+    
+    # Mark as invalidated in database
+    await db.export_logs.update_one(
+      {"_id": ObjectId(export_id)},
+      {"$set": {"invalidated": True, "invalidated_at": datetime.datetime.utcnow(), "invalidated_by": user.get("email")}}
+    )
+    
+    logger.info(f"Export {export_id} invalidated by {user.get('email')}")
+    
+    return JSONResponse({
+      "status": "success",
+      "message": "Export invalidated successfully",
+      "export_id": export_id,
+      "b2_deleted": b2_deleted
+    })
+  except HTTPException:
+    raise
+  except Exception as e:
+    logger.error(f"Error invalidating export {export_id}: {e}", exc_info=True)
+    raise HTTPException(status_code=500, detail=f"Error invalidating export: {e}")
 
 
 @admin_router.get("/", response_class=HTMLResponse, name="admin_dashboard")
