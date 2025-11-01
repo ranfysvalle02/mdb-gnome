@@ -212,3 +212,6 @@ temp_exports/
 # SSL certificates for local development
 localhost.key
 localhost.crt
+
+# Jinja2 cache files
+.jinja_cache/*

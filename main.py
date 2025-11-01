@@ -2712,7 +2712,11 @@ async def upload_experiment_zip(
   try:
     logger.info(f"[{slug_id}] Reloading after zip upload...")
     await reload_active_experiments(request.app)
-    return JSONResponse({"message": f"Successfully uploaded and reloaded '{slug_id}'."})
+    return JSONResponse({
+      "status": "success",
+      "message": f"Successfully uploaded and reloaded '{slug_id}'. Experiment is now active.",
+      "slug_id": slug_id
+    })
   except Exception as e:
     logger.error(f"[{slug_id}] Reload failure: {e}", exc_info=True)
     raise HTTPException(500, f"Reload failed: {e}")

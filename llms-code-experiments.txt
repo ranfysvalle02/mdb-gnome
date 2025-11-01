@@ -1,0 +1,403 @@
+# mdb-gnome Platform Experiments Documentation
+
+---
+
+## 1. Experiments Architecture Overview
+
+The **mdb-gnome** platform employs a **thin client architecture** for its experiments system, designed to modularize and isolate experimental features as sub-applications. Each experiment is a self-contained module that integrates seamlessly with the platform through well-defined interfaces and conventions.
+
+Key architectural principles:
+
+- **Modularity**: Experiments reside in the `/experiments` directory as independent sub-applications.
+- **Thin Client**: The frontend (UI/templates/static) is minimal, delegating business logic and state management to backend Ray actors.
+- **Ray Actors**: Each experiment uses a Ray remote actor to encapsulate business logic, concurrency, and state.
+- **Scoped Database Access**: Experiments use experiment-scoped MongoDB collections accessed via an async MongoDB wrapper, ensuring data isolation and controlled cross-experiment data sharing.
+- **Manifest-Driven**: Each experiment declares metadata, authentication, data scope, and managed indexes in a `manifest.json` file.
+- **Automatic Mounting**: Static files and templates are automatically mounted by the platform, simplifying UI integration.
+
+This architecture promotes scalability, maintainability, and clear separation of concerns between UI, business logic, and data persistence.
+
+---
+
+## 2. Experiment Structure
+
+Each experiment follows a standardized folder and file structure:
+
+```
+experiments/
+    <experiment_slug>/
+        __init__.py           # FastAPI router and endpoint definitions (thin client)
+        actor.py              # Ray remote actor class with business logic
+        manifest.json         # Experiment metadata and configuration
+        requirements.txt      # (Optional) Python dependencies specific to the experiment
+        static/               # (Optional) Static assets (JS, CSS, images)
+        templates/            # Jinja2 HTML templates for UI views
+        <other modules>.py    # (Optional) Additional modules (e.g., engine.py)
+```
+
+### Required Files
+
+- `manifest.json`: Declares experiment metadata, auth, data scope, and indexes.
+- `__init__.py`: Defines the FastAPI APIRouter (usually named `bp`) that forwards requests to the Ray actor.
+- `actor.py`: Contains the Ray remote actor class (`ExperimentActor`) implementing the experiment’s business logic.
+
+### Optional Files
+
+- `requirements.txt`: Specifies Python dependencies for the experiment environment.
+- `static/`: Client-side assets like JavaScript or CSS.
+- `templates/`: HTML templates rendered by the FastAPI router.
+- Additional Python modules for core logic or utilities.
+
+---
+
+## 3. Platform Integration Points
+
+### Experiment Registration
+
+- The platform auto-discovers experiments by scanning the `/experiments` directory.
+- Each experiment’s `manifest.json` is parsed to register metadata, authentication requirements, data scope, and indexes.
+- The experiment’s FastAPI router (`bp` in `__init__.py`) is mounted under a path matching the experiment slug.
+
+### Mounting Static Files and Templates
+
+- Static assets under `static/` and templates under `templates/` are automatically mounted and made available to the experiment’s router.
+- This enables seamless serving of UI components without manual configuration.
+
+### Ray Actor Integration
+
+- Each experiment defines a Ray remote actor class (`ExperimentActor`) in `actor.py`.
+- The FastAPI router acts as a thin client, forwarding HTTP requests asynchronously to the Ray actor.
+- Ray actors encapsulate business logic, state management, and database interactions.
+- Actors are retrieved or instantiated via platform utilities, ensuring singleton or scoped lifecycle as needed.
+
+### Database Scoping and Access
+
+- Experiments use MongoDB collections scoped to their experiment slug.
+- The platform provides an async MongoDB wrapper that abstracts Motor-like APIs.
+- Scoped read/write access is enforced based on experiment data scope declared in `manifest.json`.
+- Cross-experiment reads are allowed only if declared in the data scope.
+- Managed indexes declared in the manifest are created and maintained by the platform.
+
+---
+
+## 4. Individual Experiments
+
+### 4.1 Click Tracker
+
+- **Slug**: `click_tracker`
+- **Name**: Click Tracker
+- **Purpose**: Track user click events and generate vector embeddings for similarity queries.
+
+#### Manifest Configuration
+
+```json
+{
+  "name": "Click Tracker",
+  "status": "active",
+  "auth_required": false,
+  "data_scope": ["self"],
+  "managed_indexes": 1
+}
+```
+
+- No authentication required.
+- Data scope limited to self.
+- Manages one vector search index collection.
+
+#### Router Patterns
+
+- Defines FastAPI endpoints for:
+  - Serving the main UI page (`GET /`).
+  - API endpoint to record clicks (`POST /click`).
+  - API endpoint to retrieve click counts (`GET /count`).
+- Uses scoped MongoDB dependencies.
+- Forwards click recording and counting logic to the Ray actor asynchronously.
+
+#### Actor Functionality
+
+- Ray remote actor manages click event storage and counting.
+- Uses an abstracted MongoDB-like interface for data persistence.
+- Provides async methods:
+  - `record_click()`: Records a click event.
+  - `get_click_count()`: Returns total clicks recorded.
+- Encapsulates concurrency and state management.
+
+#### Database Usage
+
+- Uses an experiment-scoped MongoDB collection for click events.
+- Maintains a vector search index for efficient similarity queries.
+- Indexes are managed as declared in the manifest.
+
+#### UI Components
+
+- `templates/index.html`: Displays current click count and a button to record clicks.
+- `static/js/app.js`: Client-side JavaScript to send click events to backend and update UI dynamically.
+- UI is minimal and delegates logic to backend Ray actor.
+
+#### Additional Modules or Utilities
+
+- `requirements.txt`: Specifies `pymongo` dependency for MongoDB interaction.
+
+---
+
+### 4.2 Data Imaging (Workout Analyzer)
+
+- **Slug**: `data_imaging`
+- **Name**: Workout Analyzer
+- **Purpose**: Analyze workout data with AI integration, generate visualizations, and manage workout collections.
+
+#### Manifest Configuration
+
+```json
+{
+  "name": "Workout Analyzer",
+  "status": "active",
+  "auth_required": false,
+  "data_scope": ["self"],
+  "managed_indexes": 1
+}
+```
+
+- No authentication required.
+- Data scope limited to self.
+- Manages one MongoDB vector search index for workout data.
+
+#### Router Patterns
+
+- FastAPI router provides endpoints for:
+  - Rendering main gallery page (`GET /`).
+  - Rendering detailed workout view (`GET /detail/{id}`).
+  - Fetching visualization data as JSON.
+  - Actions: generate, bulk generate, analyze, clear workout documents.
+- Forwards requests to Ray actor for processing.
+
+#### Actor Functionality
+
+- Ray remote actor acts as a headless server managing:
+  - Heavy dependencies (lazy-loaded).
+  - MongoDB connections with scoped read/write.
+  - Vector search index initialization.
+  - Ensures sample workout data exists on startup.
+- Provides async methods for data generation, analysis, and retrieval.
+
+#### Database Usage
+
+- Uses scoped MongoDB collections for workout documents.
+- Manages vector search index for similarity queries.
+- Indexes declared and maintained as per manifest.
+
+#### UI Components
+
+- `templates/index.html`: Workout collection gallery with controls for data generation and clearing.
+- `templates/detail.html`: Detailed view of workout/imaging data with images, JSON data, and interactive selectors.
+- Styled UI components for visualization and interaction.
+
+#### Additional Modules or Utilities
+
+- `engine.py`: Core data processing and AI integration logic.
+  - Synthetic data generation.
+  - Time-series feature analysis.
+  - OpenAI API calls for AI summaries.
+  - Visualization data preparation.
+- `requirements.txt`: Specifies dependencies for core engine and actor separately.
+
+---
+
+### 4.3 Hello Ray
+
+- **Slug**: `hello_ray`
+- **Name**: Hello Ray
+- **Purpose**: Demonstrate basic Ray actor integration with a simple greeting.
+
+#### Manifest Configuration
+
+```json
+{
+  "name": "Hello Ray",
+  "status": "active",
+  "auth_required": false,
+  "data_scope": ["self"]
+}
+```
+
+- No authentication required.
+- Data scope limited to self.
+- No managed indexes.
+
+#### Router Patterns
+
+- FastAPI router serves:
+  - Main page (`GET /`) rendering a greeting.
+- Retrieves Ray actor instance.
+- Handles errors gracefully.
+- Renders Jinja2 template with greeting message.
+
+#### Actor Functionality
+
+- Minimal Ray remote actor class `ExperimentActor`.
+- Provides a simple method to generate a greeting string.
+- Encapsulates MongoDB connection and experiment scoping (though minimal usage).
+
+#### Database Usage
+
+- Minimal or no database usage.
+- MongoDB connection configured but not heavily used.
+
+#### UI Components
+
+- `templates/index.html`: Simple page displaying greeting message.
+
+---
+
+### 4.4 Stats Dashboard
+
+- **Slug**: `stats_dashboard`
+- **Name**: Stats Dashboard
+- **Purpose**: Aggregate and display statistics from other experiments.
+
+#### Manifest Configuration
+
+```json
+{
+  "name": "Stats Dashboard",
+  "status": "active",
+  "auth_required": true,
+  "data_scope": ["self", "click_tracker"],
+  "managed_indexes": 1
+}
+```
+
+- Authentication required.
+- Data scope includes self and `click_tracker` experiment.
+- Manages one MongoDB index collection.
+
+#### Router Patterns
+
+- FastAPI router provides:
+  - Main dashboard page (`GET /`) showing aggregated stats.
+- Enforces user authentication.
+- Forwards data aggregation logic to Ray actor.
+
+#### Actor Functionality
+
+- Ray remote actor `ExperimentActor` provides:
+  - Scoped, abstracted database access with cross-experiment reads.
+  - Async methods to log dashboard views.
+  - Methods to count documents (e.g., clicks) across scoped experiments.
+- Encapsulates database initialization and access control.
+
+#### Database Usage
+
+- Uses scoped MongoDB collections for logs and stats.
+- Reads data from `click_tracker` as allowed by data scope.
+- Manages indexes for efficient querying.
+
+#### UI Components
+
+- `templates/index.html`: Displays scoped statistics such as page views and total clicks.
+- Conditionally shows user info if authenticated.
+
+---
+
+## 5. Development Patterns
+
+### Creating a New Experiment
+
+1. **Create Experiment Folder**: Under `/experiments/<slug>/`.
+2. **Define `manifest.json`**:
+   - Specify `name`, `status`, `auth_required`, `data_scope`, and `managed_indexes`.
+3. **Implement Ray Actor (`actor.py`)**:
+   - Define `ExperimentActor` as a Ray remote class.
+   - Encapsulate business logic, database access, and concurrency.
+4. **Implement FastAPI Router (`__init__.py`)**:
+   - Create an APIRouter named `bp`.
+   - Define endpoints that forward requests asynchronously to the Ray actor.
+   - Use scoped MongoDB dependencies.
+5. **Add UI Components**:
+   - Place Jinja2 templates in `templates/`.
+   - Add static assets in `static/` if needed.
+6. **Declare Dependencies**:
+   - Add `requirements.txt` if experiment requires additional Python packages.
+7. **Leverage Platform Features**:
+   - Use platform-provided MongoDB wrappers for scoped access.
+   - Use platform utilities to retrieve or create Ray actors.
+   - Follow thin client pattern: keep frontend minimal, delegate logic to actor.
+
+### Common Patterns
+
+- **Thin Client**: Router only handles HTTP and delegates logic to Ray actor.
+- **Scoped DB Access**: Use experiment slug to scope collections and enforce data isolation.
+- **Async Operations**: Use async/await for database and actor calls.
+- **Manifest-Driven Config**: Use manifest to declare auth, data scope, and indexes.
+- **Error Handling**: Gracefully handle actor retrieval failures and database errors.
+- **UI Integration**: Use Jinja2 templates with minimal logic; frontend JS calls backend APIs.
+
+---
+
+## 6. Integration Examples
+
+### Example 1: Forwarding Requests to Ray Actor
+
+```python
+# experiments/click_tracker/__init__.py
+from fastapi import APIRouter, Depends
+from platform_utils import get_ray_actor, get_scoped_db
+
+bp = APIRouter()
+
+@bp.post("/click")
+async def record_click(db=Depends(get_scoped_db)):
+    actor = await get_ray_actor("click_tracker")
+    await actor.record_click.remote()
+    return {"status": "click recorded"}
+```
+
+- The router endpoint calls the Ray actor’s `record_click` method asynchronously.
+- Uses scoped database dependency injected by the platform.
+
+### Example 2: Scoped MongoDB Access in Actor
+
+```python
+# experiments/click_tracker/actor.py
+import ray
+from platform_db import get_scoped_collection
+
+@ray.remote
+class ExperimentActor:
+    def __init__(self):
+        self.collection = get_scoped_collection("click_events")
+
+    async def record_click(self):
+        await self.collection.insert_one({"timestamp": datetime.utcnow()})
+
+    async def get_click_count(self):
+        return await self.collection.count_documents({})
+```
+
+- The actor uses a scoped collection for data isolation.
+- Async methods perform database operations.
+
+### Example 3: UI Template Integration
+
+```html
+<!-- experiments/click_tracker/templates/index.html -->
+<html>
+<head>
+  <script src="/static/js/app.js"></script>
+</head>
+<body>
+  <h1>Click Tracker</h1>
+  <div id="count">0</div>
+  <button id="click-btn" data-url="/click_tracker/click">Click me!</button>
+</body>
+</html>
+```
+
+- The template includes a button with a `data-url` attribute pointing to the backend API.
+- Client-side JS uses this URL to send click events asynchronously.
+
+---
+
+# Summary
+
+The **mdb-gnome** platform’s experiment system is a modular, thin client architecture leveraging Ray actors for backend logic and scoped MongoDB collections for data isolation. Each experiment is self-contained with manifest-driven configuration, a FastAPI router forwarding requests to Ray actors, and minimal UI components. This design enables scalable, maintainable, and secure experimentation within the platform.

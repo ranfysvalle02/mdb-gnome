@@ -57,6 +57,45 @@
         .manage-exports-btn { background: #17a2b8; color: white; padding: 10px 20px; border: none; border-radius: 5px; font-weight: 600; cursor: pointer; margin-bottom: 20px; }
         .manage-exports-btn:hover { background: #138496; }
         .loading { text-align: center; padding: 20px; color: #666; }
+        
+        /* Upload Experiment Styles */
+        .upload-section { background: #fff; border: 2px dashed #007bff; border-radius: 8px; padding: 30px; margin-bottom: 30px; text-align: center; }
+        .upload-section:hover { border-color: #0056b3; background: #f8f9fa; }
+        .upload-form { max-width: 600px; margin: 0 auto; }
+        .form-group { margin-bottom: 20px; text-align: left; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 600; color: #333; }
+        .form-group input[type="text"], .form-group input[type="file"] { 
+            width: 100%; 
+            padding: 10px; 
+            border: 1px solid #ddd; 
+            border-radius: 5px; 
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        .form-group input[type="file"] { padding: 8px; cursor: pointer; }
+        .form-group small { display: block; margin-top: 5px; color: #666; font-size: 0.9em; }
+        .upload-btn { 
+            background: #28a745; 
+            color: white; 
+            padding: 12px 30px; 
+            border: none; 
+            border-radius: 5px; 
+            font-weight: 600; 
+            font-size: 16px;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 10px;
+        }
+        .upload-btn:hover { background: #218838; }
+        .upload-btn:disabled { background: #6c757d; cursor: not-allowed; }
+        .upload-progress { margin-top: 20px; display: none; }
+        .upload-progress.active { display: block; }
+        .progress-bar { width: 100%; height: 25px; background: #e9ecef; border-radius: 13px; overflow: hidden; margin-top: 10px; }
+        .progress-fill { height: 100%; background: #28a745; transition: width 0.3s ease; width: 0%; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: 600; }
+        .upload-status { margin-top: 15px; padding: 12px; border-radius: 5px; font-weight: 500; }
+        .upload-status.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .upload-status.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .upload-status.info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
     </style>
     <script>
         async function downloadExport(url, slugId) {
@@ -247,7 +286,149 @@
             if (event.target.id === 'exportsModal') {
                 closeExportsModal();
             }
+            if (event.target.id === 'uploadModal') {
+                closeUploadModal();
+            }
         }
+        
+        // Upload Experiment functionality
+        let uploadModal = null;
+        
+        function openUploadModal() {
+            if (!uploadModal) {
+                uploadModal = document.getElementById('uploadModal');
+            }
+            // Reset form
+            document.getElementById('uploadForm').reset();
+            document.getElementById('uploadStatus').innerHTML = '';
+            document.getElementById('uploadStatus').className = 'upload-status';
+            document.getElementById('uploadProgress').classList.remove('active');
+            document.getElementById('uploadProgressFill').style.width = '0%';
+            document.getElementById('uploadProgressFill').textContent = '';
+            document.getElementById('uploadBtn').disabled = false;
+            
+            uploadModal.style.display = 'block';
+        }
+        
+        function closeUploadModal() {
+            if (uploadModal) {
+                uploadModal.style.display = 'none';
+            }
+        }
+        
+        async function handleUpload(event) {
+            event.preventDefault();
+            
+            const slugId = document.getElementById('slugId').value.trim();
+            const fileInput = document.getElementById('zipFile');
+            const file = fileInput.files[0];
+            
+            if (!slugId) {
+                showUploadStatus('error', 'Please enter an experiment slug ID.');
+                return;
+            }
+            
+            if (!file) {
+                showUploadStatus('error', 'Please select a ZIP file to upload.');
+                return;
+            }
+            
+            // Validate file type
+            if (!file.name.endsWith('.zip') && file.type !== 'application/zip' && file.type !== 'application/x-zip-compressed') {
+                showUploadStatus('error', 'Please select a valid ZIP file.');
+                return;
+            }
+            
+            const uploadBtn = document.getElementById('uploadBtn');
+            const originalText = uploadBtn.textContent;
+            uploadBtn.disabled = true;
+            uploadBtn.textContent = '⏳ Uploading...';
+            
+            const progressDiv = document.getElementById('uploadProgress');
+            const progressFill = document.getElementById('uploadProgressFill');
+            progressDiv.classList.add('active');
+            
+            try {
+                // Create FormData
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                // Get the upload URL
+                const baseUrl = window.location.origin;
+                const uploadUrl = `${baseUrl}/admin/api/upload-experiment/${encodeURIComponent(slugId)}`;
+                
+                // Simulate progress (since we can't track actual upload progress easily)
+                let progress = 0;
+                const progressInterval = setInterval(() => {
+                    progress += 10;
+                    if (progress > 90) progress = 90;
+                    progressFill.style.width = progress + '%';
+                    progressFill.textContent = progress + '%';
+                }, 300);
+                
+                // Upload the file
+                const response = await fetch(uploadUrl, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                clearInterval(progressInterval);
+                progressFill.style.width = '100%';
+                progressFill.textContent = '100%';
+                
+                const data = await response.json();
+                
+                if (response.ok && data.status === 'success') {
+                    showUploadStatus('success', `✅ Experiment "${slugId}" uploaded successfully! ${data.message || ''}`);
+                    
+                    // Clear form after successful upload
+                    setTimeout(() => {
+                        document.getElementById('uploadForm').reset();
+                        setTimeout(() => {
+                            closeUploadModal();
+                            // Reload the page to show the new experiment
+                            window.location.reload();
+                        }, 1500);
+                    }, 2000);
+                } else {
+                    const errorMsg = data.message || data.detail || 'Upload failed';
+                    showUploadStatus('error', `❌ Upload failed: ${errorMsg}`);
+                    uploadBtn.disabled = false;
+                    uploadBtn.textContent = originalText;
+                    progressDiv.classList.remove('active');
+                }
+            } catch (error) {
+                clearInterval(progressInterval);
+                progressFill.style.width = '0%';
+                progressFill.textContent = '';
+                progressDiv.classList.remove('active');
+                
+                console.error('Upload error:', error);
+                showUploadStatus('error', `❌ Upload error: ${error.message || 'Network error. Please check your connection and try again.'}`);
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = originalText;
+            }
+        }
+        
+        function showUploadStatus(type, message) {
+            const statusDiv = document.getElementById('uploadStatus');
+            statusDiv.className = `upload-status ${type}`;
+            statusDiv.textContent = message;
+        }
+        
+        // File input change handler to show selected file
+        document.addEventListener('DOMContentLoaded', function() {
+            const fileInput = document.getElementById('zipFile');
+            if (fileInput) {
+                fileInput.addEventListener('change', function(e) {
+                    const file = e.target.files[0];
+                    if (file) {
+                        const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+                        showUploadStatus('info', `📦 Selected: ${file.name} (${fileSizeMB} MB)`);
+                    }
+                });
+            }
+        });
     </script>
 </head>
 <body>
@@ -260,6 +441,7 @@
     <h1>Admin Dashboard</h1>
     
     <button class="manage-exports-btn" onclick="openExportsModal()">📦 Manage Exports</button>
+    <button class="manage-exports-btn" onclick="openUploadModal()" style="margin-left: 10px; background: #28a745;">⬆️ Upload Experiment</button>
     
     {% if message %}
       <div class="flash-success">{{ message }}</div>
@@ -313,6 +495,63 @@
             </div>
             <div id="exportsList">
                 <div class="loading">Loading exports...</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Upload Experiment Modal -->
+    <div id="uploadModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>⬆️ Upload Experiment</h2>
+                <span class="close" onclick="closeUploadModal()">&times;</span>
+            </div>
+            <div class="upload-section">
+                <p style="margin-bottom: 25px; color: #666; font-size: 1.1em;">
+                    Upload a new experiment as a ZIP file. The platform will extract and configure it automatically.
+                </p>
+                <form id="uploadForm" class="upload-form" onsubmit="handleUpload(event)">
+                    <div class="form-group">
+                        <label for="slugId">Experiment Slug ID *</label>
+                        <input 
+                            type="text" 
+                            id="slugId" 
+                            name="slugId" 
+                            placeholder="e.g., data_imaging, click_tracker" 
+                            required 
+                            pattern="[a-z0-9_-]+"
+                            title="Use lowercase letters, numbers, underscores, and hyphens only"
+                        />
+                        <small>The unique identifier for this experiment (lowercase, alphanumeric, underscores/hyphens only)</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="zipFile">Experiment ZIP File *</label>
+                        <input 
+                            type="file" 
+                            id="zipFile" 
+                            name="file" 
+                            accept=".zip,application/zip,application/x-zip-compressed" 
+                            required
+                        />
+                        <small>
+                            <strong>Required files in ZIP:</strong> manifest.json, actor.py, __init__.py<br>
+                            <strong>Optional:</strong> requirements.txt, static/, templates/, etc.
+                        </small>
+                    </div>
+                    
+                    <div id="uploadStatus" class="upload-status"></div>
+                    
+                    <div id="uploadProgress" class="upload-progress">
+                        <div class="progress-bar">
+                            <div id="uploadProgressFill" class="progress-fill"></div>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" id="uploadBtn" class="upload-btn">
+                        ⬆️ Upload Experiment
+                    </button>
+                </form>
             </div>
         </div>
     </div>

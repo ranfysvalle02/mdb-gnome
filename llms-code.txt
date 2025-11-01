@@ -1,0 +1,223 @@
+# mdb-gnome Codebase Overview
+
+## Project Overview
+
+mdb-gnome (g.nome) is a FastAPI and MongoDB-based platform designed to consolidate multiple Python projects into a single maintainable ecosystem. It provides centralized administration, automatic data sandboxing per experiment, role-based access control (RBAC), and seamless experiment management. The platform integrates distributed computing via Ray actors, cloud storage with Backblaze B2, and advanced MongoDB features including Atlas Search indexes. It supports modular experiments with isolated runtimes, dynamic authorization providers, and a rich web UI for administration and experiment interaction.
+
+---
+
+## Key Components
+
+### Application Logic
+
+- **authz_factory.py**  
+  Asynchronous factory for pluggable authorization providers. Currently fully supports Casbin with placeholders for Oso and OpenFGA. Handles dynamic imports, configuration validation, and instantiates the appropriate authorization adapter.
+
+- **ray_decorator.py**  
+  Defines a decorator to convert classes into Ray actors with fallback to an in-memory database if MongoDB is unavailable. Supports flexible distributed actor creation with optional runtime environment and lifecycle management.
+
+- **core_deps.py**  
+  Shared dependencies and utilities for FastAPI, including Jinja2 template loading, JWT-based user authentication, authorization checks, and security helpers. Manages imports to avoid circular dependencies.
+
+- **background_tasks.py**  
+  Manages concurrent asyncio background tasks with a `BackgroundTaskManager` class to limit task accumulation, provide error handling, and track running tasks. Includes global instance and helper functions for safe background coroutine execution.
+
+- **async_mongo_wrapper.py**  
+  Async wrapper around Motor's MongoDB client scoped per experiment. Automatically injects experiment_id filters and manages MongoDB indexes including Atlas Search indexes. Provides robust task management and error handling.
+
+- **llms-code-gen.py**  
+  Script that analyzes the codebase directory, reads files, and uses Azure OpenAI to generate concise file summaries and categorize them. Synthesizes a high-level project overview report.
+
+- **database.py**  
+  Async functions to initialize MongoDB indexes and seed or synchronize admin users and their authorization policies. Ensures default admin presence and proper role-based access control setup.
+
+- **authz_provider.py**  
+  Defines a pluggable authorization interface and a Casbin-based adapter implementation for async authorization checks and policy management.
+
+- **index_management.py**  
+  Async functions to manage MongoDB Atlas and regular indexes, including creation, updating, validation, and detailed logging with error handling.
+
+- **experiment_db.py**  
+  MongoDB-style async database abstraction for experiments. Provides a `Collection` class wrapping scoped collections with familiar Motor/pymongo-like methods (`find_one`, `insert_one`, `update_many`, etc.) with automatic experiment scoping.
+
+- **main.py**  
+  Main entry point for the FastAPI web app. Handles imports, configuration, utility functions (e.g., parsing Python package requirements), and integrates MongoDB, Backblaze B2, and Ray. Sets up core dependencies, middleware, background tasks, and export helpers.
+
+- **experiment_routes.py**  
+  Async functions to reload and register active experiments in FastAPI. Manages experiment configurations, static file mounting, runtime environment setup, and database index management.
+
+- **middleware.py**  
+  FastAPI middleware classes for experiment scoping, proxy header detection and URL adjustment, and intelligent HTTPS enforcement behind proxies.
+
+- **lifespan.py**  
+  Manages FastAPI app lifespan events (startup/shutdown). Initializes templates, connects to MongoDB, sets up Backblaze B2 and Ray integrations, and configures authorization providers.
+
+- **experiments/data_imaging/__init__.py**  
+  FastAPI router forwarding HTTP requests to a Ray actor managing data imaging workflows. Supports rendering pages, generating data, running analysis, and clearing data.
+
+- **experiments/data_imaging/engine.py**  
+  Functions to generate synthetic workout time-series data, analyze and classify workout features, normalize and visualize metrics as RGB arrays, and asynchronously call OpenAI API for AI-generated workout summaries.
+
+- **experiments/data_imaging/actor.py**  
+  Ray remote actor managing experiment database operations, template rendering, and vector search index initialization in an isolated worker process. Supports lazy loading of heavy dependencies and post-initialization setup.
+
+- **experiments/hello_ray/__init__.py**  
+  FastAPI router integrating with a Ray actor to serve a greeting web page, handling template rendering and actor communication with error handling and logging.
+
+- **experiments/hello_ray/actor.py**  
+  Minimal Ray actor class `ExperimentActor` designed for distributed execution. Includes MongoDB connection and logging initialization, with a simple greeting method.
+
+- **experiments/stats_dashboard/__init__.py**  
+  FastAPI router for the Stats Dashboard experiment. Provides an endpoint interacting with a Ray actor to aggregate and display experiment data via HTML templates. Includes dependency injection and robust error handling.
+
+- **experiments/stats_dashboard/actor.py**  
+  Ray actor class providing an abstraction layer for database operations related to experiment statistics. Enables scoped read/write access to MongoDB collections without direct MongoDB knowledge.
+
+- **experiments/click_tracker/__init__.py**  
+  FastAPI router for the Click Tracker experiment. Provides endpoints to display click count UI and record clicks by interacting with a Ray actor managing experiment state.
+
+- **experiments/click_tracker/actor.py**  
+  Ray actor class tracking button click events using an abstracted MongoDB-like interface. Provides async methods to record clicks and retrieve total click count.
+
+- **templates/standalone_main_intelligent.py.jinja2**  
+  Jinja2 template for generating a standalone FastAPI app connecting to MongoDB, managing DB initialization, seeding, index creation, and integrating Ray for experiment-specific functionality.
+
+- **templates/standalone_main.py.jinja2**  
+  Jinja2 template for a standalone FastAPI app launcher with in-memory stubs for user authentication, admin checks, and a simple in-memory database. Enables offline/demo usage without external services.
+
+---
+
+### Configuration
+
+- **config.py**  
+  Defines configuration constants, environment-based settings, optional dependency checks, logging setup, directory paths, database and cloud storage credentials, and feature flags.
+
+- **requirements.txt**  
+  Lists Python package dependencies for the FastAPI project, including web framework, database, authentication, async operations, and data processing libraries.
+
+- **casbin_model.conf**  
+  Role-Based Access Control (RBAC) model configuration for Casbin, specifying request, policy, role, and access control matching rules.
+
+- **anyscale-service.yaml**  
+  Deployment configuration for Anyscale platform. Specifies compute resources, runtime environment, Ray Serve settings for scalable FastAPI app with worker nodes and secret management.
+
+- **docker-compose.yml**  
+  Defines multi-service setup with FastAPI web app, Ray head node for distributed computing, and MongoDB database. Includes build instructions, environment variables, volumes, ports, and health checks.
+
+- **localhost.crt** and **localhost.key**  
+  SSL/TLS certificate and private key files for secure localhost communications.
+
+- **experiments/data_imaging/requirements.txt**  
+  Python dependencies for data imaging experiment modules, including numerical computing, web frameworks, and database interaction.
+
+- **experiments/data_imaging/manifest.json**  
+  Configuration for "Workout Analyzer" experiment: status, authentication, data scope, and managed database indexes including vector search.
+
+- **experiments/hello_ray/manifest.json**  
+  Metadata for "Hello Ray" experiment: name, description, status, authentication, and data scope.
+
+- **experiments/stats_dashboard/manifest.json**  
+  Configuration for "Stats Dashboard" experiment: metadata, status, authentication, data scope, and index management.
+
+- **experiments/click_tracker/requirements.txt**  
+  Specifies `pymongo` dependency for MongoDB management.
+
+- **experiments/click_tracker/manifest.json**  
+  Configuration for "Click Tracker" experiment: metadata, data scope, authentication, and managed vector search index.
+
+---
+
+### Infrastructure
+
+- **Dockerfile**  
+  Multi-stage Docker build for Python 3.10 app. Creates virtual environment with dependencies, sets up lightweight runtime image with non-root user, exposes configurable port, and runs app with Gunicorn and Uvicorn workers.
+
+- **mongo_connection_pool.py**  
+  Thread-safe singleton MongoDB connection pool manager for Ray actors. Enables sharing a single AsyncIOMotorClient instance to efficiently manage DB connections and reduce resource usage.
+
+---
+
+### UI / View
+
+- **templates/index.html**  
+  Dashboard page displaying active experiments with styled UI and JavaScript for secure export downloads. Conditionally shows user authentication links and admin panel access.
+
+- **templates/default_experiment.html**  
+  Fallback experiment page showing metadata, user status, and development guidance. Styled with Tailwind CSS and Jinja2 templating.
+
+- **templates/register.html**  
+  User registration form with email, password, and confirmation fields. Includes error and message display areas, styled for clean layout.
+
+- **templates/login.html**  
+  Styled login page with email and password inputs, conditional success/error messages, and optional registration link.
+
+- **templates/admin/index.html**  
+  Admin dashboard interface with styles and scripts for managing experiments, exporting data, and uploading files. Includes interactive UI elements like modals and buttons.
+
+- **templates/admin/configure.html**  
+  Admin configuration page layout with code editor, file tree navigation, status indicators, and modal dialogs. Uses CSS and external libraries for syntax highlighting and code editing.
+
+- **experiments/data_imaging/templates/index.html**  
+  Styled web page for workout collection gallery with controls to generate, bulk generate, and clear workouts. Dark-themed design with interactive buttons.
+
+- **experiments/data_imaging/templates/detail.html**  
+  Detailed workout view with styled sections for images, JSON data, and channel selectors. Responsive dark-themed design using CSS variables and grid layout.
+
+- **experiments/hello_ray/templates/index.html**  
+  Simple web page displaying a greeting message dynamically inserted via template variable.
+
+- **experiments/stats_dashboard/templates/index.html**  
+  Styled statistics dashboard showing scoped page views and total clicks with conditional user login info.
+
+- **experiments/click_tracker/templates/index.html**  
+  Click tracker UI showing number of clicks and a button to record clicks via API.
+
+- **experiments/click_tracker/static/js/app.js**  
+  JavaScript managing click tracking button. Sends POST requests to record clicks, updates displayed count, disables button during requests, and handles errors.
+
+---
+
+### Utility
+
+- **b2_utils.py**  
+  Utilities for Backblaze B2 cloud storage: generating presigned HTTPS download URLs and asynchronously uploading ZIP files to B2 buckets.
+
+- **export_helpers.py**  
+  Helper functions for exporting experiment packages: parsing requirements, estimating export sizes, managing export ZIP files, calculating checksums, and cleaning up old exports. Supports async operations and integrates with local and B2 storage.
+
+- **utils.py**  
+  Async and sync utility functions for file I/O, directory scanning with caching, secure path resolution to prevent directory traversal, and URL construction considering proxy headers and HTTPS enforcement.
+
+---
+
+## How it Works
+
+The **main.py** file initializes the FastAPI application, loading configuration from **config.py** and setting up core dependencies from **core_deps.py**. It integrates MongoDB via **async_mongo_wrapper.py** and manages database indexes with **index_management.py** and **database.py**. Authorization is pluggable and instantiated via **authz_factory.py**, with Casbin as the default provider implemented in **authz_provider.py**.
+
+Experiments are modular and registered dynamically through **experiment_routes.py**, which mounts static files and sets up Ray actors using the **ray_decorator.py**. Each experiment (e.g., data_imaging, hello_ray, stats_dashboard, click_tracker) has its own FastAPI router and Ray actor implementation, enabling distributed, isolated execution and database scoping.
+
+Background tasks are managed by **background_tasks.py** to prevent overload. Middleware in **middleware.py** handles request scoping and HTTPS enforcement. The app lifecycle is managed by **lifespan.py**, which handles startup and shutdown tasks including connecting to MongoDB, initializing Backblaze B2 via **b2_utils.py**, and setting up Ray.
+
+UI templates under **templates/** and experiment-specific templates provide the web interface, with JavaScript enhancing interactivity (e.g., click tracking). Export functionality is supported by **export_helpers.py** for packaging experiment data and dependencies, optionally uploading to Backblaze B2.
+
+The project supports containerized deployment via **Dockerfile** and **docker-compose.yml**, and can be deployed on Anyscale using **anyscale-service.yaml**.
+
+---
+
+## Developer Notes
+
+- Start by reviewing **main.py** to understand app initialization and integration points.
+- Explore **core_deps.py** for shared FastAPI dependencies like authentication and authorization.
+- Authorization logic is pluggable; see **authz_factory.py** and **authz_provider.py** for details.
+- Experiments are modular and isolated; check **experiment_routes.py** and the `experiments/` subfolders.
+- Ray actors encapsulate experiment logic and database access; see **ray_decorator.py** and experiment actor files.
+- MongoDB access is scoped per experiment via **async_mongo_wrapper.py** and **experiment_db.py**.
+- Background tasks and concurrency are managed by **background_tasks.py**.
+- UI templates and static assets are under **templates/** and **experiments/** folders.
+- Configuration and deployment details are in **config.py**, **Dockerfile**, and **docker-compose.yml**.
+- Use **llms-code-gen.py** as a reference for automated codebase summarization.
+- For cloud storage integration, see **b2_utils.py** and **export_helpers.py**.
+- Pay attention to middleware in **middleware.py** for request handling nuances behind proxies.
+- The project uses Jinja2 templates extensively; **templates/standalone_main.py.jinja2** and **standalone_main_intelligent.py.jinja2** are useful for understanding standalone app generation.
+
+This overview should help you quickly orient yourself within the mdb-gnome codebase and understand its modular architecture, key integrations, and deployment setup. Welcome aboard!
