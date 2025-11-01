@@ -144,7 +144,7 @@
     box-shadow: 0 0 10px rgba(0, 237, 100, 0.3);  
   }  
 
-  /* --- NEW: Channel Selectors --- */
+  /* --- Channel Selectors --- */
   .channel-selectors {
     display: flex;
     flex-wrap: wrap;
@@ -179,10 +179,27 @@
   .channel-selectors .control-btn {
     background-color: var(--atlas-green);
     color: var(--button-text-dark);
-    margin: 0;
+    margin: 0; /* Reset margin for buttons inside this container */
   }
   .channel-selectors .control-btn:hover {
     background-color: #fff;
+  }
+  /* NEW: Style for the revert button */
+  .channel-selectors .btn-revert {
+    background-color: var(--atlas-hover-bg);
+    color: var(--atlas-light-text);
+    border: 1px solid var(--atlas-border);
+    margin-left: -10px; /* Pull it closer to the other buttons */
+  }
+  .channel-selectors .btn-revert:hover {
+    border-color: var(--atlas-green);
+    color: var(--atlas-green);
+    background-color: var(--atlas-hover-bg);
+    box-shadow: 0 0 10px rgba(0, 237, 100, 0.3);
+  }
+  .channel-selectors .control-btn:disabled {
+      background-color: var(--atlas-orange);
+      cursor: wait;
   }
   
   /* --- Main Content Grid --- */  
@@ -690,59 +707,65 @@
   
   <h1>Workout Detail: {{workout_id}}</h1>  
 
-  <form id="channelSelectorForm" method="GET" action="/experiments/data_imaging/workout/{{workout_id}}">
-    <div class="channel-selectors">
-      <div class="selector-group">
-        <label for="r_key" style="color: var(--accent-red);">R Channel:</label>
-        <select name="r_key" id="r_key">
-          {% for metric in all_metrics %}
-          <option value="{{ metric }}" {% if metric == selected_r_key %}selected{% endif %}>
-            {{ metric.replace('_', ' ')|title }}
-          </option>
-          {% endfor %}
-        </select>
-      </div>
-      
-      <div class="selector-group">
-        <label for="g_key" style="color: var(--accent-green-viz);">G Channel:</label>
-        <select name="g_key" id="g_key">
-          {% for metric in all_metrics %}
-          <option value="{{ metric }}" {% if metric == selected_g_key %}selected{% endif %}>
-            {{ metric.replace('_', ' ')|title }}
-          </option>
-          {% endfor %}
-        </select>
-      </div>
-      
-      <div class="selector-group">
-        <label for="b_key" style="color: var(--accent-blue);">B Channel:</label>
-        <select name="b_key" id="b_key">
-          {% for metric in all_metrics %}
-          <option value="{{ metric }}" {% if metric == selected_b_key %}selected{% endif %}>
-            {{ metric.replace('_', ' ')|title }}
-          </option>
-          {% endfor %}
-        </select>
-      </div>
-      
-      <button type="submit" class="control-btn" style="padding: 10px 18px; margin-bottom: 0;">Update View</button>
+  <div class="channel-selectors">
+    <div class="selector-group">
+      <label for="r_key" style="color: var(--accent-red);">R Channel:</label>
+      <select name="r_key" id="r_key">
+        {% for metric in all_metrics %}
+        <option value="{{ metric }}" {% if metric == selected_r_key %}selected{% endif %}>
+          {{ metric.replace('_', ' ')|title }}
+        </option>
+        {% endfor %}
+      </select>
     </div>
-  </form>
+    
+    <div class="selector-group">
+      <label for="g_key" style="color: var(--accent-green-viz);">G Channel:</label>
+      <select name="g_key" id="g_key">
+        {% for metric in all_metrics %}
+        <option value="{{ metric }}" {% if metric == selected_g_key %}selected{% endif %}>
+          {{ metric.replace('_', ' ')|title }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    
+    <div class="selector-group">
+      <label for="b_key" style="color: var(--accent-blue);">B Channel:</label>
+      <select name="b_key" id="b_key">
+        {% for metric in all_metrics %}
+        <option value="{{ metric }}" {% if metric == selected_b_key %}selected{% endif %}>
+          {{ metric.replace('_', ' ')|title }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    
+    <button type="button" id="updateViewBtn" class="control-btn" style="padding: 10px 18px; margin-bottom: 0;">Update View</button>
+    
+    <button type="button" id="revertViewBtn" class="control-btn btn-revert" style="padding: 10px 18px; margin-bottom: 0; display: none;">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+        <path fill-rule="evenodd" d="M8 3a5 5 0 1 1-4.546 2.914.5.5 0 0 0-.908-.417A6 6 0 1 0 8 2v1z"/>
+        <path d="M8 4.466V.534a.25.25 0 0 0-.41-.192L5.23 2.308a.25.25 0 0 0 0 .384l2.36 1.966A.25.25 0 0 0 8 4.466z"/>
+      </svg>
+      Revert
+    </button>
+  </div>
   
   <div class="content-grid">  
     <div class="image-box">  
       <h2>Workout Fingerprint</h2>  
       <img src="data:image/png;base64,{{b64_combined}}"  
            alt="Generated feature image from JSON data"  
-           class="main-img">  
+           class="main-img" id="main-fingerprint-img">  
       <p class="caption">  
         This 8x8 "visual fingerprint" is flattened into a 192-element vector for search.
         (Using canonical keys: HR, Calories, Speed)
       </p>  
       <p class="caption">  
-        <b>R:</b> {{ selected_r_key.replace('_', ' ')|title }} ({{norm_bounds_r}})<br>  
-        <b>G:</b> {{ selected_g_key.replace('_', ' ')|title }} ({{norm_bounds_g}})<br>  
-        <b>B:</b> {{ selected_b_key.replace('_', ' ')|title }} ({{norm_bounds_b}})  
+        <span id="caption-r">{{ label_r_full_html|safe }}</span><br>  
+        <span id="caption-g">{{ label_g_full_html|safe }}</span><br>  
+        <span id="caption-b">{{ label_b_full_html|safe }}</span>  
       </p>  
     </div>  
   
@@ -932,23 +955,23 @@
           <p>The three 8x8 grayscale grids (channels) generated in Step 2 are combined pixel-by-pixel:</p>  
           <div class="step-3-substeps">  
             <div class="substep">  
-              <img src="data:image/png;base64,{{b64_r}}" alt="Red channel" class="channel-img">  
-              <p><strong>{{ selected_r_key.replace('_', ' ')|title }}</strong> data provides the pixel values for the <strong class="red-label">Red channel</strong>.</p>  
+              <img src="data:image/png;base64,{{b64_r}}" alt="Red channel" class="channel-img" id="img-channel-r">  
+              <p id="text-channel-r">{{ label_r_short_html|safe }}</p>  
             </div>  
             <div class="substep">  
-              <img src="data:image/png;base64,{{b64_g}}" alt="Green channel" class="channel-img">  
-              <p><strong>{{ selected_g_key.replace('_', ' ')|title }}</strong> data provides the pixel values for the <strong class="green-label">Green channel</strong>.</p>  
+              <img src="data:image/png;base64,{{b64_g}}" alt="Green channel" class="channel-img" id="img-channel-g">  
+              <p id="text-channel-g">{{ label_g_short_html|safe }}</p>  
             </div>  
             <div class="substep">  
-              <img src="data:image/png;base64,{{b64_b}}" alt="Blue channel" class="channel-img">  
-              <p><strong>{{ selected_b_key.replace('_', ' ')|title }}</strong> data provides the pixel values for the <strong class="blue-label">Blue channel</strong>.</p>  
+              <img src="data:image/png;base64,{{b64_b}}" alt="Blue channel" class="channel-img" id="img-channel-b">  
+              <p id="text-channel-b">{{ label_b_short_html|safe }}</p>  
             </div>  
           </div>  
           <div class="pipeline-arrow">&dArr;</div>  
           <p style="text-align: center; margin-top: 15px;">These channels are layered together...</p>  
           <div style="text-align: center; margin-top: 10px;">  
             <img src="data:image/png;base64,{{b64_combined}}" alt="Combined RGB"  
-                 class="channel-img" style="width: 160px; height: 160px; border-width: 2px;">  
+                 class="channel-img" style="width: 160px; height: 160px; border-width: 2px;" id="main-fingerprint-img-small">  
             <p>...to create the final <strong>8x8 RGB color "fingerprint"</strong> image.</p>  
           </div>  
         </div>  
@@ -1166,84 +1189,185 @@ document.addEventListener("DOMContentLoaded", function() {
     }  
   }  
   
-  // --- Analyze Form Logic ---  
+  // --- Analyze Form Logic (Unchanged) ---  
   const analyzeForm = document.getElementById("analyzeForm");  
   const analyzeBtn = document.getElementById("analyzeBtn");  
   if (analyzeForm && analyzeBtn) {  
     analyzeForm.addEventListener("submit", function(e) {  
-      e.preventDefault(); // Stop default form submission
-      
-      // Disable button and show loading state
+      e.preventDefault(); 
       analyzeBtn.disabled = true;  
       analyzeBtn.innerHTML = 'Analyzing...';  
       analyzeBtn.style.backgroundColor = 'var(--accent-orange)';  
       analyzeBtn.style.color = 'var(--button-text-dark)';  
       
-      // Get the current URL's query string (to preserve r_key, g_key, b_key)
+      // Get the *current* URL's query string, which might have custom r/g/b keys
       const queryString = window.location.search;
   
       fetch(analyzeForm.action, {  
         method: 'POST',  
-        headers: {  
-          'Content-Type': 'application/json'  
-        }  
+        headers: { 'Content-Type': 'application/json' }  
       })
       .then(response => {  
-        // The server sends a 303 redirect. We need to follow it.
         if (response.status === 303 || response.redirected) {
-          // Manually redirect, preserving the original query string
+          // Manually redirect, *preserving* the query string
           let redirectUrl = response.headers.get('Location');
-          if (redirectUrl.indexOf('?') === -1) { // Check if redirect URL already has params
-             redirectUrl += queryString; // Add our params if not
+          if (redirectUrl.indexOf('?') === -1) { 
+             redirectUrl += queryString; // Add our params
           }
           window.location.href = redirectUrl;  
         } else if (response.ok) {  
-          // Fallback if not a redirect (e.g., if code changed)
           window.location.reload();  
         } else {
-          // Handle errors
           response.json().then(data => {  
             alert(`LLM Analysis Failed: ${data.detail}`);  
           }).catch(() => {  
             alert('LLM Analysis Failed. Check console and server logs.');  
           });
-          // Restore button on failure
           analyzeBtn.disabled = false;
-          analyzeBtn.innerHTML = `... (omitted for brevity) ... Generate AI Summary`;
+          analyzeBtn.innerHTML = `... (omitted) ... Generate AI Summary`;
           analyzeBtn.style.backgroundColor = 'var(--accent-blue)';
           analyzeBtn.style.color = 'white';
         }
       })
       .catch(error => {
-        // Handle network errors
         console.error('Network Error:', error);  
         alert('Network error during analysis.');  
-        // Restore button
         analyzeBtn.disabled = false;
-        analyzeBtn.innerHTML = `... (omitted for brevity) ... Generate AI Summary`;
+        analyzeBtn.innerHTML = `... (omitted) ... Generate AI Summary`;
         analyzeBtn.style.backgroundColor = 'var(--accent-blue)';
         analyzeBtn.style.color = 'white';
       });  
     });  
   }
   
-  // --- NEW: Auto-submit channel selector form on change ---
+  // ---
+  // --- NEW: Client-side View Updater
+  // ---
+  const updateBtn = document.getElementById('updateViewBtn');
+  const revertBtn = document.getElementById('revertViewBtn');
+  
+  // Selectors
   const rSelect = document.getElementById('r_key');
   const gSelect = document.getElementById('g_key');
   const bSelect = document.getElementById('b_key');
-  const form = document.getElementById('channelSelectorForm');
 
-  function handleSubmit() {
-    form.submit();
+  // 1. Get all the elements we need to update
+  const elementsToUpdate = {
+    imgMain: document.getElementById('main-fingerprint-img'),
+    imgMainSmall: document.getElementById('main-fingerprint-img-small'),
+    capR: document.getElementById('caption-r'),
+    capG: document.getElementById('caption-g'),
+    capB: document.getElementById('caption-b'),
+    imgR: document.getElementById('img-channel-r'),
+    imgG: document.getElementById('img-channel-g'),
+    imgB: document.getElementById('img-channel-b'),
+    textR: document.getElementById('text-channel-r'),
+    textG: document.getElementById('text-channel-g'),
+    textB: document.getElementById('text-channel-b')
+  };
+
+  // 2. On page load, save the *initial* (revert) state to sessionStorage
+  // This state is whatever the server rendered (canonical or from query params)
+  const storagePrefix = 'revert_state_{{workout_id}}_';
+  sessionStorage.setItem(storagePrefix + 'imgMainSrc', elementsToUpdate.imgMain.src);
+  sessionStorage.setItem(storagePrefix + 'imgMainSmallSrc', elementsToUpdate.imgMainSmall.src);
+  sessionStorage.setItem(storagePrefix + 'capRHTML', elementsToUpdate.capR.innerHTML);
+  sessionStorage.setItem(storagePrefix + 'capGHTML', elementsToUpdate.capG.innerHTML);
+  sessionStorage.setItem(storagePrefix + 'capBHTML', elementsToUpdate.capB.innerHTML);
+  sessionStorage.setItem(storagePrefix + 'imgRSrc', elementsToUpdate.imgR.src);
+  sessionStorage.setItem(storagePrefix + 'imgGSrc', elementsToUpdate.imgG.src);
+  sessionStorage.setItem(storagePrefix + 'imgBSrc', elementsToUpdate.imgB.src);
+  sessionStorage.setItem(storagePrefix + 'textRHTML', elementsToUpdate.textR.innerHTML);
+  sessionStorage.setItem(storagePrefix + 'textGHTML', elementsToUpdate.textG.innerHTML);
+  sessionStorage.setItem(storagePrefix + 'textBHTML', elementsToUpdate.textB.innerHTML);
+  sessionStorage.setItem(storagePrefix + 'selectR', rSelect.value);
+  sessionStorage.setItem(storagePrefix + 'selectG', gSelect.value);
+  sessionStorage.setItem(storagePrefix + 'selectB', bSelect.value);
+
+  // 3. Helper function to apply new data to the DOM
+  function applyVizData(data) {
+    elementsToUpdate.imgMain.src = 'data:image/png;base64,' + data.b64_combined;
+    elementsToUpdate.imgMainSmall.src = 'data:image/png;base64,' + data.b64_combined;
+    elementsToUpdate.capR.innerHTML = data.label_r_full_html;
+    elementsToUpdate.capG.innerHTML = data.label_g_full_html;
+    elementsToUpdate.capB.innerHTML = data.label_b_full_html;
+    elementsToUpdate.imgR.src = 'data:image/png;base64,' + data.b64_r;
+    elementsToUpdate.imgG.src = 'data:image/png;base64,' + data.b64_g;
+    elementsToUpdate.imgB.src = 'data:image/png;base64,' + data.b64_b;
+    elementsToUpdate.textR.innerHTML = data.label_r_short_html;
+    elementsToUpdate.textG.innerHTML = data.label_g_short_html;
+    elementsToUpdate.textB.innerHTML = data.label_b_short_html;
+  }
+  
+  // 4. Add click listener for the "Update View" button
+  if (updateBtn) {
+    updateBtn.addEventListener('click', function() {
+      // Show loading state
+      updateBtn.disabled = true;
+      updateBtn.textContent = 'Updating...';
+
+      const rVal = rSelect.value;
+      const gVal = gSelect.value;
+      const bVal = bSelect.value;
+      
+      // Construct the API URL
+      const apiUrl = `/experiments/data_imaging/workout/{{workout_id}}/viz?r_key=${rVal}&g_key=${gVal}&b_key=${bVal}`;
+
+      fetch(apiUrl)
+        .then(response => {
+          if (!response.ok) {
+            throw new Error(`Network response was not ok: ${response.statusText}`);
+          }
+          return response.json();
+        })
+        .then(data => {
+          // Apply the new data
+          applyVizData(data);
+          
+          // Show the revert button
+          if (revertBtn) {
+            revertBtn.style.display = 'inline-flex';
+          }
+          
+          // Restore button state
+          updateBtn.disabled = false;
+          updateBtn.textContent = 'Update View';
+        })
+        .catch(error => {
+          console.error('Error fetching viz data:', error);
+          alert('Failed to update visualization. Check console.');
+          // Restore button state
+          updateBtn.disabled = false;
+          updateBtn.textContent = 'Update View';
+        });
+    });
   }
 
-  // We don't want to auto-submit on every single change,
-  // so we'll rely on the "Update View" button.
-  // If you *did* want auto-submit, you'd uncomment these:
-  // if(rSelect) rSelect.addEventListener('change', handleSubmit);
-  // if(gSelect) gSelect.addEventListener('change', handleSubmit);
-  // if(bSelect) bSelect.addEventListener('change', handleSubmit);
-
+  // 5. Add click listener for the "Revert" button
+  if (revertBtn) {
+    revertBtn.addEventListener('click', function() {
+      // Apply the saved data from sessionStorage
+      elementsToUpdate.imgMain.src = sessionStorage.getItem(storagePrefix + 'imgMainSrc');
+      elementsToUpdate.imgMainSmall.src = sessionStorage.getItem(storagePrefix + 'imgMainSmallSrc');
+      elementsToUpdate.capR.innerHTML = sessionStorage.getItem(storagePrefix + 'capRHTML');
+      elementsToUpdate.capG.innerHTML = sessionStorage.getItem(storagePrefix + 'capGHTML');
+      elementsToUpdate.capB.innerHTML = sessionStorage.getItem(storagePrefix + 'capBHTML');
+      elementsToUpdate.imgR.src = sessionStorage.getItem(storagePrefix + 'imgRSrc');
+      elementsToUpdate.imgG.src = sessionStorage.getItem(storagePrefix + 'imgGSrc');
+      elementsToUpdate.imgB.src = sessionStorage.getItem(storagePrefix + 'imgBSrc');
+      elementsToUpdate.textR.innerHTML = sessionStorage.getItem(storagePrefix + 'textRHTML');
+      elementsToUpdate.textG.innerHTML = sessionStorage.getItem(storagePrefix + 'textGHTML');
+      elementsToUpdate.textB.innerHTML = sessionStorage.getItem(storagePrefix + 'textBHTML');
+      
+      // Reset the select dropdowns
+      rSelect.value = sessionStorage.getItem(storagePrefix + 'selectR');
+      gSelect.value = sessionStorage.getItem(storagePrefix + 'selectG');
+      bSelect.value = sessionStorage.getItem(storagePrefix + 'selectB');
+      
+      // Hide the revert button
+      revertBtn.style.display = 'none';
+    });
+  }
 });  
 </script>  
   

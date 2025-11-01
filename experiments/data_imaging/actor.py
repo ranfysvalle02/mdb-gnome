@@ -30,21 +30,14 @@ class ExperimentActor:
         
         logger.info(f"[{write_scope}-Actor] Initializing...")
 
-        # --- THIS IS THE FIX ---
-        # All heavy dependencies are imported *here*, inside the
-        # isolated Ray worker process, not at the top level.
         try:
-            # Import local engine module
             from . import engine
             self.engine = engine
-            
-            # Import other heavy dependencies
             from fastapi.templating import Jinja2Templates
             import motor.motor_asyncio
             from async_mongo_wrapper import ScopedMongoWrapper 
             from pymongo.errors import OperationFailure, DuplicateKeyError
 
-            # Store modules/classes on the instance for later use
             self.Jinja2Templates = Jinja2Templates
             self.motor_asyncio = motor.motor_asyncio
             self.ScopedMongoWrapper = ScopedMongoWrapper
@@ -55,28 +48,23 @@ class ExperimentActor:
 
         except ImportError as e:
             logger.critical(f"[{write_scope}-Actor] ❌ CRITICAL: Failed to lazy-load dependencies: {e}")
-            # Set all attributes to None so _check_ready fails cleanly
             self.engine = None
             self.Jinja2Templates = None
             self.motor_asyncio = None
             self.ScopedMongoWrapper = None
             self.OperationFailure = None
             self.DuplicateKeyError = None
-        # ---------------------
         
-        # Actor-local Template Engine
         if not templates_dir.is_dir():
             logger.error(f"[{write_scope}-Actor] Template dir not found at {templates_dir}")
             self.templates = None
-        elif self.Jinja2Templates: # Check if import succeeded
+        elif self.Jinja2Templates:
             self.templates = self.Jinja2Templates(directory=str(templates_dir))
             logger.info(f"[{write_scope}-Actor] Templates loaded from {templates_dir}")
         else:
-            self.templates = None # Import failed, set to None
+            self.templates = None
 
-        # Actor-local, persistent DB Client and Scoped Wrapper
         try:
-            # Check if DB-related imports succeeded
             if not self.motor_asyncio or not self.ScopedMongoWrapper:
                 raise ImportError("DB modules (motor, ScopedMongoWrapper) not loaded.")
                 
@@ -95,30 +83,83 @@ class ExperimentActor:
             self.db = None
 
     def __del__(self):
-        """Close the client when the actor is destroyed."""
         if hasattr(self, 'client') and self.client:
             self.client.close()
             logger.info(f"[{self.write_scope}-Actor] DB connection closed.")
 
     def _check_ready(self):
-        """Internal helper to check if init succeeded."""
         if not self.db or not self.templates or not self.engine or not self.OperationFailure:
-            # Log the specific failure
-            if not self.engine:
-                logger.error(f"[{self.write_scope}-Actor] Call failed: 'engine' module not loaded.")
-            if not self.templates:
-                logger.error(f"[{self.write_scope}-Actor] Call failed: 'templates' not loaded.")
-            if not self.db:
-                logger.error(f"[{self.write_scope}-Actor] Call failed: 'db' connection not loaded.")
-            if not self.OperationFailure:
-                 logger.error(f"[{self.write_scope}-Actor] Call failed: 'pymongo.errors' not loaded.")
+            logger.error(f"[{self.write_scope}-Actor] Call failed: Actor not initialized correctly.")
             raise RuntimeError("Actor is not initialized correctly. Check logs for import errors.")
+
+    # ---
+    # --- NEW: Refactored helper for visualization data
+    # ---
+    async def _generate_viz_data(self, doc: dict, r_key: str, g_key: str, b_key: str) -> dict:
+        """
+        Generates all B64 images and labels for the selected keys.
+        Returns a JSON-serializable dictionary.
+        """
+        self._check_ready()
+        
+        # Generate the 2D arrays based on selected keys
+        arrays = self.engine.generate_workout_viz_arrays(
+            doc, 
+            size=8,
+            r_key=r_key,
+            g_key=g_key,
+            b_key=b_key
+        )
+        
+        # Encode all the images
+        b64_combined = self.engine.encode_png_b64(arrays["rgb_combined"], (256,256))
+        b64_r = self.engine.encode_png_b64(arrays["channel_r_2d"], (128,128), tint_color=(255,0,0))
+        b64_g = self.engine.encode_png_b64(arrays["channel_g_2d"], (128,128), tint_color=(0,255,0))
+        b64_b = self.engine.encode_png_b64(arrays["channel_b_2d"], (128,128), tint_color=(0,0,255))
+
+        # Helper to format labels
+        def format_label(key_char: str, key: str) -> str:
+            title = key.replace('_', ' ').title()
+            bounds = self.engine.NORM_BOUNDS.get(key, ['?','?'])
+            return f"<b>{key_char.upper()}:</b> {title} ({bounds[0]}-{bounds[1]})"
+            
+        def format_short_label(key: str, color_class: str, channel_name: str) -> str:
+            title = key.replace('_', ' ').title()
+            return f"<strong>{title}</strong> data provides the pixel values for the <strong class=\"{color_class}\">{channel_name} channel</strong>."
+
+        return {
+            "b64_combined": b64_combined,
+            "b64_r": b64_r,
+            "b64_g": b64_g,
+            "b64_b": b64_b,
+            "label_r_full_html": format_label("r", r_key),
+            "label_g_full_html": format_label("g", g_key),
+            "label_b_full_html": format_label("b", b_key),
+            "label_r_short_html": format_short_label(r_key, "red-label", "Red"),
+            "label_g_short_html": format_short_label(g_key, "green-label", "Green"),
+            "label_b_short_html": format_short_label(b_key, "blue-label", "Blue"),
+        }
+
+    # ---
+    # --- NEW: Endpoint for client-side JS (returns JSON)
+    # ---
+    async def get_dynamic_viz_data(self, workout_id: int, r_key: str, g_key: str, b_key: str) -> dict:
+        """
+        Public method to be called by the new /viz API endpoint.
+        """
+        self._check_ready()
+        doc_id = f"workout_rad_{workout_id}"
+        doc = await self.db.workouts.find_one({"_id": doc_id})
+        if not doc:
+            raise RuntimeError(f"Doc {doc_id} not found")
+        
+        # Call the refactored helper
+        return await self._generate_viz_data(doc, r_key, g_key, b_key)
 
     # --- Method 1: Replaces show_gallery ---
     async def render_gallery_page(self, request_context: dict) -> str:
         self._check_ready()
         try:
-            # We use the scoped wrapper (self.db) which prefixes 'workouts' automatically
             docs = await self.db.workouts.find({}).sort("_id", 1).to_list(200)
         except Exception as e:
             logger.error(f"[{self.write_scope}-Actor] DB error in render_gallery_page: {e}")
@@ -126,13 +167,8 @@ class ExperimentActor:
 
         snippet_list = []
         for d in docs:
-            # Use default keys for the gallery view
             arrays = self.engine.generate_workout_viz_arrays(
-                d, 
-                size=8, 
-                r_key="heart_rate", 
-                g_key="calories_per_min", 
-                b_key="speed_kph"
+                d, size=8, r_key="heart_rate", g_key="calories_per_min", b_key="speed_kph"
             )
             b64_img = self.engine.encode_png_b64(arrays["rgb_combined"], (128, 128))
             suffix = d["_id"].split("_")[-1]
@@ -154,7 +190,7 @@ class ExperimentActor:
         )
         return response.body.decode("utf-8")
 
-    # --- Method 2: Replaces show_detail ---
+    # --- Method 2: Replaces show_detail (UPDATED) ---
     async def render_detail_page(
         self, 
         workout_id: int, 
@@ -170,31 +206,28 @@ class ExperimentActor:
         if not doc:
             return f"<h1>404 - Not Found</h1><p>No workout with id {doc_id}</p>"
 
+        # ---
+        # --- REFACTORED: Call the helper method ---
+        # ---
+        # This renders the page using the keys from the URL query params
+        viz_data = await self._generate_viz_data(doc, r_key, g_key, b_key)
+        # --- END REFACTOR ---
+
         # Check if AI summary is pending
         summary_is_pending = (
             self.engine.PLACEHOLDER_CLASSIFICATION in doc.get("ai_classification", "") or
             self.engine.PLACEHOLDER_SUMMARY in doc.get("ai_summary", "")
         )
 
-        # kNN pipeline (Atlas vectorSearch)
+        # kNN pipeline
         neighbors_html = "<p>Vector data is missing, so no neighbors found.</p>"
         neighbors = []
         if isinstance(doc.get("workout_vector"), list) and len(doc["workout_vector"]) == 192:
             pipeline = [
-                {
-                    "$vectorSearch": {
-                        "index": self.vector_index_name, # Use the prefixed index name
-                        "path": "workout_vector",
-                        "queryVector": doc["workout_vector"],
-                        "filter": {"_id": {"$ne": doc_id}},
-                        "numCandidates": 50,
-                        "limit": 3,
-                    }
-                },
+                {"$vectorSearch": {"index": self.vector_index_name, "path": "workout_vector", "queryVector": doc["workout_vector"], "filter": {"_id": {"$ne": doc_id}}, "numCandidates": 50, "limit": 3}},
                 {"$project": {"_id": 1, "score": {"$meta": "vectorSearchScore"}, "workout_type": 1, "session_tag": 1, "ai_classification": 1}}
             ]
             try:
-                # self.db.workouts.aggregate will use the scoped collection
                 cur = self.db.workouts.aggregate(pipeline)
                 neighbors = await cur.to_list(None)
                 if neighbors:
@@ -227,38 +260,16 @@ class ExperimentActor:
         else:
             ephemeral_prompt = doc.get("llm_analysis_prompt", self.engine.PLACEHOLDER_PROMPT)
 
-        # Pass dynamic keys to image/chart generation
-        arrays = self.engine.generate_workout_viz_arrays(
-            doc, 
-            size=8,
-            r_key=r_key,
-            g_key=g_key,
-            b_key=b_key
-        )
-        
-        # Combined image
-        b64_combined = self.engine.encode_png_b64(arrays["rgb_combined"], (256,256))
-        
-        # ---
-        # --- FIX #1: The charts are in the 'raw_data' nested dict
-        # ---         And the keys are 'heart_rate', not 'raw_hr'
-        # ---
+        # Generate static charts (these never change)
+        # Note: We still need to call generate_workout_viz_arrays to get the raw data
+        chart_arrays = self.engine.generate_workout_viz_arrays(doc, 8, "heart_rate", "calories_per_min", "speed_kph")
         all_charts = {
-            "heart_rate": self.engine.generate_chart_base64(arrays["raw_data"].get("heart_rate", []), "#FF6868"),
-            "calories_per_min": self.engine.generate_chart_base64(arrays["raw_data"].get("calories_per_min", []), "#00ED64"),
-            "speed_kph": self.engine.generate_chart_base64(arrays["raw_data"].get("speed_kph", []), "#58AEFF"),
-            "power": self.engine.generate_chart_base64(arrays["raw_data"].get("power", []), "#FFA554"),
-            "cadence": self.engine.generate_chart_base64(arrays["raw_data"].get("cadence", []), "#C792EA")
+            "heart_rate": self.engine.generate_chart_base64(chart_arrays["raw_data"].get("heart_rate", []), "#FF6868"),
+            "calories_per_min": self.engine.generate_chart_base64(chart_arrays["raw_data"].get("calories_per_min", []), "#00ED64"),
+            "speed_kph": self.engine.generate_chart_base64(chart_arrays["raw_data"].get("speed_kph", []), "#58AEFF"),
+            "power": self.engine.generate_chart_base64(chart_arrays["raw_data"].get("power", []), "#FFA554"),
+            "cadence": self.engine.generate_chart_base64(chart_arrays["raw_data"].get("cadence", []), "#C792EA")
         }
-        
-        # ---
-        # --- FIX #2: The engine returns the correct 2D channels for the selected
-        # ---         keys as 'channel_r_2d', 'channel_g_2d', 'channel_b_2d'.
-        # ---
-        b64_r = self.engine.encode_png_b64(arrays["channel_r_2d"], (128,128), tint_color=(255,0,0))
-        b64_g = self.engine.encode_png_b64(arrays["channel_g_2d"], (128,128), tint_color=(0,255,0))
-        b64_b = self.engine.encode_png_b64(arrays["channel_b_2d"], (128,128), tint_color=(0,0,255))
-        # --- END FIXES ---
 
         # Make doc copy safe for JSON
         doc_copy = dict(doc)
@@ -268,7 +279,6 @@ class ExperimentActor:
             doc_copy["workout_vector"] = f"[{short_vec[0]:.2f}... {vec_len - 1} more elements]"
         doc_json = json.dumps(doc_copy, indent=2, default=str)
 
-        # ... (other HTML snippets) ...
         gear_used_html = ""
         if doc.get("gear_used"):
              gear_used_html = "<ul>"
@@ -283,29 +293,7 @@ class ExperimentActor:
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
                        fill="currentColor" viewBox="0 0 16 16"
                        style="vertical-align:-2px;margin-right:5px;">
-                    <path d="M8 15A7 7 0 1 0 8 1a7 7 0 0 0
-                             0 14zm-5.467 4.14C7.02 12.637 7.558
-                             13 8 13c.448 0 .89-.37 1.341-.758.384-.33
-                             1.164-.98 1.956-1.579.529-.396.958-.87
-                             1.253-1.412.308-.567.452-1.217.452-1.921
-                             0-.663-.122-1.284-.367-1.841-.247-.568
-                             -.62-1.11-1.12-1.583-.497-.47-1.127-.866
-                             -1.87-1.171C9.697 5.093 8.87 4.75
-                             8 4.75c-.878 0-1.688.354-2.457.784
-                             -.735.41-1.353.94-1.854 1.572
-                             -.497.625-.873 1.342-1.124
-                             2.144-.25.808-.372 1.68
-                             -.372 2.616 0 .666.126
-                             1.298.375 1.879.248.568.618
-                             1.107 1.582.497.47
-                             1.127.865 1.87 1.171z"/>
-                    <path fill-rule="evenodd"
-                          d="M8 15A7 7 0 1 0
-                             8 1a7 7 0 0
-                             0 0 14zM8
-                             2A6 6 0
-                             1 1 8 14 6
-                             6 0 0 1 8 2z"/>
+                    <path d="M8 15A7 7... (omitted) ... 8 2z"/>
                   </svg>
                   Generate AI Summary
                 </button>
@@ -314,13 +302,11 @@ class ExperimentActor:
         else:
             ai_analysis_button_html = '<span style="color: var(--atlas-green); font-weight:600;">Analysis Complete</span>'
 
-        # Pass dynamic keys and bounds to the template
+        # Build the final context for the template
         context = {
             "request": request_context,
             "workout_id": workout_id,
-            "b64_combined": b64_combined,
-            "all_charts": all_charts, # (now a dict)
-            "b64_r": b64_r, "b64_g": b64_g, "b64_b": b64_b,
+            "all_charts": all_charts,
             "json_data_pretty": doc_json,
             "ai_neighbors_html": neighbors_html,
             "ai_classification": ai_class,
@@ -328,17 +314,23 @@ class ExperimentActor:
             "llm_analysis_prompt": ephemeral_prompt,
             "ai_analysis_button_html": ai_analysis_button_html,
             
+            # --- Pass all data from the viz helper ---
+            "b64_combined": viz_data["b64_combined"],
+            "b64_r": viz_data["b64_r"],
+            "b64_g": viz_data["b64_g"],
+            "b64_b": viz_data["b64_b"],
+            "label_r_full_html": viz_data["label_r_full_html"],
+            "label_g_full_html": viz_data["label_g_full_html"],
+            "label_b_full_html": viz_data["label_b_full_html"],
+            "label_r_short_html": viz_data["label_r_short_html"],
+            "label_g_short_html": viz_data["label_g_short_html"],
+            "label_b_short_html": viz_data["label_b_short_html"],
             # ---
-            # --- FIX #3: Use AVAILABLE_METRICS, not ALL_METRICS
-            # ---
+            
             "all_metrics": self.engine.AVAILABLE_METRICS,
             "selected_r_key": r_key,
             "selected_g_key": g_key,
             "selected_b_key": b_key,
-            "norm_bounds_r": f"{self.engine.NORM_BOUNDS.get(r_key, ['?','?'])[0]}-{self.engine.NORM_BOUNDS.get(r_key, ['?','?'])[1]}",
-            "norm_bounds_g": f"{self.engine.NORM_BOUNDS.get(g_key, ['?','?'])[0]}-{self.engine.NORM_BOUNDS.get(g_key, ['?','?'])[1]}",
-            "norm_bounds_b": f"{self.engine.NORM_BOUNDS.get(b_key, ['?','?'])[0]}-{self.engine.NORM_BOUNDS.get(b_key, ['?','?'])[1]}",
-            # --- END FIX ---
             
             "workout_type": doc.get("workout_type", "N/A"),
             "session_tag": doc.get("session_tag", "N/A"),
@@ -389,7 +381,6 @@ class ExperimentActor:
     async def generate_one(self) -> int:
         self._check_ready()
 
-        # This pipeline now correctly runs on the *scoped* collection
         pipeline = [
             {"$match": {"_id": {"$regex": "^workout_rad_\\d+$"}}},
             {"$project": {"num": {"$toInt": {"$arrayElemAt": [{"$split": ["$_id","_"]}, -1]}}}},
@@ -401,19 +392,14 @@ class ExperimentActor:
 
         for attempt in range(5):
             doc = self.engine.create_synthetic_apple_watch_data(new_suffix)
-            # Use default keys for vector generation
             feature_vec = self.engine.get_feature_vector(
-                doc,
-                r_key="heart_rate",
-                g_key="calories_per_min",
-                b_key="speed_kph"
+                doc, r_key="heart_rate", g_key="calories_per_min", b_key="speed_kph"
             )
             doc["workout_vector"] = feature_vec.tolist()
             try:
-                # This insert now correctly uses the scoped DB wrapper
                 await self.db.workouts.insert_one(doc)
                 logger.info(f"[{self.write_scope}-Actor] Inserted new doc {doc['_id']}")
-                return new_suffix # Return the successful ID
+                return new_suffix
             except self.DuplicateKeyError:
                 logger.warning(f"[{self.write_scope}-Actor] Collision on doc {doc['_id']}. Retrying...")
                 new_suffix += 1
