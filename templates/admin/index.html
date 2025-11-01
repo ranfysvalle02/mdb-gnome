@@ -45,7 +45,8 @@
                 <div class="exp-meta">
                     <strong>Slug:</strong> <code>{{ exp.slug }}</code><br>
                     <strong>Auth:</strong> {{ "Required" if exp.auth_required else "Public" }}<br>
-                    <strong>Data Scope:</strong> <code>{{ exp.data_scope | join(', ') }}</code>
+                    <strong>Data Scope:</strong> <code>{{ exp.data_scope | join(', ') }}</code><br>
+                    <strong>Export Count:</strong> <span style="font-weight: 600; color: #007bff;">{{ exp.export_count | default(0) }}</span>
                 </div>
                 <hr>
                 <a href="{{ request.url_for('configure_experiment_get', slug_id=exp.slug) }}" class="action-btn">Configure</a>

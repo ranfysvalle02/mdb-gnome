@@ -221,6 +221,35 @@ def _generate_presigned_download_url(s3_client: boto3.client, bucket_name: str, 
   )
 
 
+## Utility: Log Export to Database
+async def _log_export(
+  db: AsyncIOMotorDatabase,
+  slug_id: str,
+  export_type: str,
+  user_email: str,
+  b2_object_key: Optional[str] = None,
+  file_size: Optional[int] = None
+):
+  """
+  Logs an export event to the database for tracking purposes.
+  export_type should be 'standalone' or 'docker'
+  """
+  try:
+    export_log = {
+      "slug_id": slug_id,
+      "export_type": export_type,
+      "user_email": user_email,
+      "b2_object_key": b2_object_key,
+      "file_size": file_size,
+      "created_at": datetime.datetime.utcnow(),
+    }
+    await db.export_logs.insert_one(export_log)
+    logger.debug(f"Logged export: {slug_id} ({export_type}) by {user_email}")
+  except Exception as e:
+    logger.error(f"Failed to log export to database: {e}", exc_info=True)
+    # Don't fail the export if logging fails
+
+
 ## Utility: Parse and Merge Requirements for Ray Isolation
 def _parse_requirements_file(req_path: Path) -> List[str]:
   if not req_path.is_file():
@@ -501,7 +530,10 @@ async def _ensure_db_indices(db: AsyncIOMotorDatabase):
   try:
     await db.users.create_index("email", unique=True, background=True)
     await db.experiments_config.create_index("slug", unique=True, background=True)
-    logger.info(" Core MongoDB indexes ensured (users.email, experiments_config.slug).")
+    # Index for export logs - commonly queried by slug_id
+    await db.export_logs.create_index("slug_id", background=True)
+    await db.export_logs.create_index("created_at", background=True)
+    logger.info(" Core MongoDB indexes ensured (users.email, experiments_config.slug, export_logs.slug_id).")
   except Exception as e:
     logger.error(f" Failed to ensure core MongoDB indexes: {e}", exc_info=True)
 
@@ -1451,17 +1483,61 @@ async def package_standalone_experiment(
       db_collections=collections_data
     )
 
+    user_email = user.get('email', 'Guest') if user else 'Guest'
     file_name = f"{slug_id}_standalone_package_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    file_size = zip_buffer.getbuffer().nbytes
+    
+    # Upload to B2 and return presigned HTTPS URL to avoid mixed content
+    s3: Optional[boto3.client] = getattr(request.app.state, "s3_client", None)
+    if B2_ENABLED and s3:
+      try:
+        timestamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+        b2_object_key = f"exports/{slug_id}/standalone-{timestamp}.zip"
+        
+        logger.info(f"[{slug_id}] Uploading standalone export to B2: {b2_object_key}")
+        zip_buffer.seek(0)  # Reset buffer position before upload
+        s3.upload_fileobj(zip_buffer, B2_BUCKET_NAME, b2_object_key)
+        
+        # Generate presigned HTTPS URL
+        presigned_url = _generate_presigned_download_url(s3, B2_BUCKET_NAME, b2_object_key)
+        
+        # Log export to database
+        await _log_export(
+          db=db,
+          slug_id=slug_id,
+          export_type="standalone",
+          user_email=user_email,
+          b2_object_key=b2_object_key,
+          file_size=file_size
+        )
+        
+        logger.info(f"[{slug_id}] Standalone export uploaded to B2. Redirecting to presigned URL.")
+        # Redirect to presigned HTTPS URL to avoid mixed content
+        return RedirectResponse(url=presigned_url, status_code=status.HTTP_303_SEE_OTHER)
+      except Exception as e:
+        logger.error(f"[{slug_id}] B2 upload failed: {e}. Falling back to direct download.", exc_info=True)
+        # Fall through to direct download if B2 fails
+    
+    # Fallback: Direct download if B2 not enabled or failed
+    logger.warning(f"[{slug_id}] B2 not available. Using direct download (may cause mixed content warnings).")
+    zip_buffer.seek(0)  # Ensure buffer is at beginning for getvalue()
     response = FastAPIResponse(
       content=zip_buffer.getvalue(),
       media_type="application/zip",
       headers={
         "Content-Disposition": f'attachment; filename="{file_name}"',
-        "Content-Length": str(zip_buffer.getbuffer().nbytes),
+        "Content-Length": str(file_size),
       }
     )
-    user_email = user.get('email', 'Guest') if user else 'Guest'
-    logger.info(f"Sending standalone package for '{slug_id}' (User: {user_email}, Auth Required: {auth_required}).")
+    # Log export even if not using B2
+    await _log_export(
+      db=db,
+      slug_id=slug_id,
+      export_type="standalone",
+      user_email=user_email,
+      file_size=file_size
+    )
+    logger.info(f"Sending standalone package for '{slug_id}' (User: {user_email}).")
     return response
   except ValueError as e:
     logger.error(f"Error packaging experiment '{slug_id}': {e}")
@@ -1511,17 +1587,61 @@ async def package_docker_experiment(
       db_collections=collections_data
     )
 
+    user_email = user.get('email', 'Guest') if user else 'Guest'
     file_name = f"{slug_id}_docker_package_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    file_size = zip_buffer.getbuffer().nbytes
+    
+    # Upload to B2 and return presigned HTTPS URL to avoid mixed content
+    s3: Optional[boto3.client] = getattr(request.app.state, "s3_client", None)
+    if B2_ENABLED and s3:
+      try:
+        timestamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+        b2_object_key = f"exports/{slug_id}/docker-{timestamp}.zip"
+        
+        logger.info(f"[{slug_id}] Uploading Docker export to B2: {b2_object_key}")
+        zip_buffer.seek(0)  # Reset buffer position before upload
+        s3.upload_fileobj(zip_buffer, B2_BUCKET_NAME, b2_object_key)
+        
+        # Generate presigned HTTPS URL
+        presigned_url = _generate_presigned_download_url(s3, B2_BUCKET_NAME, b2_object_key)
+        
+        # Log export to database
+        await _log_export(
+          db=db,
+          slug_id=slug_id,
+          export_type="docker",
+          user_email=user_email,
+          b2_object_key=b2_object_key,
+          file_size=file_size
+        )
+        
+        logger.info(f"[{slug_id}] Docker export uploaded to B2. Redirecting to presigned URL.")
+        # Redirect to presigned HTTPS URL to avoid mixed content
+        return RedirectResponse(url=presigned_url, status_code=status.HTTP_303_SEE_OTHER)
+      except Exception as e:
+        logger.error(f"[{slug_id}] B2 upload failed: {e}. Falling back to direct download.", exc_info=True)
+        # Fall through to direct download if B2 fails
+    
+    # Fallback: Direct download if B2 not enabled or failed
+    logger.warning(f"[{slug_id}] B2 not available. Using direct download (may cause mixed content warnings).")
+    zip_buffer.seek(0)  # Ensure buffer is at beginning for getvalue()
     response = FastAPIResponse(
       content=zip_buffer.getvalue(),
       media_type="application/zip",
       headers={
         "Content-Disposition": f'attachment; filename="{file_name}"',
-        "Content-Length": str(zip_buffer.getbuffer().nbytes),
+        "Content-Length": str(file_size),
       }
     )
-    user_email = user.get('email', 'Guest') if user else 'Guest'
-    logger.info(f"Sending Docker package for '{slug_id}' (User: {user_email}, Auth Required: {auth_required}).")
+    # Log export even if not using B2
+    await _log_export(
+      db=db,
+      slug_id=slug_id,
+      export_type="docker",
+      user_email=user_email,
+      file_size=file_size
+    )
+    logger.info(f"Sending Docker package for '{slug_id}' (User: {user_email}).")
     return response
   except ValueError as e:
     logger.error(f"Error packaging Docker export for '{slug_id}': {e}")
@@ -1550,16 +1670,62 @@ async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any
       db_data=config_data,
       db_collections=collections_data
     )
+    
+    user_email = user.get('email', 'Unknown')
     file_name = f"{slug_id}_standalone_package_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    file_size = zip_buffer.getbuffer().nbytes
+    
+    # Upload to B2 and return presigned HTTPS URL to avoid mixed content
+    s3: Optional[boto3.client] = getattr(request.app.state, "s3_client", None)
+    if B2_ENABLED and s3:
+      try:
+        timestamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+        b2_object_key = f"exports/{slug_id}/standalone-{timestamp}.zip"
+        
+        logger.info(f"[{slug_id}] Admin uploading standalone export to B2: {b2_object_key}")
+        zip_buffer.seek(0)  # Reset buffer position before upload
+        s3.upload_fileobj(zip_buffer, B2_BUCKET_NAME, b2_object_key)
+        
+        # Generate presigned HTTPS URL
+        presigned_url = _generate_presigned_download_url(s3, B2_BUCKET_NAME, b2_object_key)
+        
+        # Log export to database
+        await _log_export(
+          db=db,
+          slug_id=slug_id,
+          export_type="standalone",
+          user_email=user_email,
+          b2_object_key=b2_object_key,
+          file_size=file_size
+        )
+        
+        logger.info(f"[{slug_id}] Admin standalone export uploaded to B2. Redirecting to presigned URL.")
+        # Redirect to presigned HTTPS URL to avoid mixed content
+        return RedirectResponse(url=presigned_url, status_code=status.HTTP_303_SEE_OTHER)
+      except Exception as e:
+        logger.error(f"[{slug_id}] B2 upload failed: {e}. Falling back to direct download.", exc_info=True)
+        # Fall through to direct download if B2 fails
+    
+    # Fallback: Direct download if B2 not enabled or failed
+    logger.warning(f"[{slug_id}] B2 not available. Using direct download (may cause mixed content warnings).")
+    zip_buffer.seek(0)  # Ensure buffer is at beginning for getvalue()
     response = FastAPIResponse(
       content=zip_buffer.getvalue(),
       media_type="application/zip",
       headers={
         "Content-Disposition": f'attachment; filename="{file_name}"',
-        "Content-Length": str(zip_buffer.getbuffer().nbytes),
+        "Content-Length": str(file_size),
       }
     )
-    logger.info(f"Sending standalone package for ADMIN '{user.get('email', 'Unknown')}' - '{slug_id}'.")
+    # Log export even if not using B2
+    await _log_export(
+      db=db,
+      slug_id=slug_id,
+      export_type="standalone",
+      user_email=user_email,
+      file_size=file_size
+    )
+    logger.info(f"Sending standalone package for ADMIN '{user_email}' - '{slug_id}'.")
     return response
   except ValueError as e:
     logger.error(f"Error packaging experiment '{slug_id}': {e}")
@@ -1597,6 +1763,19 @@ async def admin_dashboard(request: Request, user: Dict[str, Any] = Depends(requi
     logger.error(error_message, exc_info=True)
     db_configs_list = []
 
+  # Fetch export counts for all configured experiments
+  export_counts: Dict[str, int] = {}
+  try:
+    export_aggregation = await db.export_logs.aggregate([
+      {"$group": {
+        "_id": "$slug_id",
+        "count": {"$sum": 1}
+      }}
+    ]).to_list(length=None)
+    export_counts = {item["_id"]: item["count"] for item in export_aggregation if item.get("_id")}
+  except Exception as e:
+    logger.warning(f"Error fetching export counts: {e}", exc_info=True)
+
   db_slug_map = {cfg.get("slug"): cfg for cfg in db_configs_list if cfg.get("slug")}
   configured_experiments: List[Dict[str, Any]] = []
   discovered_slugs: List[str] = []
@@ -1606,6 +1785,7 @@ async def admin_dashboard(request: Request, user: Dict[str, Any] = Depends(requi
     if slug in db_slug_map:
       cfg = db_slug_map[slug]
       cfg["code_found"] = True
+      cfg["export_count"] = export_counts.get(slug, 0)
       configured_experiments.append(cfg)
     else:
       discovered_slugs.append(slug)
@@ -1613,6 +1793,7 @@ async def admin_dashboard(request: Request, user: Dict[str, Any] = Depends(requi
   for cfg in db_configs_list:
     if cfg.get("slug") not in code_slugs:
       cfg["code_found"] = False
+      cfg["export_count"] = export_counts.get(cfg.get("slug", ""), 0)
       orphaned_configs.append(cfg)
 
   configured_experiments.sort(key=lambda x: x.get("slug", ""))
