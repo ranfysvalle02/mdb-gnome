@@ -1411,7 +1411,16 @@ async def package_standalone_experiment(
     if not user:
       # If auth is required and no user is logged in, redirect to login
       current_path = quote(request.url.path)
-      login_url = request.url_for("login_get", next=current_path)
+      # Ensure HTTPS redirect - check X-Forwarded-Proto for proxy scenarios (like Render.com)
+      scheme = request.headers.get("X-Forwarded-Proto", request.url.scheme)
+      if scheme not in ("https", "http"):
+        scheme = "https"  # Default to HTTPS for security
+      host = request.headers.get("X-Forwarded-Host", request.url.hostname)
+      if not host:
+        host = request.url.hostname
+      # Don't include port for standard HTTPS/HTTP
+      login_path = request.url_for("login_get").path
+      login_url = f"{scheme}://{host}{login_path}?next={current_path}"
       response = RedirectResponse(url=login_url, status_code=status.HTTP_302_FOUND)
       return response
 
