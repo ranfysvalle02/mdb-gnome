@@ -205,3 +205,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Temporary export files (local storage, auto-cleaned after 24h)
+temp_exports/

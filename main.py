@@ -176,6 +176,11 @@ logger = logging.getLogger("modular_labs.main")
 BASE_DIR = Path(__file__).resolve().parent
 EXPERIMENTS_DIR = BASE_DIR / "experiments"
 TEMPLATES_DIR = BASE_DIR / "templates"
+EXPORTS_TEMP_DIR = BASE_DIR / "temp_exports"  # Temporary local storage for exports
+
+# Ensure exports temp directory exists
+EXPORTS_TEMP_DIR.mkdir(exist_ok=True, mode=0o755)
+logger.info(f"Exports temp directory: {EXPORTS_TEMP_DIR}")
 
 ENABLE_REGISTRATION = os.getenv("ENABLE_REGISTRATION", "true").lower() in {"true", "1", "yes"}
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017/")
@@ -246,13 +251,53 @@ def _generate_presigned_download_url(b2_bucket, file_name: str, duration_seconds
     raise
 
 
+## Utility: Save Export Locally
+def _save_export_locally(zip_buffer: io.BytesIO, filename: str) -> Path:
+  """
+  Saves export ZIP to local temp directory.
+  Returns the file path for serving.
+  """
+  export_file = EXPORTS_TEMP_DIR / filename
+  try:
+    zip_buffer.seek(0)
+    with export_file.open('wb') as f:
+      f.write(zip_buffer.getvalue())
+    logger.debug(f"Saved export to local temp: {export_file}")
+    return export_file
+  except Exception as e:
+    logger.error(f"Failed to save export locally: {e}", exc_info=True)
+    raise
+
+## Utility: Cleanup Old Exports
+async def _cleanup_old_exports(max_age_hours: int = 24):
+  """
+  Removes export files older than max_age_hours from temp directory.
+  Runs asynchronously in background.
+  """
+  try:
+    cutoff_time = datetime.datetime.now().timestamp() - (max_age_hours * 3600)
+    deleted_count = 0
+    for export_file in EXPORTS_TEMP_DIR.glob("*.zip"):
+      try:
+        if export_file.stat().st_mtime < cutoff_time:
+          export_file.unlink()
+          deleted_count += 1
+          logger.debug(f"Cleaned up old export: {export_file.name}")
+      except Exception as e:
+        logger.warning(f"Failed to delete old export {export_file.name}: {e}")
+    
+    if deleted_count > 0:
+      logger.info(f"Cleaned up {deleted_count} old export file(s)")
+  except Exception as e:
+    logger.error(f"Error during export cleanup: {e}", exc_info=True)
+
 ## Utility: Log Export to Database
 async def _log_export(
   db: AsyncIOMotorDatabase,
   slug_id: str,
   export_type: str,
   user_email: str,
-  b2_object_key: Optional[str] = None,
+  local_file_path: Optional[str] = None,
   file_size: Optional[int] = None
 ):
   """
@@ -264,7 +309,7 @@ async def _log_export(
       "slug_id": slug_id,
       "export_type": export_type,
       "user_email": user_email,
-      "b2_object_key": b2_object_key,
+      "local_file_path": local_file_path,
       "file_size": file_size,
       "created_at": datetime.datetime.utcnow(),
     }
@@ -1533,81 +1578,35 @@ async def package_standalone_experiment(
     file_name = f"{slug_id}_standalone_package_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     file_size = zip_buffer.getbuffer().nbytes
     
-    # Upload to B2 and return presigned HTTPS URL to avoid mixed content
-    b2_bucket = getattr(request.app.state, "b2_bucket", None)
-    if B2_ENABLED and b2_bucket:
-      try:
-        timestamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-        b2_object_key = f"exports/{slug_id}/standalone-{timestamp}.zip"
-        
-        logger.info(f"[{slug_id}] Uploading standalone export to B2: {b2_object_key}")
-        zip_buffer.seek(0)  # Reset buffer position before upload
-        zip_bytes = zip_buffer.getvalue()
-        
-        # Upload using B2 SDK (native client always uses HTTPS)
-        b2_bucket_instance = getattr(request.app.state, "b2_bucket", None)
-        if not b2_bucket_instance:
-          raise ValueError("B2 bucket not available")
-        b2_bucket_instance.upload_bytes(zip_bytes, b2_object_key)
-        
-        # Generate presigned HTTPS URL (B2 SDK always returns HTTPS)
-        presigned_url = _generate_presigned_download_url(b2_bucket_instance, b2_object_key)
-        
-        # Double-check URL is HTTPS (defensive programming)
-        if not presigned_url.startswith('https://'):
-          logger.error(f"CRITICAL: Presigned URL is not HTTPS! URL: {presigned_url[:100]}...")
-          # Force HTTPS as last resort
-          if presigned_url.startswith('http://'):
-            presigned_url = presigned_url.replace('http://', 'https://', 1)
-          else:
-            # If it's not even HTTP, something is very wrong - fallback to direct download
-            raise ValueError(f"Invalid presigned URL scheme: {presigned_url[:50]}")
-        
-        logger.debug(f"Generated presigned HTTPS URL for export: {presigned_url[:100]}...")
-        
-        # Log export to database
-        await _log_export(
-          db=db,
-          slug_id=slug_id,
-          export_type="standalone",
-          user_email=user_email,
-          b2_object_key=b2_object_key,
-          file_size=file_size
-        )
-        
-        logger.info(f"[{slug_id}] Standalone export uploaded to B2. Returning download URL.")
-        # Return JSON with download URL instead of redirecting (avoids mixed content redirect issues)
-        return JSONResponse({
-          "status": "success",
-          "download_url": presigned_url,
-          "filename": file_name,
-          "message": "Export ready for download"
-        })
-      except Exception as e:
-        logger.error(f"[{slug_id}] B2 upload failed: {e}. Falling back to direct download.", exc_info=True)
-        # Fall through to direct download if B2 fails
+    # Save to local temp directory (saves B2 storage costs)
+    logger.info(f"[{slug_id}] Saving standalone export locally: {file_name}")
+    export_file_path = _save_export_locally(zip_buffer, file_name)
     
-    # Fallback: Direct download if B2 not enabled or failed
-    logger.warning(f"[{slug_id}] B2 not available. Using direct download (may cause mixed content warnings).")
-    zip_buffer.seek(0)  # Ensure buffer is at beginning for getvalue()
-    response = FastAPIResponse(
-      content=zip_buffer.getvalue(),
-      media_type="application/zip",
-      headers={
-        "Content-Disposition": f'attachment; filename="{file_name}"',
-        "Content-Length": str(file_size),
-      }
-    )
-    # Log export even if not using B2
+    # Trigger cleanup of old exports in background (non-blocking)
+    asyncio.create_task(_cleanup_old_exports(max_age_hours=24))
+    
+    # Generate local download URL (HTTPS via the app)
+    # FastAPI url_for needs filename parameter for path
+    download_url = request.url_for("exports", filename=file_name)
+    
+    # Log export to database
     await _log_export(
       db=db,
       slug_id=slug_id,
       export_type="standalone",
       user_email=user_email,
+      local_file_path=str(export_file_path.relative_to(BASE_DIR)),
       file_size=file_size
     )
-    logger.info(f"Sending standalone package for '{slug_id}' (User: {user_email}).")
-    return response
+    
+    logger.info(f"[{slug_id}] Standalone export saved locally. Returning download URL.")
+    # Return JSON with download URL (served via HTTPS by this app)
+    return JSONResponse({
+      "status": "success",
+      "download_url": str(download_url),
+      "filename": file_name,
+      "message": "Export ready for download"
+    })
   except ValueError as e:
     logger.error(f"Error packaging experiment '{slug_id}': {e}")
     raise HTTPException(status_code=404, detail=str(e))
@@ -1660,88 +1659,80 @@ async def package_docker_experiment(
     file_name = f"{slug_id}_docker_package_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     file_size = zip_buffer.getbuffer().nbytes
     
-    # Upload to B2 and return presigned HTTPS URL to avoid mixed content
-    b2_bucket = getattr(request.app.state, "b2_bucket", None)
-    if B2_ENABLED and b2_bucket:
-      try:
-        timestamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-        b2_object_key = f"exports/{slug_id}/docker-{timestamp}.zip"
-        
-        logger.info(f"[{slug_id}] Uploading Docker export to B2: {b2_object_key}")
-        zip_buffer.seek(0)  # Reset buffer position before upload
-        zip_bytes = zip_buffer.getvalue()
-        
-        # Upload using B2 SDK (native client always uses HTTPS)
-        b2_bucket_instance = getattr(request.app.state, "b2_bucket", None)
-        if b2_bucket_instance:
-          b2_bucket_instance.upload_bytes(zip_bytes, b2_object_key)
-        else:
-          raise ValueError("B2 bucket not available")
-        
-        # Generate presigned HTTPS URL (B2 SDK always returns HTTPS)
-        presigned_url = _generate_presigned_download_url(b2_bucket_instance, b2_object_key)
-        
-        # Double-check URL is HTTPS (defensive programming)
-        if not presigned_url.startswith('https://'):
-          logger.error(f"CRITICAL: Presigned URL is not HTTPS! URL: {presigned_url[:100]}...")
-          # Force HTTPS as last resort
-          if presigned_url.startswith('http://'):
-            presigned_url = presigned_url.replace('http://', 'https://', 1)
-          else:
-            # If it's not even HTTP, something is very wrong - fallback to direct download
-            raise ValueError(f"Invalid presigned URL scheme: {presigned_url[:50]}")
-        
-        logger.debug(f"Generated presigned HTTPS URL for export: {presigned_url[:100]}...")
-        
-        # Log export to database
-        await _log_export(
-          db=db,
-          slug_id=slug_id,
-          export_type="docker",
-          user_email=user_email,
-          b2_object_key=b2_object_key,
-          file_size=file_size
-        )
-        
-        logger.info(f"[{slug_id}] Docker export uploaded to B2. Returning download URL.")
-        # Return JSON with download URL instead of redirecting (avoids mixed content redirect issues)
-        return JSONResponse({
-          "status": "success",
-          "download_url": presigned_url,
-          "filename": file_name,
-          "message": "Export ready for download"
-        })
-      except Exception as e:
-        logger.error(f"[{slug_id}] B2 upload failed: {e}. Falling back to direct download.", exc_info=True)
-        # Fall through to direct download if B2 fails
+    # Save to local temp directory (saves B2 storage costs)
+    logger.info(f"[{slug_id}] Saving Docker export locally: {file_name}")
+    export_file_path = _save_export_locally(zip_buffer, file_name)
     
-    # Fallback: Direct download if B2 not enabled or failed
-    logger.warning(f"[{slug_id}] B2 not available. Using direct download (may cause mixed content warnings).")
-    zip_buffer.seek(0)  # Ensure buffer is at beginning for getvalue()
-    response = FastAPIResponse(
-      content=zip_buffer.getvalue(),
-      media_type="application/zip",
-      headers={
-        "Content-Disposition": f'attachment; filename="{file_name}"',
-        "Content-Length": str(file_size),
-      }
-    )
-    # Log export even if not using B2
+    # Trigger cleanup of old exports in background (non-blocking)
+    asyncio.create_task(_cleanup_old_exports(max_age_hours=24))
+    
+    # Generate local download URL (HTTPS via the app)
+    # FastAPI url_for needs filename parameter for path
+    download_url = request.url_for("exports", filename=file_name)
+    
+    # Log export to database
     await _log_export(
       db=db,
       slug_id=slug_id,
       export_type="docker",
       user_email=user_email,
+      local_file_path=str(export_file_path.relative_to(BASE_DIR)),
       file_size=file_size
     )
-    logger.info(f"Sending Docker package for '{slug_id}' (User: {user_email}).")
-    return response
+    
+    logger.info(f"[{slug_id}] Docker export saved locally. Returning download URL.")
+    # Return JSON with download URL (served via HTTPS by this app)
+    return JSONResponse({
+      "status": "success",
+      "download_url": str(download_url),
+      "filename": file_name,
+      "message": "Export ready for download"
+    })
   except ValueError as e:
     logger.error(f"Error packaging Docker export for '{slug_id}': {e}")
     raise HTTPException(status_code=404, detail=str(e))
   except Exception as e:
     logger.error(f"Unexpected error packaging Docker export for '{slug_id}': {e}", exc_info=True)
     raise HTTPException(500, "Unexpected server error during Docker packaging.")
+
+
+# Export file serving endpoint (with cleanup check)
+@public_api_router.get("/export/{filename:path}", name="exports")
+async def serve_export_file(filename: str, request: Request):
+  """
+  Serves export files from temp directory.
+  Files are automatically cleaned up after 24 hours.
+  """
+  try:
+    # Security: prevent directory traversal
+    safe_filename = Path(filename).name
+    if safe_filename != filename or ".." in filename:
+      raise HTTPException(status_code=400, detail="Invalid filename")
+    
+    export_file = EXPORTS_TEMP_DIR / safe_filename
+    if not export_file.exists() or not export_file.is_file():
+      raise HTTPException(status_code=404, detail="Export file not found or expired")
+    
+    # Check if file is too old (24 hours)
+    file_age_hours = (datetime.datetime.now().timestamp() - export_file.stat().st_mtime) / 3600
+    if file_age_hours > 24:
+      logger.info(f"Export file expired (age: {file_age_hours:.1f}h), deleting: {safe_filename}")
+      export_file.unlink()
+      raise HTTPException(status_code=404, detail="Export file expired")
+    
+    return FileResponse(
+      path=str(export_file),
+      filename=safe_filename,
+      media_type="application/zip",
+      headers={
+        "Content-Disposition": f'attachment; filename="{safe_filename}"',
+      }
+    )
+  except HTTPException:
+    raise
+  except Exception as e:
+    logger.error(f"Error serving export file '{filename}': {e}", exc_info=True)
+    raise HTTPException(status_code=500, detail="Error serving export file")
 
 
 app.include_router(public_api_router)
@@ -1768,82 +1759,35 @@ async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any
     file_name = f"{slug_id}_standalone_package_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     file_size = zip_buffer.getbuffer().nbytes
     
-    # Upload to B2 and return presigned HTTPS URL to avoid mixed content
-    b2_bucket = getattr(request.app.state, "b2_bucket", None)
-    if B2_ENABLED and b2_bucket:
-      try:
-        timestamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-        b2_object_key = f"exports/{slug_id}/standalone-{timestamp}.zip"
-        
-        logger.info(f"[{slug_id}] Admin uploading standalone export to B2: {b2_object_key}")
-        zip_buffer.seek(0)  # Reset buffer position before upload
-        zip_bytes = zip_buffer.getvalue()
-        
-        # Upload using B2 SDK (native client always uses HTTPS)
-        b2_bucket_instance = getattr(request.app.state, "b2_bucket", None)
-        if b2_bucket_instance:
-          b2_bucket_instance.upload_bytes(zip_bytes, b2_object_key)
-        else:
-          raise ValueError("B2 bucket not available")
-        
-        # Generate presigned HTTPS URL (B2 SDK always returns HTTPS)
-        presigned_url = _generate_presigned_download_url(b2_bucket_instance, b2_object_key)
-        
-        # Double-check URL is HTTPS (defensive programming)
-        if not presigned_url.startswith('https://'):
-          logger.error(f"CRITICAL: Presigned URL is not HTTPS! URL: {presigned_url[:100]}...")
-          # Force HTTPS as last resort
-          if presigned_url.startswith('http://'):
-            presigned_url = presigned_url.replace('http://', 'https://', 1)
-          else:
-            # If it's not even HTTP, something is very wrong - fallback to direct download
-            raise ValueError(f"Invalid presigned URL scheme: {presigned_url[:50]}")
-        
-        logger.debug(f"Generated presigned HTTPS URL for export: {presigned_url[:100]}...")
-        
-        # Log export to database
-        await _log_export(
-          db=db,
-          slug_id=slug_id,
-          export_type="standalone",
-          user_email=user_email,
-          b2_object_key=b2_object_key,
-          file_size=file_size
-        )
-        
-        logger.info(f"[{slug_id}] Admin standalone export uploaded to B2. Returning download URL.")
-        # Return JSON with download URL instead of redirecting (avoids mixed content redirect issues)
-        return JSONResponse({
-          "status": "success",
-          "download_url": presigned_url,
-          "filename": file_name,
-          "message": "Export ready for download"
-        })
-      except Exception as e:
-        logger.error(f"[{slug_id}] B2 upload failed: {e}. Falling back to direct download.", exc_info=True)
-        # Fall through to direct download if B2 fails
+    # Save to local temp directory (saves B2 storage costs)
+    logger.info(f"[{slug_id}] Admin saving standalone export locally: {file_name}")
+    export_file_path = _save_export_locally(zip_buffer, file_name)
     
-    # Fallback: Direct download if B2 not enabled or failed
-    logger.warning(f"[{slug_id}] B2 not available. Using direct download (may cause mixed content warnings).")
-    zip_buffer.seek(0)  # Ensure buffer is at beginning for getvalue()
-    response = FastAPIResponse(
-      content=zip_buffer.getvalue(),
-      media_type="application/zip",
-      headers={
-        "Content-Disposition": f'attachment; filename="{file_name}"',
-        "Content-Length": str(file_size),
-      }
-    )
-    # Log export even if not using B2
+    # Trigger cleanup of old exports in background (non-blocking)
+    asyncio.create_task(_cleanup_old_exports(max_age_hours=24))
+    
+    # Generate local download URL (HTTPS via the app)
+    # FastAPI url_for needs filename parameter for path
+    download_url = request.url_for("exports", filename=file_name)
+    
+    # Log export to database
     await _log_export(
       db=db,
       slug_id=slug_id,
       export_type="standalone",
       user_email=user_email,
+      local_file_path=str(export_file_path.relative_to(BASE_DIR)),
       file_size=file_size
     )
-    logger.info(f"Sending standalone package for ADMIN '{user_email}' - '{slug_id}'.")
-    return response
+    
+    logger.info(f"[{slug_id}] Admin standalone export saved locally. Returning download URL.")
+    # Return JSON with download URL (served via HTTPS by this app)
+    return JSONResponse({
+      "status": "success",
+      "download_url": str(download_url),
+      "filename": file_name,
+      "message": "Export ready for download"
+    })
   except ValueError as e:
     logger.error(f"Error packaging experiment '{slug_id}': {e}")
     raise HTTPException(status_code=404, detail=str(e))
