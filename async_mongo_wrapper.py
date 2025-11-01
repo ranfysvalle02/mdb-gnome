@@ -57,6 +57,40 @@ except ImportError:
     GEO2DSPHERE = "2dsphere"
 # --- END FIX ---
 
+# --- TASK MANAGER IMPORT ---
+# Import task manager from main to prevent task accumulation
+try:
+    from main import _task_manager
+    TASK_MANAGER_AVAILABLE = True
+except ImportError:
+    # Fallback if main.py is not available (e.g., during testing)
+    _task_manager = None
+    TASK_MANAGER_AVAILABLE = False
+    logger.debug("Task manager not available. Falling back to raw asyncio.create_task().")
+# --- END TASK MANAGER IMPORT ---
+
+# --- HELPER FUNCTION FOR MANAGED TASK CREATION ---
+def _create_managed_task(coro, task_name: str = None):
+    """
+    Creates a background task using the task manager if available.
+    Falls back to raw asyncio.create_task() if task manager is not available.
+    
+    This prevents task accumulation during high traffic by using the
+    BackgroundTaskManager's max_concurrent_tasks limit.
+    
+    Note: The task manager's create_task() is async and manages tasks internally,
+    so we wrap it in a fire-and-forget task.
+    """
+    if TASK_MANAGER_AVAILABLE and _task_manager:
+        # Use task manager - it manages tasks internally and limits concurrency
+        async def _task_wrapper():
+            await _task_manager.create_task(coro, task_name=task_name)
+        asyncio.create_task(_task_wrapper())
+    else:
+        # Fallback to raw task creation if task manager not available
+        asyncio.create_task(coro)
+# --- END HELPER FUNCTION ---
+
 
 # ##########################################################################
 # ASYNCHRONOUS ATLAS INDEX MANAGER
@@ -806,13 +840,13 @@ class ScopedCollectionWrapper:
         # Note: This is fire-and-forget, doesn't block cursor creation
         if self.auto_index_manager:
             sort = kwargs.get('sort')
-            # Create a task to ensure index (fire and forget)
+            # Create a task to ensure index (fire and forget, managed to prevent accumulation)
             async def _safe_index_task():
                 try:
                     await self.auto_index_manager.ensure_index_for_query(filter=filter, sort=sort)
                 except Exception as e:
                     logger.debug(f"Auto-index creation failed for query (non-critical): {e}")
-            asyncio.create_task(_safe_index_task())
+            _create_managed_task(_safe_index_task(), task_name="auto_index_check")
         
         scoped_filter = self._inject_read_filter(filter)
         return self._collection.find(scoped_filter, *args, **kwargs)
@@ -1063,8 +1097,8 @@ class ScopedMongoWrapper:
             
             # Check cache first (quick check before lock)
             if collection_name not in ScopedMongoWrapper._experiment_id_index_cache:
-                # Fire and forget - task will check lock internally
-                asyncio.create_task(_safe_experiment_id_index_check())
+                # Fire and forget - task will check lock internally (managed to prevent accumulation)
+                _create_managed_task(_safe_experiment_id_index_check(), task_name="experiment_id_index_check")
         
         # Store it in the cache for this instance using the *prefixed_name*
         self._wrapper_cache[prefixed_name] = wrapper
@@ -1147,7 +1181,8 @@ class ScopedMongoWrapper:
                         ScopedMongoWrapper._experiment_id_index_cache.pop(collection_name, None)
             
             if collection_name not in ScopedMongoWrapper._experiment_id_index_cache:
-                asyncio.create_task(_safe_experiment_id_index_check())
+                # Use managed task creation to prevent accumulation
+                _create_managed_task(_safe_experiment_id_index_check(), task_name="experiment_id_index_check")
         
         # Store it in the cache
         self._wrapper_cache[prefixed_name] = wrapper

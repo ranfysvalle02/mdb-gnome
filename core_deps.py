@@ -459,38 +459,58 @@ async def get_cached_experiment_config(
     return await get_experiment_config(request, slug_id, projection)
 
 
+async def _invalidate_experiment_config_cache_async(slug_id: str):
+    """
+    Async helper to invalidate cache entries for an experiment config.
+    
+    Args:
+        slug_id: The experiment slug to invalidate cache for
+    """
+    async with _experiment_config_cache_lock:
+        # Remove all cache entries for this slug_id (including projections)
+        keys_to_remove = [
+            key for key in _experiment_config_app_cache.keys()
+            if key.startswith(f"{slug_id}:") or key == slug_id
+        ]
+        for key in keys_to_remove:
+            _experiment_config_app_cache.pop(key, None)
+        if keys_to_remove:
+            logger.debug(f"Invalidated {len(keys_to_remove)} cache entry(ies) for '{slug_id}'")
+
+
 def invalidate_experiment_config_cache(slug_id: str):
     """
     Invalidate application-level cache for an experiment config.
     
     This should be called when an experiment config is updated to ensure
     subsequent requests get the fresh config.
+    Uses the background task manager to prevent task accumulation.
     
     Args:
         slug_id: The experiment slug to invalidate cache for
     """
-    async def _invalidate():
-        async with _experiment_config_cache_lock:
-            # Remove all cache entries for this slug_id (including projections)
-            keys_to_remove = [
-                key for key in _experiment_config_app_cache.keys()
-                if key.startswith(f"{slug_id}:") or key == slug_id
-            ]
-            for key in keys_to_remove:
-                _experiment_config_app_cache.pop(key, None)
-            if keys_to_remove:
-                logger.debug(f"Invalidated {len(keys_to_remove)} cache entry(ies) for '{slug_id}'")
-    
-    # Schedule async invalidation (fire and forget)
+    # Lazy import to avoid circular dependency issues
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.create_task(_invalidate())
-        else:
-            loop.run_until_complete(_invalidate())
-    except RuntimeError:
-        # No event loop available, cache will expire naturally
-        logger.debug(f"Could not invalidate cache for '{slug_id}' synchronously (no event loop)")
+        from main import _task_manager
+        # Use background task manager (fire and forget)
+        # The task manager's create_task() is async, so wrap it in a task
+        async def _wrapper():
+            await _task_manager.create_task(
+                _invalidate_experiment_config_cache_async(slug_id),
+                task_name=f"invalidate_cache_{slug_id}"
+            )
+        asyncio.create_task(_wrapper())
+    except (ImportError, AttributeError):
+        # Fallback to raw task creation if task manager not available
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(_invalidate_experiment_config_cache_async(slug_id))
+            else:
+                loop.run_until_complete(_invalidate_experiment_config_cache_async(slug_id))
+        except RuntimeError:
+            # No event loop available, cache will expire naturally
+            logger.debug(f"Could not invalidate cache for '{slug_id}' (no event loop or task manager)")
 
 
 # --- Experiment-Scoped DB Dependency ---

@@ -381,8 +381,25 @@ async def _safe_background_task(coro) -> None:
   """
   await _task_manager.create_task(coro, task_name="safe_background_task")
 
+## Utility: Calculate Directory Size (Synchronous)
+def _calculate_dir_size_sync(path: Path) -> int:
+  """
+  Synchronous helper to calculate total size of all files in a directory tree.
+  Used by _estimate_export_size() via thread pool to avoid blocking.
+  """
+  total_size = 0
+  for root, dirs, files in os.walk(path):
+    for file_name in files:
+      file_path = Path(root) / file_name
+      try:
+        if file_path.is_file():
+          total_size += file_path.stat().st_size
+      except Exception:
+        pass
+  return total_size
+
 ## Utility: Estimate Export Size
-def _estimate_export_size(
+async def _estimate_export_size(
   db_data: Dict[str, Any],
   db_collections: Dict[str, List[Dict[str, Any]]],
   source_dir: Path,
@@ -391,6 +408,7 @@ def _estimate_export_size(
   """
   Estimates the size of the export in bytes.
   Used to determine if disk streaming is needed.
+  Offloads directory scanning to thread pool to avoid blocking event loop.
   """
   size = 0
   
@@ -401,17 +419,10 @@ def _estimate_export_size(
   except Exception:
     pass
   
-  # Estimate size of experiment files
+  # Estimate size of experiment files (offloaded to thread pool)
   experiment_path = source_dir / "experiments" / slug_id
   if experiment_path.is_dir():
-    for root, dirs, files in os.walk(experiment_path):
-      for file_name in files:
-        file_path = Path(root) / file_name
-        try:
-          if file_path.is_file():
-            size += file_path.stat().st_size
-        except Exception:
-          pass
+    size += await asyncio.to_thread(_calculate_dir_size_sync, experiment_path)
   
   return size
 
@@ -497,8 +508,8 @@ async def _upload_export_to_b2(
       zip_source.seek(0)
       zip_data = zip_source.getvalue()
     
-    # Upload to B2
-    b2_bucket.upload_bytes(zip_data, b2_filename)
+    # Upload to B2 (offload to thread pool to avoid blocking event loop)
+    await asyncio.to_thread(b2_bucket.upload_bytes, zip_data, b2_filename)
     logger.info(f"Uploaded export to B2: {b2_filename}")
     return b2_filename
   except B2Error as e:
@@ -2020,7 +2031,7 @@ async def _create_standalone_zip(
   templates_dir = source_dir / "templates"
 
   # --- 1. Check if we should use disk streaming ---
-  estimated_size = _estimate_export_size(db_data, db_collections, source_dir, slug_id)
+  estimated_size = await _estimate_export_size(db_data, db_collections, source_dir, slug_id)
   use_disk_streaming = _should_use_disk_streaming(estimated_size, max_size_mb=100)
   
   if use_disk_streaming:
@@ -4027,7 +4038,8 @@ async def upload_experiment_zip(
     b2_bucket_instance = getattr(request.app.state, "b2_bucket", None)
     if not b2_bucket_instance:
       raise ValueError("B2 bucket not available")
-    b2_bucket_instance.upload_bytes(zip_data, b2_object_key)
+    # Offload to thread pool to avoid blocking event loop
+    await asyncio.to_thread(b2_bucket_instance.upload_bytes, zip_data, b2_object_key)
     logger.info(f"[{slug_id}] B2 upload successful. Generating presigned URL...")
     # B2 SDK always returns HTTPS URLs
     b2_final_uri = _generate_presigned_download_url(b2_bucket_instance, b2_object_key)

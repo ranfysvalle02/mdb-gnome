@@ -247,30 +247,49 @@ class ExperimentActor:
     async def render_gallery_page(self, request_context: dict) -> str:
         self._check_ready()
         try:
-            docs = await self.db.workouts.find({}).sort("_id", 1).limit(200).to_list(length=None)
+            # Use projection to only fetch required fields (_id and time_series)
+            # This reduces bandwidth and memory usage since only these fields are needed for image generation
+            docs = await self.db.workouts.find(
+                {}, 
+                {"_id": 1, "time_series": 1}
+            ).sort("_id", 1).limit(200).to_list(length=None)
         except Exception as e:
             logger.error(f"[{self.write_scope}-Actor] DB error in render_gallery_page: {e}")
             docs = []
 
-        snippet_list = []
-        for d in docs:
-            # Gallery always uses the canonical "default" fingerprint
-            arrays = self.engine.generate_workout_viz_arrays(
-                d, size=8, r_key="heart_rate", g_key="calories_per_min", b_key="speed_kph"
-            )
-            b64_img = self.engine.encode_png_b64(arrays["rgb_combined"], (128, 128))
-            suffix = d["_id"].split("_")[-1]
-            snippet_list.append(f"""
-              <div class="collection-item">
-                <a href="./workout/{suffix}">
-                  <img src="data:image/png;base64,{b64_img}" alt="Workout {suffix}">
-                  <p>Workout #{suffix}</p>
-                </a>
-              </div>
-            """)
-
-        if not snippet_list:
+        if not docs:
             snippet_list = ["<p>No workouts present. Click 'Generate' to create some!</p>"]
+        else:
+            # Parallelize image generation for better performance
+            # Process documents in parallel with concurrency limit
+            semaphore = asyncio.Semaphore(10)  # Limit to 10 concurrent image generations
+            
+            def _generate_snippet_sync(doc: Dict[str, Any]) -> str:
+                """Synchronous helper to generate snippet for a single document."""
+                # Gallery always uses the canonical "default" fingerprint
+                arrays = self.engine.generate_workout_viz_arrays(
+                    doc, size=8, r_key="heart_rate", g_key="calories_per_min", b_key="speed_kph"
+                )
+                b64_img = self.engine.encode_png_b64(arrays["rgb_combined"], (128, 128))
+                suffix = doc["_id"].split("_")[-1]
+                return f"""
+                  <div class="collection-item">
+                    <a href="./workout/{suffix}">
+                      <img src="data:image/png;base64,{b64_img}" alt="Workout {suffix}">
+                      <p>Workout #{suffix}</p>
+                    </a>
+                  </div>
+                """
+            
+            async def _generate_snippet_with_limit(doc: Dict[str, Any]) -> str:
+                """Async wrapper that limits concurrency using semaphore."""
+                async with semaphore:
+                    # Offload CPU-bound operations to thread pool
+                    return await asyncio.to_thread(_generate_snippet_sync, doc)
+            
+            # Process all documents in parallel
+            snippet_tasks = [_generate_snippet_with_limit(d) for d in docs]
+            snippet_list = await asyncio.gather(*snippet_tasks)
 
         response = self.templates.TemplateResponse(
             "index.html",
