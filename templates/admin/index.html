@@ -46,13 +46,34 @@
             button.innerHTML = '⏳ Preparing export...';
             
             try {
-                const response = await fetch(url);
+                // Ensure absolute HTTPS URL
+                let fetchUrl = url;
+                if (url.startsWith('/')) {
+                    // Convert relative URL to absolute HTTPS
+                    fetchUrl = window.location.origin + url;
+                    // Force HTTPS
+                    fetchUrl = fetchUrl.replace(/^http:/, 'https:');
+                } else if (url.startsWith('http://')) {
+                    // Force HTTPS if HTTP
+                    fetchUrl = url.replace(/^http:/, 'https:');
+                }
+                
+                const response = await fetch(fetchUrl);
                 const data = await response.json();
                 
                 if (data.status === 'success' && data.download_url) {
+                    // Ensure download URL is absolute HTTPS
+                    let downloadUrl = data.download_url;
+                    if (downloadUrl.startsWith('/')) {
+                        downloadUrl = window.location.origin + downloadUrl;
+                        downloadUrl = downloadUrl.replace(/^http:/, 'https:');
+                    } else if (downloadUrl.startsWith('http://')) {
+                        downloadUrl = downloadUrl.replace(/^http:/, 'https:');
+                    }
+                    
                     // Create a temporary link and trigger download
                     const link = document.createElement('a');
-                    link.href = data.download_url;
+                    link.href = downloadUrl;
                     link.download = data.filename || `${slugId}_export.zip`;
                     link.target = '_blank';
                     document.body.appendChild(link);

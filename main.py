@@ -1587,7 +1587,20 @@ async def package_standalone_experiment(
     
     # Generate local download URL (HTTPS via the app)
     # FastAPI url_for needs filename parameter for path
-    download_url = request.url_for("exports", filename=file_name)
+    # Ensure absolute HTTPS URL (fixes mixed content issues)
+    relative_url = request.url_for("exports", filename=file_name)
+    # Convert to absolute HTTPS URL
+    if relative_url.startswith("/"):
+      # Use the request's scheme and host to build absolute URL
+      scheme = "https" if request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https" else request.url.scheme
+      host = request.headers.get("X-Forwarded-Host") or request.headers.get("Host") or request.url.hostname
+      download_url = f"{scheme}://{host}{relative_url}"
+    else:
+      # Already absolute, but ensure HTTPS
+      download_url = relative_url
+      if download_url.startswith("http://"):
+        download_url = download_url.replace("http://", "https://", 1)
+        logger.warning(f"Forced HTTPS on download URL: {download_url}")
     
     # Log export to database
     await _log_export(
@@ -1668,7 +1681,20 @@ async def package_docker_experiment(
     
     # Generate local download URL (HTTPS via the app)
     # FastAPI url_for needs filename parameter for path
-    download_url = request.url_for("exports", filename=file_name)
+    # Ensure absolute HTTPS URL (fixes mixed content issues)
+    relative_url = request.url_for("exports", filename=file_name)
+    # Convert to absolute HTTPS URL
+    if relative_url.startswith("/"):
+      # Use the request's scheme and host to build absolute URL
+      scheme = "https" if request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https" else request.url.scheme
+      host = request.headers.get("X-Forwarded-Host") or request.headers.get("Host") or request.url.hostname
+      download_url = f"{scheme}://{host}{relative_url}"
+    else:
+      # Already absolute, but ensure HTTPS
+      download_url = relative_url
+      if download_url.startswith("http://"):
+        download_url = download_url.replace("http://", "https://", 1)
+        logger.warning(f"Forced HTTPS on download URL: {download_url}")
     
     # Log export to database
     await _log_export(
@@ -1768,7 +1794,20 @@ async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any
     
     # Generate local download URL (HTTPS via the app)
     # FastAPI url_for needs filename parameter for path
-    download_url = request.url_for("exports", filename=file_name)
+    # Ensure absolute HTTPS URL (fixes mixed content issues)
+    relative_url = request.url_for("exports", filename=file_name)
+    # Convert to absolute HTTPS URL
+    if relative_url.startswith("/"):
+      # Use the request's scheme and host to build absolute URL
+      scheme = "https" if request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https" else request.url.scheme
+      host = request.headers.get("X-Forwarded-Host") or request.headers.get("Host") or request.url.hostname
+      download_url = f"{scheme}://{host}{relative_url}"
+    else:
+      # Already absolute, but ensure HTTPS
+      download_url = relative_url
+      if download_url.startswith("http://"):
+        download_url = download_url.replace("http://", "https://", 1)
+        logger.warning(f"Forced HTTPS on download URL: {download_url}")
     
     # Log export to database
     await _log_export(
