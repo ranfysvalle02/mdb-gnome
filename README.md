@@ -81,35 +81,43 @@ This immediately solves the maintenance and authentication problem. But the real
 ---  
   
 ## Magic #1: The Secret Sauce — Automatic Data Sandboxing  
-  
+
 Here's the biggest pain point of all: how do you let a dozen different apps share a single database safely?  
-  
+
 This is where most people get stuck. They either build a complex, error-prone permissions system, or they give up and just let every app have full access to the entire database—a security nightmare.  
-  
+
 g.nome solves this with `async_mongo_wrapper.py`. This module is an asynchronous "proxy" that sits between your experiment's code and the real database. In FastAPI, you don't use globals; you use Dependency Injection. When your experiment's route needs the database, it simply asks for it:  
-  
+
 ```python  
 # experiments/my-experiment/__init__.py  
 from fastapi import APIRouter, Depends  
 from core_deps import get_scoped_db  
 from async_mongo_wrapper import ScopedMongoWrapper  
-  
+
 bp = APIRouter()  
-  
+
 @bp.get("/")  
 async def my_route(db: ScopedMongoWrapper = Depends(get_scoped_db)):  
     # 'db' is now your sandboxed, async-ready database!  
     my_data = await db.my_collection.find_one({})  
     return {"data": my_data}  
 ```  
-  
-This wrapper does two things automatically:  
-  
-1. **It Tags All Writes**: When my "click-tracker" plugin writes a document, the wrapper silently injects a new field: `{"experiment_id": "click-tracker"}`. The plugin's code is completely "naive"—it doesn't even know this is happening.  
-  
-2. **It Scopes All Reads**: When that same plugin tries to read data (e.g., `await db.clicks.find()`), the wrapper intercepts the query and automatically adds a filter to only find documents matching the scopes defined in its config (by default, just its own `experiment_id`).  
-  
-By default, every experiment lives in its own "virtual" database.  
+
+This wrapper enforces data isolation through a **two-layer scoping system**:  
+
+### Layer 1 (Physical Scoping): Collection Name Prefixing  
+
+All collection access is *first* prefixed with the experiment's slug. When you write `db.clicks` in your "click-tracker" experiment, the wrapper automatically transforms it to `db.click_tracker_clicks` before accessing MongoDB. This provides the primary, physical data separation—each experiment's collections live under their own namespace, preventing any possibility of name collisions or accidental cross-experiment data access.  
+
+**Example**: If your experiment slug is `click_tracker` and your code says `await db.clicks.insert_one({...})`, the document is actually written to the `click_tracker_clicks` collection in MongoDB. Your code stays "naive"—you write `db.clicks` everywhere, and the prefixing happens transparently.  
+
+### Layer 2 (Logical Scoping): experiment_id Field Tagging  
+
+*Then*, all writes to that prefixed collection (e.g., `click_tracker_clicks`) are *also* tagged with an `experiment_id` field. When your "click-tracker" plugin writes a document, the wrapper silently injects: `{"experiment_id": "click_tracker"}`. This secondary layer is what enables secure, cross-experiment data sharing—when one experiment is granted read access to another's collections (via `data_scope` configuration), the wrapper filters reads by `experiment_id` to ensure it only sees documents it's authorized to access.  
+
+**Example**: When you read from `db.clicks`, the wrapper first resolves it to `click_tracker_clicks`, then automatically adds a filter: `{"experiment_id": {"$in": ["click_tracker", ...]}}` (based on your experiment's `data_scope`). You only see documents that match your authorized scopes.  
+
+By default, every experiment lives in its own "virtual" database—both physically (prefixed collection names) and logically (experiment_id-filtered queries).
   
 ---  
   
@@ -433,9 +441,10 @@ async def index(
     error_message = None  
   
     try:  
-        # 1. (Cross-Experiment) Read from "clicks" if "click_tracker" is in data_scope  
+        # 1. (Cross-Experiment) Read from "click_tracker_clicks" if "click_tracker" is in data_scope  
+        # Use get_collection() with the fully prefixed collection name for cross-experiment access  
         # The ScopedMongoWrapper automatically filters to only include docs from allowed scopes  
-        total_clicks = await db.clicks.count_documents({})  
+        total_clicks = await db.get_collection("click_tracker_clicks").count_documents({})  
   
         # 2. (Scoped to "stats_dashboard") Write a view log  
         # The wrapper automatically tags this with experiment_id: "stats_dashboard"  
@@ -663,7 +672,8 @@ class ExperimentActor:
         from pymongo import MongoClient  
         self.client = MongoClient(mongo_uri)  
         self.db = self.client[db_name]  
-        self.collection = self.db.clicks  
+        # Use prefixed collection name to align with prefixing rule  
+        self.collection = self.db[f"{write_scope}_clicks"]  
         self.write_scope = write_scope  
         self.read_scopes = read_scopes  
         logger.info(f"Ray Actor 'ClickTrackerActor' started. Write Scope: {self.write_scope}")  
