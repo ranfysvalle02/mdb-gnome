@@ -1,4 +1,4 @@
-# File: /app/experiments/workout_radiologist/actor.py
+# File: /app/experiments/data_imaging/actor.py
 import logging
 import json
 import pathlib
@@ -25,15 +25,33 @@ class ExperimentActor:
     def __init__(self, mongo_uri: str, db_name: str, write_scope: str, read_scopes: list[str]):
         self.mongo_uri = mongo_uri
         self.db_name = db_name
-        self.write_scope = write_scope # This will be "workout_radiologist"
+        self.write_scope = write_scope # This will be "data_imaging"
         self.read_scopes = read_scopes
         self.vector_index_name = f"{write_scope}_workout_vector_index" # Pre-calculate the prefixed index name
         
         logger.info(f"[{write_scope}-Actor] Initializing...")
 
         try:
-            from . import engine
-            self.engine = engine
+            # Try relative import first (works in local dev)
+            try:
+                from . import engine
+                self.engine = engine
+                logger.debug(f"[{write_scope}-Actor] Loaded engine via relative import")
+            except ImportError:
+                # Fallback to absolute import (works in production Ray environment)
+                import importlib
+                # Try to get the module name dynamically
+                module_path = experiment_dir.name
+                try:
+                    engine_mod = importlib.import_module(f"experiments.{module_path}.engine")
+                    self.engine = engine_mod
+                    logger.debug(f"[{write_scope}-Actor] Loaded engine via absolute import: experiments.{module_path}.engine")
+                except ImportError:
+                    # Last resort: try direct import of engine module
+                    engine_mod = importlib.import_module("engine")
+                    self.engine = engine_mod
+                    logger.debug(f"[{write_scope}-Actor] Loaded engine via direct import")
+            
             from fastapi.templating import Jinja2Templates
             import motor.motor_asyncio
             from async_mongo_wrapper import ScopedMongoWrapper 
@@ -48,7 +66,7 @@ class ExperimentActor:
             logger.info(f"[{write_scope}-Actor] Successfully lazy-loaded heavy dependencies.")
 
         except ImportError as e:
-            logger.critical(f"[{write_scope}-Actor] ❌ CRITICAL: Failed to lazy-load dependencies: {e}")
+            logger.critical(f"[{write_scope}-Actor] ❌ CRITICAL: Failed to lazy-load dependencies: {e}", exc_info=True)
             self.engine = None
             self.Jinja2Templates = None
             self.motor_asyncio = None
