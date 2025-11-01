@@ -325,56 +325,6 @@ async def lifespan(app: FastAPI):
         logger.error(f"CRITICAL: Failed to create Ray actor: {e}", exc_info=True)
         raise RuntimeError(f"Failed to create required Ray actor: {e}") from e
     
-    # Old Ray cleanup code below - keeping for reference but won't execute with current logic
-    if False:
-        try:
-            RAY_CONNECTION_ADDRESS = os.getenv("RAY_CONNECTION_ADDRESS", None)
-            if RAY_CONNECTION_ADDRESS:
-                logger.info(f"Connecting to Ray cluster at '{RAY_CONNECTION_ADDRESS}'...")
-                ray.init(
-                    address=RAY_CONNECTION_ADDRESS,
-                    namespace="modular_labs",
-                    ignore_reinit_error=True,
-                    log_to_driver=False
-                )
-                connect_mode = f"EXTERNAL ({RAY_CONNECTION_ADDRESS})"
-            else:
-                logger.info("Starting local Ray cluster...")
-                ray.init(
-                    namespace="modular_labs",
-                    ignore_reinit_error=True,
-                    log_to_driver=False,
-                    num_cpus=2,
-                    object_store_memory=2_000_000_000
-                )
-                connect_mode = "LOCAL"
-            
-            app.state.ray_is_available = True
-            logger.info(f"Ray connection successful (Mode: {connect_mode}).")
-            
-            # Create Ray actor (optional, direct instance is already created)
-            try:
-                actor_mod_name = f"experiments.{SLUG.replace('-', '_')}.actor"
-                actor_mod = __import__(actor_mod_name, fromlist=["ExperimentActor"])
-                if hasattr(actor_mod, "ExperimentActor"):
-                    actor_cls = getattr(actor_mod, "ExperimentActor")
-                    actor_name = f"{SLUG}-actor"
-                    
-                    actor_handle = actor_cls.options(
-                        name=actor_name,
-                        namespace="modular_labs",
-                        lifetime="detached",
-                        get_if_exists=True,
-                        max_restarts=-1
-                    ).remote(
-                        mongo_uri=MONGO_URI,
-                        db_name=DB_NAME,
-                        write_scope=SLUG,
-                        read_scopes=read_scopes
-                    )
-                    app.state.actor_handle = actor_handle
-                    logger.info(f"Ray Actor '{actor_name}' started (using Ray instead of direct instance).")
-    
     yield
     
     # Shutdown
