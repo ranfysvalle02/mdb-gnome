@@ -1588,7 +1588,7 @@ async def package_standalone_experiment(
     # Generate local download URL (HTTPS via the app)
     # FastAPI url_for needs filename parameter for path
     # Ensure absolute HTTPS URL (fixes mixed content issues)
-    relative_url = request.url_for("exports", filename=file_name)
+    relative_url = str(request.url_for("exports", filename=file_name))  # Convert URL object to string
     # Convert to absolute HTTPS URL
     if relative_url.startswith("/"):
       # Use the request's scheme and host to build absolute URL
@@ -1682,7 +1682,7 @@ async def package_docker_experiment(
     # Generate local download URL (HTTPS via the app)
     # FastAPI url_for needs filename parameter for path
     # Ensure absolute HTTPS URL (fixes mixed content issues)
-    relative_url = request.url_for("exports", filename=file_name)
+    relative_url = str(request.url_for("exports", filename=file_name))  # Convert URL object to string
     # Convert to absolute HTTPS URL
     if relative_url.startswith("/"):
       # Use the request's scheme and host to build absolute URL
@@ -1795,7 +1795,7 @@ async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any
     # Generate local download URL (HTTPS via the app)
     # FastAPI url_for needs filename parameter for path
     # Ensure absolute HTTPS URL (fixes mixed content issues)
-    relative_url = request.url_for("exports", filename=file_name)
+    relative_url = str(request.url_for("exports", filename=file_name))  # Convert URL object to string
     # Convert to absolute HTTPS URL
     if relative_url.startswith("/"):
       # Use the request's scheme and host to build absolute URL
