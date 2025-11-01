@@ -1409,18 +1409,22 @@ async def package_standalone_experiment(
   # 2. Enforce Authentication if required
   if auth_required:
     if not user:
-      # If auth is required and no user is logged in, redirect to login
+      # Smart redirect: Build HTTPS URL from current request, respecting proxy headers
       current_path = quote(request.url.path)
-      # Ensure HTTPS redirect - check X-Forwarded-Proto for proxy scenarios (like Render.com)
-      scheme = request.headers.get("X-Forwarded-Proto", request.url.scheme)
-      if scheme not in ("https", "http"):
-        scheme = "https"  # Default to HTTPS for security
-      host = request.headers.get("X-Forwarded-Host", request.url.hostname)
-      if not host:
-        host = request.url.hostname
-      # Don't include port for standard HTTPS/HTTP
+      # Determine scheme: prefer X-Forwarded-Proto header, fallback to request scheme, force HTTPS in production
+      forwarded_proto = request.headers.get("X-Forwarded-Proto")
+      scheme = forwarded_proto or request.url.scheme
+      # Force HTTPS if proxy says HTTPS or if in production environment
+      if scheme != "https" and (forwarded_proto == "https" or os.getenv("ENVIRONMENT", "production").lower() == "production"):
+        scheme = "https"
+      
+      # Get host from X-Forwarded-Host or Host header or request hostname
+      host = request.headers.get("X-Forwarded-Host") or request.headers.get("Host") or request.url.hostname
+      
+      # Build absolute HTTPS URL using request.url_for() path
       login_path = request.url_for("login_get").path
       login_url = f"{scheme}://{host}{login_path}?next={current_path}"
+      
       response = RedirectResponse(url=login_url, status_code=status.HTTP_302_FOUND)
       return response
 
@@ -1477,8 +1481,15 @@ async def package_docker_experiment(
   # 2. Enforce Authentication if required
   if auth_required:
     if not user:
+      # Use request.base_url which automatically respects X-Forwarded-* headers
       current_path = quote(request.url.path)
-      login_url = request.url_for("login_get", next=current_path)
+      base_url = request.base_url  # FastAPI handles proxy headers automatically
+      login_path = request.url_for("login_get").path
+      # Ensure the base URL uses HTTPS if the original request was HTTPS
+      if base_url.scheme == "http" and request.headers.get("X-Forwarded-Proto") == "https":
+        from starlette.datastructures import URL
+        base_url = URL(scheme="https", hostname=base_url.hostname, port=base_url.port, pathname=base_url.path)
+      login_url = str(base_url).rstrip("/") + login_path + f"?next={current_path}"
       response = RedirectResponse(url=login_url, status_code=status.HTTP_302_FOUND)
       return response
 
