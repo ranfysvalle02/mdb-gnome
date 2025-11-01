@@ -1345,12 +1345,12 @@ def _create_dockerfile_for_experiment(slug_id: str, source_dir: Path, experiment
 
 def _create_intelligent_dockerfile(slug_id: str, source_dir: Path, experiment_path: Path) -> str:
   """
-  Generates a clean Dockerfile WITHOUT Ray dependencies by default.
-  Only includes FastAPI, MongoDB (Motor), and experiment-specific requirements.
+  Generates a clean Dockerfile WITH Ray dependencies (Ray is required).
+  Includes FastAPI, MongoDB (Motor), Ray, and experiment-specific requirements.
   """
   local_reqs_path = experiment_path / "requirements.txt"
   
-  # Base requirements WITHOUT Ray
+  # Base requirements WITH Ray (Ray is a core component and required)
   base_requirements = [
     "fastapi",
     "uvicorn[standard]",
@@ -1358,6 +1358,7 @@ def _create_intelligent_dockerfile(slug_id: str, source_dir: Path, experiment_pa
     "pymongo==4.15.3",
     "python-multipart",
     "jinja2",
+    "ray[default]>=2.9.0",  # Ray is required - matches master requirements pattern
   ]
   
   # Add experiment-specific requirements
@@ -1366,10 +1367,7 @@ def _create_intelligent_dockerfile(slug_id: str, source_dir: Path, experiment_pa
     local_requirements = _parse_requirements_file(local_reqs_path)
     for req in local_requirements:
       pkg_name = _extract_pkgname(req)
-      # Skip Ray if present
-      if "ray" in pkg_name.lower():
-        logger.debug(f"Skipping Ray requirement: {req}")
-        continue
+      # Ray is now in base requirements, so if it's in experiment requirements, use experiment version
       # Replace if exists, otherwise add
       all_requirements = [r for r in all_requirements if _extract_pkgname(r) != pkg_name]
       all_requirements.append(req)
@@ -1981,9 +1979,9 @@ def _create_intelligent_export_zip(
 ) -> io.BytesIO:
   """
   Creates an intelligent export package:
-  - Clean FastAPI application WITHOUT Ray dependencies
+  - Clean FastAPI application WITH Ray dependencies (Ray is required)
   - MongoDB Atlas Local via docker-compose
-  - Optional Ray service (commented out by default)
+  - Ray is a core component and must be available
   - Comprehensive README with scaling instructions
   - Proper index management support
   """
@@ -1994,7 +1992,7 @@ def _create_intelligent_export_zip(
   # --- 1. Generate intelligent standalone main.py (with real MongoDB) ---
   standalone_main_source = _make_intelligent_standalone_main_py(slug_id)
   
-  # --- 2. Generate clean requirements (without Ray) ---
+  # --- 2. Generate requirements WITH Ray (Ray is required) ---
   local_reqs_path = experiment_path / "requirements.txt"
   base_requirements = [
     "fastapi",
@@ -2003,6 +2001,7 @@ def _create_intelligent_export_zip(
     "pymongo==4.15.3",
     "python-multipart",
     "jinja2",
+    "ray[default]>=2.9.0",  # Ray is required - matches master requirements pattern
   ]
   
   all_requirements = base_requirements.copy()
@@ -2010,10 +2009,7 @@ def _create_intelligent_export_zip(
     local_requirements = _parse_requirements_file(local_reqs_path)
     for req in local_requirements:
       pkg_name = _extract_pkgname(req)
-      # Skip Ray dependencies
-      if "ray" in pkg_name.lower():
-        logger.debug(f"Skipping Ray requirement: {req}")
-        continue
+      # Ray is now in base requirements, so if it's in experiment requirements, use experiment version
       # Replace if exists, otherwise add
       all_requirements = [r for r in all_requirements if _extract_pkgname(r) != pkg_name]
       all_requirements.append(req)
