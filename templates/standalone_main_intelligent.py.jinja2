@@ -227,12 +227,34 @@ core_deps.get_scoped_db = get_scoped_db
 sys.modules["core_deps"] = core_deps
 
 # --------------------------------------------------------------------------
-# Optional Ray Support (stub if Ray not available)
+# Optional Ray Support - Make Ray a pass-through by default
 # --------------------------------------------------------------------------
+RAY_AVAILABLE = False
+USE_RAY = os.getenv("USE_RAY", "false").lower() == "true"
+
 try:
-    import ray
-    RAY_AVAILABLE = True
-    logger.info("Ray is available (optional).")
+    if USE_RAY:
+        import ray
+        RAY_AVAILABLE = True
+        logger.info("Ray is available and USE_RAY=true - Ray features enabled.")
+    else:
+        # Ray installed but not using it - create pass-through stub
+        ray = types.ModuleType("ray")
+        
+        def _stub_remote(obj):
+            # Pass-through decorator - returns class unchanged
+            return obj
+        
+        def _stub_get_actor(name, namespace=None):
+            raise ValueError(f"Actor '{name}' not found. Ray is disabled (USE_RAY=false).")
+        
+        ray.remote = _stub_remote
+        ray.get_actor = _stub_get_actor
+        ray.init = lambda *args, **kwargs: None
+        ray.shutdown = lambda *args, **kwargs: None
+        
+        sys.modules["ray"] = ray
+        logger.info("Ray disabled (USE_RAY=false) - using direct actor instances.")
 except ImportError:
     RAY_AVAILABLE = False
     logger.info("Ray not available - using direct MongoDB access.")
@@ -240,24 +262,11 @@ except ImportError:
     ray = types.ModuleType("ray")
     
     def _stub_remote(obj):
-        class FakeActor:
-            def __init__(self, *args, **kwargs):
-                logger.warning("Ray actor called but Ray not available. Using direct access.")
-                self._args = args
-                self._kwargs = kwargs
-            def __getattr__(self, name):
-                async def method_stub(*a, **kw):
-                    logger.warning(f"Ray method '{name}' called but Ray not available.")
-                    return None
-                return method_stub
-            @classmethod
-            def remote(cls, *a, **kw):
-                return cls(*a, **kw)
-        return FakeActor
+        # Pass-through decorator - returns class unchanged
+        return obj
     
     def _stub_get_actor(name, namespace=None):
-        logger.warning(f"ray.get_actor('{name}') called but Ray not available.")
-        return _stub_remote(None)
+        raise ValueError(f"Actor '{name}' not found. Ray is not available.")
     
     ray.remote = _stub_remote
     ray.get_actor = _stub_get_actor
@@ -278,9 +287,88 @@ async def lifespan(app: FastAPI):
     
     await connect_mongodb()
     
-    # Initialize Ray if available
+    # Import and create actor instance (direct, no Ray)
+    # Ray.remote is stubbed to pass-through, so actor class can be instantiated directly
+    actor_instance = None
     actor_handle = None
-    if RAY_AVAILABLE:
+    read_scopes = [SLUG]
+    if isinstance(DB_CONFIG.get("data_scope"), list):
+        read_scopes = [s if s != "self" else SLUG for s in DB_CONFIG.get("data_scope", [SLUG])]
+    
+    try:
+        actor_mod_name = f"experiments.{SLUG.replace('-', '_')}.actor"
+        actor_mod = __import__(actor_mod_name, fromlist=["ExperimentActor"])
+        if hasattr(actor_mod, "ExperimentActor"):
+            actor_cls = getattr(actor_mod, "ExperimentActor")
+            
+            # With the Ray stub, @ray.remote is a pass-through, so the class is already usable
+            # Create direct instance
+            actor_instance = actor_cls(
+                mongo_uri=MONGO_URI,
+                db_name=DB_NAME,
+                write_scope=SLUG,
+                read_scopes=read_scopes
+            )
+            app.state.actor_instance = actor_instance
+            logger.info(f"Created direct actor instance (no Ray) for experiment '{SLUG}'.")
+            
+            # Mark as available so experiment routes' dependency checks pass
+            # (even though we're using direct instance, not Ray)
+            app.state.ray_is_available = True
+            
+            # Create a wrapper that mimics Ray actor handle interface
+            class DirectActorHandle:
+                """Wrapper that makes direct actor instance look like a Ray actor handle."""
+                def __init__(self, instance):
+                    self._instance = instance
+                
+                def __getattr__(self, name):
+                    # For remote method calls like actor.render_gallery_page.remote(context)
+                    method = getattr(self._instance, name, None)
+                    if method and callable(method):
+                        # Create a remote-like callable
+                        class RemoteCallable:
+                            def __init__(self, func):
+                                self._func = func
+                            
+                            def remote(self, *args, **kwargs):
+                                # Return the coroutine directly (can be awaited)
+                                result = self._func(*args, **kwargs)
+                                # If it's already a coroutine, return it
+                                if hasattr(result, '__await__'):
+                                    return result
+                                # Otherwise, wrap in a coroutine
+                                async def coro():
+                                    return result
+                                return coro()
+                        
+                        return RemoteCallable(method)
+                    raise AttributeError(f"'{type(self._instance).__name__}' object has no attribute '{name}'")
+            
+            # Store the handle wrapper
+            actor_handle_wrapper = DirectActorHandle(actor_instance)
+            app.state.actor_handle_wrapper = actor_handle_wrapper
+            
+            # Update ray.get_actor stub to return our wrapper
+            def _get_actor_stub(name, namespace=None):
+                if name == f"{SLUG}-actor":
+                    return actor_handle_wrapper
+                raise ValueError(f"Actor '{name}' not found.")
+            
+            if not USE_RAY:
+                ray.get_actor = _get_actor_stub
+            
+            logger.info(f"Actor handle wrapper created for '{SLUG}-actor'.")
+        else:
+            logger.warning(f"Experiment actor class 'ExperimentActor' not found in '{actor_mod_name}'.")
+    except ModuleNotFoundError:
+        logger.warning(f"Could not load actor module '{actor_mod_name}'. Actor endpoints may not work.")
+    except Exception as e:
+        logger.error(f"Failed to create direct actor instance: {e}", exc_info=True)
+    
+    # Ray is optional - only initialize if explicitly requested via environment variable
+    # (USE_RAY already checked above, but Ray might not be initialized yet)
+    if USE_RAY and RAY_AVAILABLE and actor_instance is not None:
         try:
             RAY_CONNECTION_ADDRESS = os.getenv("RAY_CONNECTION_ADDRESS", None)
             if RAY_CONNECTION_ADDRESS:
@@ -306,18 +394,13 @@ async def lifespan(app: FastAPI):
             app.state.ray_is_available = True
             logger.info(f"Ray connection successful (Mode: {connect_mode}).")
             
-            # Import and create the actor
+            # Create Ray actor (optional, direct instance is already created)
             try:
                 actor_mod_name = f"experiments.{SLUG.replace('-', '_')}.actor"
                 actor_mod = __import__(actor_mod_name, fromlist=["ExperimentActor"])
                 if hasattr(actor_mod, "ExperimentActor"):
                     actor_cls = getattr(actor_mod, "ExperimentActor")
                     actor_name = f"{SLUG}-actor"
-                    
-                    # Read scopes from config (default to [SLUG])
-                    read_scopes = [SLUG]
-                    if isinstance(DB_CONFIG.get("data_scope"), list):
-                        read_scopes = [s if s != "self" else SLUG for s in DB_CONFIG.get("data_scope", [SLUG])]
                     
                     actor_handle = actor_cls.options(
                         name=actor_name,
@@ -332,18 +415,16 @@ async def lifespan(app: FastAPI):
                         read_scopes=read_scopes
                     )
                     app.state.actor_handle = actor_handle
-                    logger.info(f"Ray Actor '{actor_name}' started successfully.")
-                else:
-                    logger.warning(f"Experiment actor class 'ExperimentActor' not found in '{actor_mod_name}'.")
-            except ModuleNotFoundError:
-                logger.warning(f"Could not load actor module '{actor_mod_name}'. Actor endpoints may not work.")
+                    logger.info(f"Ray Actor '{actor_name}' started (using Ray instead of direct instance).")
             except Exception as e:
-                logger.error(f"Failed to create Ray actor: {e}", exc_info=True)
+                logger.warning(f"Failed to create Ray actor, using direct instance: {e}")
         except Exception as e:
-            logger.error(f"Ray initialization failed: {e}. Ray features will be disabled.", exc_info=True)
+            logger.warning(f"Ray initialization failed, using direct actor instance: {e}")
             app.state.ray_is_available = False
     else:
-        logger.info("Ray not available - Ray-dependent endpoints will not work.")
+        if not USE_RAY:
+            logger.info("Ray disabled (USE_RAY=false). Using direct actor instance.")
+        app.state.ray_is_available = False
     
     yield
     
