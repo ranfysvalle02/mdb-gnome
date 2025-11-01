@@ -22,12 +22,13 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 from contextlib import asynccontextmanager
 from urllib.parse import quote
 
-# Attempt to see if PyMongo is installed (for fallback logic in ray_actor)
+# Import ScopedMongoWrapper - this is the whole point
 try:
-  import pymongo # or from async_mongo_wrapper import ScopedMongoWrapper
-  HAVE_PYMONGO = True
+  from async_mongo_wrapper import ScopedMongoWrapper
+  HAVE_MONGO_WRAPPER = True
 except ImportError:
-  HAVE_PYMONGO = False
+  HAVE_MONGO_WRAPPER = False
+  logging.warning("async_mongo_wrapper not found. Database wrapper unavailable.")
 
 # --- NEW: Boto3 for Backblaze B2 (S3-compatible) ---
 try:
@@ -99,7 +100,7 @@ def ray_actor(
 ):
   """
   A decorator that transforms a normal class into a Ray actor.
-  If 'fallback_if_no_db' is True and we detect PyMongo is missing,
+  If 'fallback_if_no_db' is True and we detect ScopedMongoWrapper is missing,
   we automatically pass 'use_in_memory_fallback=True' to the actor
   constructor, letting the actor skip real DB usage.
   """
@@ -112,8 +113,8 @@ def ray_actor(
     def spawn(cls, *args, runtime_env=None, **kwargs):
       # Decide actor_name
       actor_name = name if name else f"{user_class.__name__}_actor"
-      # If fallback requested and no PyMongo, pass "use_in_memory_fallback"
-      if fallback_if_no_db and not HAVE_PYMONGO:
+      # If fallback requested and no ScopedMongoWrapper, pass "use_in_memory_fallback"
+      if fallback_if_no_db and not HAVE_MONGO_WRAPPER:
         kwargs["use_in_memory_fallback"] = True
 
       return cls.options(
@@ -139,8 +140,8 @@ try:
     get_current_user_or_redirect,
     require_admin,
     get_scoped_db,
-    ScopedMongoWrapper
   )
+  # ScopedMongoWrapper is imported above from async_mongo_wrapper
 except ImportError as e:
   logging.critical(f" CRITICAL ERROR: Failed to import core dependencies: {e}")
   sys.exit(1)
