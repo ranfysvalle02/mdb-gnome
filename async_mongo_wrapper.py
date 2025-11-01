@@ -37,8 +37,8 @@ from pymongo.results import (
     DeleteResult
 )
 from pymongo.operations import SearchIndexModel
-from pymongo.errors import OperationFailure, CollectionInvalid
-from pymongo import ASCENDING, DESCENDING, TEXT
+from pymongo.errors import OperationFailure, CollectionInvalid, AutoReconnect
+from pymongo import ASCENDING, DESCENDING, TEXT, MongoClient
 
 # --- FIX: Configure logger *before* first use ---
 logger = logging.getLogger(__name__)
@@ -63,27 +63,29 @@ class AsyncAtlasIndexManager:
     """
     Manages MongoDB Atlas Search indexes (Vector & Lucene) and standard
     database indexes with an asynchronous (Motor-native) interface.
-
-    This class is designed to be attached to a `ScopedCollectionWrapper`
-    and operates directly on the underlying, *unscoped* `AsyncIOMotorCollection`,
-    as index management is an administrative, collection-wide task.
-    """
     
+    This class provides a robust, high-level API for index operations,
+    including 'wait_for_ready' polling logic to handle the asynchronous
+    nature of Atlas index builds.
+    """
+    # Use __slots__ for minor performance gain (faster attribute access)
     __slots__ = ('_collection',)
 
-    # Class-level constants for polling
+    # --- Class-level constants for polling and timeouts ---
     DEFAULT_POLL_INTERVAL: ClassVar[int] = 5  # seconds
     DEFAULT_SEARCH_TIMEOUT: ClassVar[int] = 600  # 10 minutes
     DEFAULT_DROP_TIMEOUT: ClassVar[int] = 300  # 5 minutes
 
     def __init__(self, real_collection: AsyncIOMotorCollection):
         """
-        Initializes the manager with a direct reference to the
-        real (unscoped) AsyncIOMotorCollection.
+        Initializes the manager with a direct reference to a
+        motor.motor_asyncio.AsyncIOMotorCollection.
         """
+        if not isinstance(real_collection, AsyncIOMotorCollection):
+            raise TypeError(
+                f"Expected AsyncIOMotorCollection, got {type(real_collection)}"
+            )
         self._collection = real_collection
-
-    # --- Atlas Search Index Methods (Vector & Lucene) ---
 
     async def create_search_index(
         self,
@@ -95,27 +97,11 @@ class AsyncAtlasIndexManager:
     ) -> bool:
         """
         Creates or updates an Atlas Search index.
-
-        If the index already exists, it checks its status. If it's queryable,
-        it returns True. If it's FAILED, it returns False.
-
-        Args:
-            name: The name for the new search index.
-            definition: The Atlas Search index definition document.
-            index_type: The type of search index ('search' or 'vectorSearch').
-            wait_for_ready: If True, blocks asynchronously until the index
-                            reports a 'queryable' status.
-            timeout: Max seconds to wait for the index to become ready.
-
-        Returns:
-            True if the index was created (or already exists) and is queryable
-            (if `wait_for_ready` is True).
-            False if the index exists in a FAILED state.
-
-        Raises:
-            TimeoutError: If `wait_for_ready` is True and the index
-                          does not become queryable within the timeout.
-            Exception: For other database or build-level errors.
+        
+        This method is idempotent. It checks if an index with the same name
+        and definition already exists and is queryable. If it exists but the
+        definition has changed, it triggers an update. If it's building,
+        it waits. If it doesn't exist, it creates it.
         """
         
         # --- 🚀 FIX: Handle 'Collection already exists' gracefully ---
@@ -138,69 +124,116 @@ class AsyncAtlasIndexManager:
             # If we can't even create the collection, we must fail.
             raise Exception(f"Failed to create prerequisite collection '{self._collection.name}': {e}")
         # --- END FIX ---
-            
+
         try:
+            # Check for existing index
             existing_index = await self.get_search_index(name)
-            
+
             if existing_index:
                 logger.info(f"Search index '{name}' already exists.")
-                if existing_index.get("queryable"):
-                    logger.info(f"Search index '{name}' is already queryable.")
-                    return True
-                if existing_index.get("status") == "FAILED":
-                     logger.error(f"Search index '{name}' exists but is in a FAILED state. Please drop and recreate.")
-                     return False
-            else:
-                logger.info(f"Creating new search index '{name}' of type '{index_type}'...")
-                search_index_model = SearchIndexModel(
-                    definition=definition,
-                    name=name,
-                    type=index_type
-                )
-                await self._collection.create_search_index(model=search_index_model)
-                logger.info(f"Search index '{name}' build has been submitted.")
+                latest_def = existing_index.get("latestDefinition", {})
+                definition_changed = False
+                change_reason = ""
 
+                # --- Definition Change Check ---
+                # Compare the provided definition with the 'latestDefinition'
+                # from the existing index.
+                if "fields" in definition and index_type.lower() == "vectorsearch":
+                    existing_fields = latest_def.get("fields")
+                    if existing_fields != definition["fields"]:
+                        definition_changed = True
+                        change_reason = "vector 'fields' definition differs."
+                elif "mappings" in definition and index_type.lower() == "search":
+                    existing_mappings = latest_def.get("mappings")
+                    if existing_mappings != definition["mappings"]:
+                        definition_changed = True
+                        change_reason = "Lucene 'mappings' definition differs."
+                else:
+                    logger.warning(
+                        f"Index definition '{name}' has keys that don't match "
+                        f"index_type '{index_type}'. Cannot reliably check for changes."
+                    )
+                # --- End Check ---
+
+                if definition_changed:
+                    # Definitions differ, trigger an update
+                    logger.warning(f"Search index '{name}' definition has changed ({change_reason}). Triggering update...")
+                    await self.update_search_index(
+                        name=name,
+                        definition=definition,
+                        wait_for_ready=False # Wait logic handled below
+                    )
+                elif existing_index.get("queryable"):
+                    # Index exists, is up-to-date, and ready
+                    logger.info(f"Search index '{name}' is already queryable and definition is up-to-date.")
+                    return True
+                elif existing_index.get("status") == "FAILED":
+                    # Index exists but is in a failed state
+                    logger.error(
+                        f"Search index '{name}' exists but is in a FAILED state. "
+                        f"Manual intervention in Atlas UI may be required."
+                    )
+                    return False
+                else:
+                    # Index exists, is up-to-date, but not queryable (e.g., "PENDING", "STALE")
+                    logger.info(
+                        f"Search index '{name}' exists and is up-to-date, "
+                        f"but not queryable (Status: {existing_index.get('status')}). Waiting..."
+                    )
+            
+            else:
+                # --- Create New Index ---
+                try:
+                    logger.info(f"Creating new search index '{name}' of type '{index_type}'...")
+                    search_index_model = SearchIndexModel(
+                        definition=definition,
+                        name=name,
+                        type=index_type
+                    )
+                    await self._collection.create_search_index(model=search_index_model)
+                    logger.info(f"Search index '{name}' build has been submitted.")
+                except OperationFailure as e:
+                    # Handle race condition where another process created the index
+                    if "IndexAlreadyExists" in str(e) or "DuplicateIndexName" in str(e):
+                        logger.warning(f"Race condition: Index '{name}' was created by another process.")
+                    else:
+                        logger.error(f"OperationFailure during search index creation for '{name}': {e.details}")
+                        raise e
+
+            # --- Wait for Ready ---
+            # If requested, poll the index status until it's queryable
             if wait_for_ready:
                 return await self._wait_for_search_index_ready(name, timeout)
-            
             return True
 
         except OperationFailure as e:
-            logger.error(f"OperationFailure during search index creation: {e}")
+            logger.error(f"OperationFailure during search index creation/check for '{name}': {e.details}")
             raise
         except Exception as e:
-            logger.error(f"An error occurred creating search index '{name}': {e}")
+            logger.error(f"An unexpected error occurred regarding search index '{name}': {e}")
             raise
 
     async def get_search_index(self, name: str) -> Optional[Dict[str, Any]]:
         """
-        Retrieves the status for a single Atlas Search index by name.
-
-        Args:
-            name: The name of the search index.
-
-        Returns:
-            A dictionary with the index information, or None if not found.
+        Retrieves the definition and status of a single search index by name
+        using the $listSearchIndexes aggregation stage.
         """
         try:
-            index_status_cursor = self._collection.list_search_indexes(name=name)
-            # Efficiently get the first (and only) item from the cursor
-            async for index_info in index_status_cursor:
+            pipeline = [{"$listSearchIndexes": {"name": name}}]
+            async for index_info in self._collection.aggregate(pipeline):
+                # We expect only one or zero results
                 return index_info
-            return None  # Not found
+            return None
+        except OperationFailure as e:
+            logger.error(f"OperationFailure retrieving search index '{name}': {e.details}")
+            return None
         except Exception as e:
-            logger.error(f"Error retrieving search index '{name}': {e}")
+            logger.error(f"Unexpected error retrieving search index '{name}': {e}")
             return None
 
     async def list_search_indexes(self) -> List[Dict[str, Any]]:
-        """
-        Lists all Atlas Search indexes for the collection.
-
-        Returns:
-            A list of index information dictionaries.
-        """
+        """Lists all Atlas Search indexes for the collection."""
         try:
-            # .to_list(None) asynchronously exhausts the cursor
             return await self._collection.list_search_indexes().to_list(None)
         except Exception as e:
             logger.error(f"Error listing search indexes: {e}")
@@ -214,33 +247,25 @@ class AsyncAtlasIndexManager:
     ) -> bool:
         """
         Drops an Atlas Search index by name.
-
-        Args:
-            name: The name of the search index to drop.
-            wait_for_drop: If True, blocks asynchronously until the index
-                           is fully removed.
-            timeout: Max seconds to wait for the index to be dropped.
-
-        Returns:
-            True if the index was dropped successfully or did not exist.
         """
         try:
+            # Check if index exists before trying to drop
             if not await self.get_search_index(name):
                 logger.info(f"Search index '{name}' does not exist. Nothing to drop.")
                 return True
-                
+
             await self._collection.drop_search_index(name=name)
             logger.info(f"Submitted request to drop search index '{name}'.")
 
             if wait_for_drop:
                 return await self._wait_for_search_index_drop(name, timeout)
-            
             return True
         except OperationFailure as e:
+            # Handle race condition where index was already dropped
             if "IndexNotFound" in str(e):
-                logger.info(f"Search index '{name}' was already deleted.")
+                logger.info(f"Search index '{name}' was already deleted (race condition).")
                 return True
-            logger.error(f"OperationFailure dropping search index '{name}': {e}")
+            logger.error(f"OperationFailure dropping search index '{name}': {e.details}")
             raise
         except Exception as e:
             logger.error(f"Error dropping search index '{name}': {e}")
@@ -255,195 +280,175 @@ class AsyncAtlasIndexManager:
     ) -> bool:
         """
         Updates the definition of an existing Atlas Search index.
-        This operation triggers a rebuild of the index.
-
-        Args:
-            name: The name of the index to update.
-            definition: The new index definition document.
-            wait_for_ready: If True, blocks asynchronously until the index
-                            is 'queryable' after the update.
-            timeout: Max seconds to wait.
-
-        Returns:
-            True if the update was successful and the index is ready (if waited).
+        This will trigger a rebuild of the index.
         """
         try:
             logger.info(f"Updating search index '{name}'...")
             await self._collection.update_search_index(name=name, definition=definition)
             logger.info(f"Search index '{name}' update submitted. Rebuild initiated.")
-            
             if wait_for_ready:
                 return await self._wait_for_search_index_ready(name, timeout)
-            
             return True
+        except OperationFailure as e:
+            logger.error(f"Error updating search index '{name}': {e.details}")
+            raise
         except Exception as e:
             logger.error(f"Error updating search index '{name}': {e}")
             raise
 
     async def _wait_for_search_index_ready(self, name: str, timeout: int) -> bool:
-        """Async polling helper for an index to become queryable."""
+        """
+        Private helper to poll the index status until it becomes
+        queryable or fails.
+        """
         start_time = time.time()
-        logger.info(f"Waiting for search index '{name}' to become queryable...")
-        
+        logger.info(f"Waiting up to {timeout}s for search index '{name}' to become queryable...")
+
         while True:
-            index_info = await self.get_search_index(name)
-            status = None
-            queryable = False
-            
+            elapsed = time.time() - start_time
+            if elapsed > timeout:
+                logger.error(f"Timeout: Index '{name}' did not become queryable within {timeout}s.")
+                raise TimeoutError(f"Index '{name}' did not become queryable within {timeout}s.")
+
+            index_info = None
+            try:
+                # Poll for the index status
+                index_info = await self.get_search_index(name)
+            except (OperationFailure, AutoReconnect) as e:
+                # Handle transient network/DB errors during polling
+                logger.warning(f"DB Error during polling for index '{name}': {getattr(e, 'details', e)}. Retrying...")
+            except Exception as e:
+                logger.error(f"Unexpected error during polling for index '{name}': {e}. Retrying...")
+
             if index_info:
                 status = index_info.get("status")
-                queryable = index_info.get("queryable")
-                
-                if queryable:
-                    logger.info(f"Search index '{name}' is ready and queryable.")
-                    return True
-                
                 if status == "FAILED":
-                    logger.error(f"Search index '{name}' failed to build.")
+                    # The build failed permanently
+                    logger.error(f"Search index '{name}' failed to build (Status: FAILED). Check Atlas UI for details.")
                     raise Exception(f"Index build failed for '{name}'.")
-                
-                if status == "STALE":
-                    logger.warning(f"Search index '{name}' is STALE. Rebuild may be in progress.")
-                    
-            elif time.time() - start_time > 15 and not index_info:
-                 # Give it a few seconds to appear, but fail if it never does.
-                 logger.error(f"Search index '{name}' not found after 15s. Build may have failed to start.")
-                 raise Exception(f"Index '{name}' did not appear in index list.")
 
-            if time.time() - start_time > timeout:
-                logger.error(f"Timeout: Index '{name}' did not become ready within {timeout}s.")
-                raise TimeoutError(f"Index '{name}' did not become ready within {timeout}s.")
+                queryable = index_info.get("queryable")
+                if queryable:
+                    # Success!
+                    logger.info(f"Search index '{name}' is queryable (Status: {status}).")
+                    return True
 
-            logger.debug(f"Polling for '{name}'. Current status: {status or 'NOT_FOUND'}. Queryable: {queryable}")
+                # Not ready yet, log and wait
+                logger.info(f"Polling for '{name}'. Status: {status}. Queryable: {queryable}. Elapsed: {elapsed:.0f}s")
+            else:
+                # Index not found yet (can happen right after creation command)
+                logger.info(f"Polling for '{name}'. Index not found yet (normal during creation). Elapsed: {elapsed:.0f}s")
+
             await asyncio.sleep(self.DEFAULT_POLL_INTERVAL)
 
     async def _wait_for_search_index_drop(self, name: str, timeout: int) -> bool:
-        """Async polling helper for an index to be dropped."""
+        """
+        Private helper to poll until an index is successfully dropped.
+        """
         start_time = time.time()
-        logger.info(f"Waiting for search index '{name}' to be dropped...")
-
+        logger.info(f"Waiting up to {timeout}s for search index '{name}' to be dropped...")
         while True:
-            index_info = await self.get_search_index(name)
-            
-            if not index_info:
-                logger.info(f"Search index '{name}' has been successfully dropped.")
-                return True
-
             if time.time() - start_time > timeout:
                 logger.error(f"Timeout: Index '{name}' was not dropped within {timeout}s.")
                 raise TimeoutError(f"Index '{name}' was not dropped within {timeout}s.")
 
-            logger.debug(f"Polling for '{name}' drop. Still present.")
+            index_info = await self.get_search_index(name)
+            if not index_info:
+                # Success! Index is gone.
+                logger.info(f"Search index '{name}' has been successfully dropped.")
+                return True
+
+            logger.debug(f"Polling for '{name}' drop. Still present. Elapsed: {time.time() - start_time:.0f}s")
             await asyncio.sleep(self.DEFAULT_POLL_INTERVAL)
 
     # --- Regular Database Index Methods ---
-
+    # These methods wrap the standard Motor index commands for a
+    # consistent async API with the search index methods.
+    
     async def create_index(
         self,
         keys: Union[str, List[Tuple[str, Union[int, str]]]],
         **kwargs: Any
     ) -> str:
         """
-        Creates a standard database index (e.g., single-field, compound).
-        
-        Args:
-            keys: A single field name (str) for an ascending index,
-                  or a list of (field, direction) tuples.
-                  Direction can be ASCENDING (1), DESCENDING (-1),
-                  TEXT, GEO2DSPHERE, etc.
-            **kwargs: Additional index options (e.g., name, unique, sparse).
-
-        Returns:
-            The name of the created index.
+        Creates a standard (non-search) database index.
+        Idempotent: checks if the index already exists first.
         """
         if isinstance(keys, str):
             keys = [(keys, ASCENDING)]
-            
+
+        # Attempt to auto-generate the index name if not provided
+        index_name = kwargs.get("name")
+        if not index_name:
+            try:
+                # Use pymongo helper to generate the name PyMongo would use
+                from pymongo.helpers import _index_list
+                index_doc = MongoClient()._database._CommandBuilder._gen_index_doc(keys, kwargs)
+                index_name = _index_list(index_doc['key'].items())
+            except Exception:
+                # Fallback name generation
+                index_name = f"index_{'_'.join([k[0] for k in keys])}"
+                logger.warning(f"Could not auto-generate index name, using fallback: {index_name}")
+
         try:
+            # Check if index already exists
+            existing_indexes = await self.list_indexes()
+            for index in existing_indexes:
+                if index.get("name") == index_name:
+                    logger.info(f"Regular index '{index_name}' already exists.")
+                    return index_name
+
+            # Create the index
             name = await self._collection.create_index(keys, **kwargs)
             logger.info(f"Successfully created regular index '{name}'.")
             return name
+        except OperationFailure as e:
+            logger.error(f"OperationFailure creating regular index '{index_name}': {e.details}")
+            raise
         except Exception as e:
-            logger.error(f"Failed to create regular index with keys '{keys}': {e}")
+            logger.error(f"Failed to create regular index '{index_name}': {e}")
             raise
 
     async def create_text_index(
-        self,
-        fields: List[str],
-        weights: Optional[Dict[str, int]] = None,
-        name: str = "text_index",
-        **kwargs: Any
+        self, fields: List[str], weights: Optional[Dict[str, int]] = None,
+        name: str = "text_index", **kwargs: Any
     ) -> str:
-        """
-        Helper method to create a standard text index.
-
-        Args:
-            fields: A list of field names to include in the text index.
-            weights: An optional dictionary of field names to weights.
-            name: The name for the index.
-            **kwargs: Other options (e.g., default_language).
-
-        Returns:
-            The name of the created index.
-        """
+        """Helper to create a standard text index."""
         keys = [(field, TEXT) for field in fields]
         if weights:
             kwargs["weights"] = weights
         if name:
             kwargs["name"] = name
-            
         return await self.create_index(keys, **kwargs)
 
     async def create_geo_index(
-        self,
-        field: str,
-        name: Optional[str] = None,
-        **kwargs: Any
+        self, field: str,
+        name: Optional[str] = None, **kwargs: Any
     ) -> str:
-        """
-        Helper method to create a 2dsphere (geospatial) index.
-
-        Args:
-            field: The field containing GeoJSON data.
-            name: The name for the index. Defaults to '{field}_2dsphere'.
-            **kwargs: Other index options.
-
-        Returns:
-            The name of the created index.
-        """
+        """Helper to create a standard 2dsphere index."""
         keys = [(field, GEO2DSPHERE)]
         if name:
             kwargs["name"] = name
-        
         return await self.create_index(keys, **kwargs)
 
     async def drop_index(self, name: str):
-        """
-        Drops a standard database index by its name.
-
-        Args:
-            name: The name of the index to drop (e.g., 'email_1').
-        """
+        """Drops a standard (non-search) database index by name."""
         try:
             await self._collection.drop_index(name)
             logger.info(f"Successfully dropped regular index '{name}'.")
         except OperationFailure as e:
+            # Handle case where index is already gone
             if "index not found" in str(e).lower():
                 logger.info(f"Regular index '{name}' does not exist. Nothing to drop.")
             else:
-                logger.error(f"Failed to drop regular index '{name}': {e}")
+                logger.error(f"Failed to drop regular index '{name}': {e.details}")
                 raise
         except Exception as e:
             logger.error(f"Failed to drop regular index '{name}': {e}")
             raise
 
     async def list_indexes(self) -> List[Dict[str, Any]]:
-        """
-        Lists all standard database indexes for the collection.
-
-        Returns:
-            A list of index specification dictionaries.
-        """
+        """Lists all standard (non-search) indexes on the collection."""
         try:
             return await self._collection.list_indexes().to_list(None)
         except Exception as e:
@@ -451,20 +456,9 @@ class AsyncAtlasIndexManager:
             return []
 
     async def get_index(self, name: str) -> Optional[Dict[str, Any]]:
-        """
-        Retrieves the specification for a single standard database index.
-
-        Args:
-            name: The name of the index.
-
-        Returns:
-            The index specification dictionary, or None if not found.
-        """
+        """Gets a single standard index by name."""
         indexes = await self.list_indexes()
-        for index in indexes:
-            if index.get("name") == name:
-                return index
-        return None
+        return next((index for index in indexes if index.get("name") == name), None)
 
 
 # ##########################################################################

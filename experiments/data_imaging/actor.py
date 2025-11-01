@@ -1,4 +1,4 @@
-# File: /app/experiments/data_imaging/actor.py
+# File: /app/experiments/workout_radiologist/actor.py
 import logging
 import json
 import pathlib
@@ -25,7 +25,7 @@ class ExperimentActor:
     def __init__(self, mongo_uri: str, db_name: str, write_scope: str, read_scopes: list[str]):
         self.mongo_uri = mongo_uri
         self.db_name = db_name
-        self.write_scope = write_scope
+        self.write_scope = write_scope # This will be "workout_radiologist"
         self.read_scopes = read_scopes
         self.vector_index_name = f"{write_scope}_workout_vector_index" # Pre-calculate the prefixed index name
         
@@ -88,7 +88,13 @@ class ExperimentActor:
         Post-initialization hook: waits for vector index to be ready,
         then ensures at least ~10 records exist.
         """
-        if not self.db or not self.real_db:
+        # ---
+        # --- THIS IS THE FIX ---
+        # ---
+        if self.db is None or self.real_db is None:
+        # ---
+        # --- END FIX ---
+        # ---
             logger.warning(f"[{self.write_scope}-Actor] Skipping initialize - DB not ready.")
             return
         
@@ -164,7 +170,7 @@ class ExperimentActor:
             raise RuntimeError("Actor is not initialized correctly. Check logs for import errors.")
 
     # ---
-    # --- NEW: Refactored helper for visualization data
+    # --- NEW: Refactored helper for visualization data (OPTIMIZED)
     # ---
     async def _generate_viz_data(self, doc: dict, r_key: str, g_key: str, b_key: str) -> dict:
         """
@@ -174,6 +180,7 @@ class ExperimentActor:
         self._check_ready()
         
         # Generate the 2D arrays based on selected keys
+        # This call now returns *all* data we need
         arrays = self.engine.generate_workout_viz_arrays(
             doc, 
             size=8,
@@ -209,6 +216,7 @@ class ExperimentActor:
             "label_r_short_html": format_short_label(r_key, "red-label", "Red"),
             "label_g_short_html": format_short_label(g_key, "green-label", "Green"),
             "label_b_short_html": format_short_label(b_key, "blue-label", "Blue"),
+            "raw_data": arrays["raw_data"] # <-- OPTIMIZATION: Pass raw data back
         }
 
     # ---
@@ -238,6 +246,7 @@ class ExperimentActor:
 
         snippet_list = []
         for d in docs:
+            # Gallery always uses the canonical "default" fingerprint
             arrays = self.engine.generate_workout_viz_arrays(
                 d, size=8, r_key="heart_rate", g_key="calories_per_min", b_key="speed_kph"
             )
@@ -261,7 +270,7 @@ class ExperimentActor:
         )
         return response.body.decode("utf-8")
 
-    # --- Method 2: Replaces show_detail (UPDATED) ---
+    # --- Method 2: Replaces show_detail (UPDATED + FIXED) ---
     async def render_detail_page(
         self, 
         workout_id: int, 
@@ -278,11 +287,13 @@ class ExperimentActor:
             return f"<h1>404 - Not Found</h1><p>No workout with id {doc_id}</p>"
 
         # ---
-        # --- REFACTORED: Call the helper method ---
+        # --- OPTIMIZATION: Call the helper method ONCE ---
         # ---
         # This renders the page using the keys from the URL query params
+        # and also returns the raw_data for charts.
         viz_data = await self._generate_viz_data(doc, r_key, g_key, b_key)
-        # --- END REFACTOR ---
+        raw_data_for_charts = viz_data["raw_data"]
+        # --- END OPTIMIZATION ---
 
         # Check if AI summary is pending
         summary_is_pending = (
@@ -309,7 +320,13 @@ class ExperimentActor:
                         if n.get("session_tag"): context_span += f" | Tag: {n['session_tag']}"
                         if n.get("ai_classification") != self.engine.PLACEHOLDER_CLASSIFICATION:
                             context_span += f" | Pattern: {n['ai_classification']}"
-                        items.append(f'<li><a href="/experiments/data_imaging/workout/{sid}">Workout #{sid}</a> <span>({context_span})</span><br>Similarity Score: {n["score"]:.4f}</li>')
+                        
+                        # --- 
+                        # --- BUG FIX: Hardcoded URL corrected ---
+                        # ---
+                        items.append(f'<li><a href="/experiments/{self.write_scope}/workout/{sid}">Workout #{sid}</a> <span>({context_span})</span><br>Similarity Score: {n["score"]:.4f}</li>')
+                        # --- END BUG FIX ---
+
                     neighbors_html = "".join(items)
                 else:
                     neighbors_html = "<p>No neighbors found (maybe only 1 doc in DB?).</p>"
@@ -331,16 +348,17 @@ class ExperimentActor:
         else:
             ephemeral_prompt = doc.get("llm_analysis_prompt", self.engine.PLACEHOLDER_PROMPT)
 
-        # Generate static charts (these never change)
-        # Note: We still need to call generate_workout_viz_arrays to get the raw data
-        chart_arrays = self.engine.generate_workout_viz_arrays(doc, 8, "heart_rate", "calories_per_min", "speed_kph")
+        # ---
+        # --- OPTIMIZATION: Use raw_data from viz_data
+        # ---
         all_charts = {
-            "heart_rate": self.engine.generate_chart_base64(chart_arrays["raw_data"].get("heart_rate", []), "#FF6868"),
-            "calories_per_min": self.engine.generate_chart_base64(chart_arrays["raw_data"].get("calories_per_min", []), "#00ED64"),
-            "speed_kph": self.engine.generate_chart_base64(chart_arrays["raw_data"].get("speed_kph", []), "#58AEFF"),
-            "power": self.engine.generate_chart_base64(chart_arrays["raw_data"].get("power", []), "#FFA554"),
-            "cadence": self.engine.generate_chart_base64(chart_arrays["raw_data"].get("cadence", []), "#C792EA")
+            "heart_rate": self.engine.generate_chart_base64(raw_data_for_charts.get("heart_rate", []), "#FF6868"),
+            "calories_per_min": self.engine.generate_chart_base64(raw_data_for_charts.get("calories_per_min", []), "#00ED64"),
+            "speed_kph": self.engine.generate_chart_base64(raw_data_for_charts.get("speed_kph", []), "#58AEFF"),
+            "power": self.engine.generate_chart_base64(raw_data_for_charts.get("power", []), "#FFA554"),
+            "cadence": self.engine.generate_chart_base64(raw_data_for_charts.get("cadence", []), "#C792EA")
         }
+        # --- END OPTIMIZATION ---
 
         # Make doc copy safe for JSON
         doc_copy = dict(doc)
@@ -358,18 +376,23 @@ class ExperimentActor:
              gear_used_html += "</ul>"
         
         if summary_is_pending:
+            # ---
+            # --- BUG FIX: Hardcoded form action URL corrected ---
+            # ---
             ai_analysis_button_html = f"""
-              <form id="analyzeForm" action="/experiments/data_imaging/workout/{workout_id}/analyze" method="POST" style="margin:0;">
+              <form id="analyzeForm" action="/experiments/{self.write_scope}/workout/{workout_id}/analyze" method="POST" style="margin:0;">
                 <button type="submit" id="analyzeBtn" class="control-btn" style="background-color:var(--accent-blue);color:white;">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
                        fill="currentColor" viewBox="0 0 16 16"
                        style="vertical-align:-2px;margin-right:5px;">
-                    <path d="M8 15A7 7... (omitted) ... 8 2z"/>
+                    <path d="M8 15A7 7 0 1 0 8 1a7 7 0 0 0 0 14zm-5.467 4.14C7.02 12.637 7.558 13 8 13c.448 0 .89-.37 1.341-.758.384-.33 1.164-.98 1.956-1.579.529-.396.958-.87 1.253-1.412.308-.567.452-1.217.452-1.921 0-.663-.122-1.284-.367-1.841-.247-.568-.62-1.11-1.12-1.583-.497-.47-1.127-.866-1.87-1.171C9.697 5.093 8.87 4.75 8 4.75c-.878 0-1.688.354-2.457.784-.735.41-1.353.94-1.854 1.572-.497.625-.873 1.342-1.124 2.144-.25.808-.372 1.68-.372 2.616 0 .666.126 1.298.375 1.879.248.568.618 1.107 1.117 1.582.497.47 1.127.865 1.87 1.171z"/>
+                    <path fill-rule="evenodd" d="M8 15A7 7 0 1 0 8 1a7 7 0 0 0 0 14zM8 2A6 6 0 1 1 8 14 6 6 0 0 1 8 2z"/>
                   </svg>
                   Generate AI Summary
                 </button>
               </form>
             """
+            # --- END BUG FIX ---
         else:
             ai_analysis_button_html = '<span style="color: var(--atlas-green); font-weight:600;">Analysis Complete</span>'
 
@@ -452,13 +475,14 @@ class ExperimentActor:
     async def generate_one(self) -> int:
         self._check_ready()
 
+        # This aggregation is more robust for finding the max ID in a sharded or busy cluster
         pipeline = [
             {"$match": {"_id": {"$regex": "^workout_rad_\\d+$"}}},
             {"$project": {"num": {"$toInt": {"$arrayElemAt": [{"$split": ["$_id","_"]}, -1]}}}},
             {"$group": {"_id": None, "max_id": {"$max":"$num"}}},
         ]
         result_list = await self.db.workouts.aggregate(pipeline).to_list(1)
-        max_id = result_list[0]["max_id"] if result_list and 'max_id' in result_list[0] else 0
+        max_id = result_list[0]["max_id"] if result_list and 'max_id' in result_list[0] else -1
         new_suffix = max_id + 1
 
         for attempt in range(5):
@@ -466,6 +490,7 @@ class ExperimentActor:
             feature_vec = self.engine.get_feature_vector(doc)
             doc["workout_vector"] = feature_vec.tolist()
             try:
+                # insert_one is now scoped automatically by self.db
                 await self.db.workouts.insert_one(doc)
                 logger.info(f"[{self.write_scope}-Actor] Inserted new doc {doc['_id']}")
                 return new_suffix
@@ -479,6 +504,7 @@ class ExperimentActor:
     # --- Method 5: Replaces clear_all ---
     async def clear_all(self) -> dict:
         self._check_ready()
+        # delete_many is now scoped automatically by self.db
         result = await self.db.workouts.delete_many({})
         logger.info(f"[{self.write_scope}-Actor] Cleared {result.deleted_count} documents.")
         return {"deleted_count": result.deleted_count}

@@ -1,4 +1,5 @@
 {
+  "slug": "workout_radiologist",
   "name": "Workout Radiologist",
   "description": "Generates visual 'fingerprints' of workout data, uses Vector Search to find 'twins', and RAG to analyze them.",
   "status": "active",
@@ -28,13 +29,6 @@
               "path": "experiment_id"
             }
           ]
-        }
-      },
-      {
-        "name": "_id_index",
-        "type": "regular",
-        "keys": {
-          "_id": 1
         }
       }
     ]

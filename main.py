@@ -614,7 +614,13 @@ class HTTPSEnforcementMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(ExperimentScopeMiddleware)
-app.add_middleware(HTTPSEnforcementMiddleware)
+G_NOME_ENV = os.getenv("G_NOME_ENV", "production").lower()
+
+if G_NOME_ENV == "production":
+    logger.info("Production environment detected. Enabling HTTPSEnforcementMiddleware.")
+    app.add_middleware(HTTPSEnforcementMiddleware)
+else:
+    logger.warning(f"Non-production environment ('{G_NOME_ENV}') detected. Skipping HTTPS enforcement.")
 
 
 async def _ensure_db_indices(db: AsyncIOMotorDatabase):
