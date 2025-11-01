@@ -697,6 +697,7 @@ class ScopedCollectionWrapper:
             }  
             scoped_pipeline = [scope_match_stage] + pipeline  
             return self._collection.aggregate(scoped_pipeline, *args, **kwargs)  
+
 class ScopedMongoWrapper:
     """
     Wraps an `AsyncIOMotorDatabase` to provide scoped collection access.
@@ -730,10 +731,6 @@ class ScopedMongoWrapper:
         
         If `name` is a collection, returns a `ScopedCollectionWrapper`.
         """
-        
-        # Check cache first
-        if name in self._wrapper_cache:
-            return self._wrapper_cache[name]
             
         # Prevent proxying private/special attributes
         if name.startswith('_'):
@@ -741,14 +738,24 @@ class ScopedMongoWrapper:
                 f"'{type(self).__name__}' object has no attribute '{name}'. "
                 "Access to private attributes is blocked."
             )
+        
+        # Construct the prefixed collection name, e.g., "data_imaging_workouts"
+        # `self._write_scope` holds the slug (e.g., "data_imaging")
+        # `name` holds the base name (e.g., "workouts")
+        prefixed_name = f"{self._write_scope}_{name}"
 
-        # Get the real collection from the motor db object
-        real_collection = getattr(self._db, name)
+        # Check cache first using the *prefixed_name*
+        if prefixed_name in self._wrapper_cache:
+            return self._wrapper_cache[prefixed_name]
+
+        # Get the real collection from the motor db object using the *prefixed_name*
+        real_collection = getattr(self._db, prefixed_name)
+        # --- END FIX ---
         
         # Ensure we are actually wrapping a collection object
         if not isinstance(real_collection, AsyncIOMotorCollection):
             raise AttributeError(
-                f"'{name}' is not an AsyncIOMotorCollection. "
+                f"'{name}' (prefixed as '{prefixed_name}') is not an AsyncIOMotorCollection. "
                 f"ScopedMongoWrapper can only proxy collections (found {type(real_collection)})."
             )
 
@@ -759,6 +766,6 @@ class ScopedMongoWrapper:
             write_scope=self._write_scope
         )
         
-        # Store it in the cache for this instance
-        self._wrapper_cache[name] = wrapper
+        # Store it in the cache for this instance using the *prefixed_name*
+        self._wrapper_cache[prefixed_name] = wrapper
         return wrapper
