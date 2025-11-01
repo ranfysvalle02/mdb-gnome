@@ -1129,10 +1129,6 @@ Ray offers the right set of tools to **scale this hybrid workload horizontally**
 
 ---
 
-Here is a new section, formatted as an appendix, to add to your documentation.
-
------
-
 ## Appendix G: Local Development with HTTPS (SSL) 🔐
 
 When you're building locally, you often run into a frustrating modern web problem: many features simply **require HTTPS (`https://`) to work**, even on `localhost`. This includes:
@@ -1180,7 +1176,82 @@ It's happening because the certificate was signed by "you" (via `openssl`), not 
 > Your browser will remember this exception for `localhost`, and your g.nome instance will now be running with a valid `https://` connection, allowing all your secure-only features to work perfectly.
 
 ---
-  
-## Conclusion  
+
+## Appendix H: Automated Codebase Documentation with `llms-code-gen.py` 📝
+
+g.nome includes a powerful utility script (`llms-code-gen.py`) that automatically generates comprehensive codebase documentation using Azure OpenAI. This tool helps onboard new developers, maintain project documentation, and provide LLMs with structured context about the codebase.
+
+### How It Works
+
+The script uses a two-phase "map-reduce" approach:
+
+1. **Map Phase (Analysis)**: Analyzes each file individually, generating a concise summary and categorizing it (e.g., "Application Logic", "Configuration", "Utility").
+2. **Reduce Phase (Synthesis)**: Synthesizes all individual file analyses into a cohesive markdown document that provides a high-level overview of the entire project.
+
+### Setup
+
+1. **Install Dependencies**: The script requires `langchain-openai` and related packages:
+   ```bash
+   pip install langchain-openai langchain-core python-dotenv
+   ```
+
+2. **Configure Azure OpenAI**: Create a `.env` file in the project root with your Azure OpenAI credentials:
+   ```
+   AZURE_OPENAI_ENDPOINT=https://your-endpoint.openai.azure.com/
+   AZURE_OPENAI_API_KEY=your-api-key-here
+   AZURE_OPENAI_DEPLOYMENT_NAME=your-deployment-name
+   ```
+
+### Usage
+
+Run the script from the project root to analyze the entire codebase:
+
+```bash
+python llms-code-gen.py
+```
+
+Or specify a specific directory to analyze:
+
+```bash
+python llms-code-gen.py experiments/
+python llms-code-gen.py .
+```
+
+The script will:
+- Walk through all files in the target directory (ignoring `__pycache__`, `.git`, `venv`, etc.)
+- Generate a file tree structure
+- Analyze each file using Azure OpenAI
+- Synthesize the results into `llms-code.txt` in the target directory
+
+### Output Format
+
+The generated `llms-code.txt` file includes:
+
+- **Project Overview**: High-level description of the project's purpose
+- **Key Components**: Organized by category (Configuration, Application Logic, Data Models, etc.)
+- **How It Works**: Explanation of how components interact
+- **Developer Notes**: Quick-start guide for new developers
+
+### Customization
+
+The script can be customized for specific use cases:
+
+- **Change MAX_FILE_CHARS**: Adjust the `MAX_FILE_CHARS` constant (default: 8000) to control how much of each file is analyzed
+- **Modify Ignored Paths**: Update `IGNORED_DIRS` and `IGNORED_FILES` to exclude additional paths
+- **Specialize Prompts**: Modify the synthesis prompt in `main()` to generate documentation optimized for specific audiences (e.g., security auditors, new contributors, API consumers)
+
+### Optimizing for Experiments
+
+For documenting experiments specifically, you can point the script at the `experiments/` directory:
+
+```bash
+python llms-code-gen.py experiments/
+```
+
+This generates documentation focused on experiment architecture, Ray actor patterns, and platform integration points. The script automatically ignores build artifacts, caches, and temporary export files, keeping the documentation focused on meaningful code.
+
+---
+
+## Conclusion
   
 g.nome helps you ship ideas quickly, without burying yourself in repetitive boilerplate. You get a single engine that can grow alongside your experiments—everything from tiny prototypes to fully isolated, Ray-powered microservices—while ensuring you can "graduate" any successful idea to its own dedicated codebase and database. Build fast, stay secure, and never fear the "prototype graveyard" again.
