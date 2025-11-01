@@ -1575,9 +1575,14 @@ async def package_standalone_experiment(
           file_size=file_size
         )
         
-        logger.info(f"[{slug_id}] Standalone export uploaded to B2. Redirecting to presigned URL.")
-        # Redirect to presigned HTTPS URL to avoid mixed content
-        return RedirectResponse(url=presigned_url, status_code=status.HTTP_303_SEE_OTHER)
+        logger.info(f"[{slug_id}] Standalone export uploaded to B2. Returning download URL.")
+        # Return JSON with download URL instead of redirecting (avoids mixed content redirect issues)
+        return JSONResponse({
+          "status": "success",
+          "download_url": presigned_url,
+          "filename": file_name,
+          "message": "Export ready for download"
+        })
       except Exception as e:
         logger.error(f"[{slug_id}] B2 upload failed: {e}. Falling back to direct download.", exc_info=True)
         # Fall through to direct download if B2 fails
@@ -1698,9 +1703,14 @@ async def package_docker_experiment(
           file_size=file_size
         )
         
-        logger.info(f"[{slug_id}] Docker export uploaded to B2. Redirecting to presigned URL.")
-        # Redirect to presigned HTTPS URL to avoid mixed content
-        return RedirectResponse(url=presigned_url, status_code=status.HTTP_303_SEE_OTHER)
+        logger.info(f"[{slug_id}] Docker export uploaded to B2. Returning download URL.")
+        # Return JSON with download URL instead of redirecting (avoids mixed content redirect issues)
+        return JSONResponse({
+          "status": "success",
+          "download_url": presigned_url,
+          "filename": file_name,
+          "message": "Export ready for download"
+        })
       except Exception as e:
         logger.error(f"[{slug_id}] B2 upload failed: {e}. Falling back to direct download.", exc_info=True)
         # Fall through to direct download if B2 fails
@@ -1801,9 +1811,14 @@ async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any
           file_size=file_size
         )
         
-        logger.info(f"[{slug_id}] Admin standalone export uploaded to B2. Redirecting to presigned URL.")
-        # Redirect to presigned HTTPS URL to avoid mixed content
-        return RedirectResponse(url=presigned_url, status_code=status.HTTP_303_SEE_OTHER)
+        logger.info(f"[{slug_id}] Admin standalone export uploaded to B2. Returning download URL.")
+        # Return JSON with download URL instead of redirecting (avoids mixed content redirect issues)
+        return JSONResponse({
+          "status": "success",
+          "download_url": presigned_url,
+          "filename": file_name,
+          "message": "Export ready for download"
+        })
       except Exception as e:
         logger.error(f"[{slug_id}] B2 upload failed: {e}. Falling back to direct download.", exc_info=True)
         # Fall through to direct download if B2 fails

@@ -18,10 +18,66 @@
         .status-archived { background: #f8d7da; color: #721c24; }
         .action-btn { background: #007bff; color: white; padding: 8px 12px; border-radius: 5px; font-weight: 600; display: inline-block; margin-right: 10px; }
         /* NEW STYLE for Export Button */
-        .export-btn { background: #28a745; color: white; padding: 8px 12px; border-radius: 5px; font-weight: 600; display: inline-block; }
+        .export-btn { 
+            background: #28a745; 
+            color: white; 
+            padding: 8px 12px; 
+            border-radius: 5px; 
+            border: none;
+            font-weight: 600; 
+            display: inline-block;
+            cursor: pointer;
+        }
+        .export-btn:hover {
+            background: #218838;
+        }
+        .export-btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
         .header-nav { margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
         .flash-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; padding: 15px; margin-bottom: 20px; border-radius: 4px; }
     </style>
+    <script>
+        async function downloadExport(url, slugId) {
+            const button = event.target;
+            const originalText = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = '⏳ Preparing export...';
+            
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (data.status === 'success' && data.download_url) {
+                    // Create a temporary link and trigger download
+                    const link = document.createElement('a');
+                    link.href = data.download_url;
+                    link.download = data.filename || `${slugId}_export.zip`;
+                    link.target = '_blank';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    
+                    button.innerHTML = '✅ Download started';
+                    setTimeout(() => {
+                        button.disabled = false;
+                        button.innerHTML = originalText;
+                    }, 2000);
+                } else {
+                    throw new Error(data.message || 'Failed to get download URL');
+                }
+            } catch (error) {
+                console.error('Export error:', error);
+                button.innerHTML = '❌ Export failed';
+                alert('Export failed: ' + error.message);
+                setTimeout(() => {
+                    button.disabled = false;
+                    button.innerHTML = originalText;
+                }, 3000);
+            }
+        }
+    </script>
 </head>
 <body>
     <div class="header-nav">
@@ -51,9 +107,10 @@
                 <hr>
                 <a href="{{ request.url_for('configure_experiment_get', slug_id=exp.slug) }}" class="action-btn">Configure</a>
                 
-                <a href="{{ request.url_for('package_experiment', slug_id=exp.slug) }}" class="export-btn">
+                <button onclick="downloadExport('{{ request.url_for('package_experiment', slug_id=exp.slug) }}', '{{ exp.slug }}')" 
+                        class="export-btn">
                     📦 Create Standalone Package
-                </a>
+                </button>
                 </li>
         {% else %}
             <li>No configured experiments found.</li>

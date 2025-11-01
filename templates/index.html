@@ -61,6 +61,13 @@
             font-weight: 500;
             display: inline-block;
         }
+        .export-button:hover {
+            background-color: #218838;
+        }
+        .export-button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
         /* --- STYLES FOR BADGES --- */
         .badge {
             display: inline-block;
@@ -80,7 +87,81 @@
             color: white;
         }
         /* ------------------------------------ */
-    </style>  
+    </style>
+    <script>
+        async function downloadExport(url, slugId) {
+            const button = event.target;
+            const originalText = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = '⏳ Preparing export...';
+            
+            try {
+                const response = await fetch(url);
+                const contentType = response.headers.get('content-type') || '';
+                
+                // Handle JSON response (B2 upload success)
+                if (contentType.includes('application/json')) {
+                    const data = await response.json();
+                    
+                    if (data.status === 'success' && data.download_url) {
+                        // Create a temporary link and trigger download from B2
+                        const link = document.createElement('a');
+                        link.href = data.download_url;
+                        link.download = data.filename || `${slugId}_export.zip`;
+                        link.target = '_blank';
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        
+                        button.innerHTML = '✅ Download started';
+                        setTimeout(() => {
+                            button.disabled = false;
+                            button.innerHTML = originalText;
+                        }, 2000);
+                    } else {
+                        throw new Error(data.message || 'Failed to get download URL');
+                    }
+                }
+                // Handle binary ZIP response (B2 fallback - direct download)
+                else if (contentType.includes('application/zip')) {
+                    const blob = await response.blob();
+                    const downloadUrl = window.URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = downloadUrl;
+                    
+                    // Extract filename from Content-Disposition header if available
+                    const disposition = response.headers.get('content-disposition');
+                    let filename = `${slugId}_export.zip`;
+                    if (disposition) {
+                        const match = disposition.match(/filename="?([^"]+)"?/);
+                        if (match) filename = match[1];
+                    }
+                    
+                    link.download = filename;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    window.URL.revokeObjectURL(downloadUrl);
+                    
+                    button.innerHTML = '✅ Download started';
+                    setTimeout(() => {
+                        button.disabled = false;
+                        button.innerHTML = originalText;
+                    }, 2000);
+                } else {
+                    throw new Error('Unexpected response type');
+                }
+            } catch (error) {
+                console.error('Export error:', error);
+                button.innerHTML = '❌ Export failed';
+                alert('Export failed: ' + error.message);
+                setTimeout(() => {
+                    button.disabled = false;
+                    button.innerHTML = originalText;
+                }, 3000);
+            }
+        }
+    </script>
 </head>  
 <body>  
     <div class="header-nav">  
@@ -122,10 +203,10 @@
                 {# Export button now shows if (not auth_required) OR (auth_required AND current_user) #}
                 {% if not meta.auth_required or current_user %}
                 <div class="experiment-actions">
-                    <a href="{{ request.url_for('package_standalone', slug_id=slug) }}"
+                    <button onclick="downloadExport('{{ request.url_for('package_standalone', slug_id=slug) }}', '{{ slug }}')"
                        class="export-button">
                        📦 Standalone Export
-                    </a>
+                    </button>
                 </div>
                 {% endif %}
 
