@@ -17,6 +17,7 @@ import zipfile
 import fnmatch
 import io
 import re # Needed for requirement parsing
+import hashlib # For checksum calculation
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 from contextlib import asynccontextmanager
@@ -345,6 +346,58 @@ def _should_use_disk_streaming(estimated_size: int, max_size_mb: int = 100) -> b
   return estimated_size > max_size_bytes
 
 
+## Utility: Calculate Export Checksum
+def _calculate_export_checksum(zip_source: io.BytesIO | Path) -> str:
+  """
+  Calculates SHA256 checksum of the export ZIP.
+  Accepts either BytesIO or Path.
+  Returns hex digest of the checksum.
+  """
+  try:
+    # Get ZIP data
+    if isinstance(zip_source, Path):
+      zip_data = zip_source.read_bytes()
+    else:
+      zip_source.seek(0)
+      zip_data = zip_source.getvalue()
+    
+    # Calculate SHA256 checksum
+    checksum = hashlib.sha256(zip_data).hexdigest()
+    logger.debug(f"Calculated export checksum: {checksum[:16]}...")
+    return checksum
+  except Exception as e:
+    logger.error(f"Failed to calculate export checksum: {e}", exc_info=True)
+    raise
+
+## Utility: Check for Existing Export by Checksum
+async def _find_existing_export_by_checksum(
+  db: AsyncIOMotorDatabase,
+  checksum: str,
+  slug_id: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+  """
+  Finds an existing export with the same checksum that is not invalidated.
+  Returns the export log if found, None otherwise.
+  """
+  try:
+    query = {
+      "checksum": checksum,
+      "invalidated": {"$ne": True}  # Not invalidated
+    }
+    if slug_id:
+      query["slug_id"] = slug_id
+    
+    existing_export = await db.export_logs.find_one(query, sort=[("created_at", -1)])
+    
+    if existing_export:
+      logger.info(f"Found existing export with matching checksum: {existing_export.get('_id')}")
+      return existing_export
+    
+    return None
+  except Exception as e:
+    logger.warning(f"Error checking for existing export by checksum: {e}", exc_info=True)
+    return None
+
 ## Utility: Upload Export to B2
 async def _upload_export_to_b2(
   b2_bucket,
@@ -401,6 +454,22 @@ async def _save_export_locally(zip_source: io.BytesIO | Path, filename: str) -> 
     logger.error(f"Failed to save export locally: {e}", exc_info=True)
     raise
 
+## Utility: Cleanup Local Export File
+async def _cleanup_local_export_file(file_path: Path | None):
+  """
+  Removes a local export file after successful B2 upload.
+  Safe to call even if file doesn't exist or path is None.
+  """
+  if not file_path:
+    return
+  
+  try:
+    if file_path.exists() and file_path.is_file():
+      file_path.unlink()
+      logger.debug(f"Cleaned up local export file after B2 upload: {file_path.name}")
+  except Exception as e:
+    logger.warning(f"Failed to cleanup local export file {file_path.name}: {e}")
+
 ## Utility: Cleanup Old Exports
 async def _cleanup_old_exports(max_age_hours: int = 24):
   """
@@ -433,7 +502,8 @@ async def _log_export(
   local_file_path: Optional[str] = None,
   file_size: Optional[int] = None,
   b2_file_name: Optional[str] = None,
-  invalidated: bool = False
+  invalidated: bool = False,
+  checksum: Optional[str] = None
 ):
   """
   Logs an export event to the database for tracking purposes.
@@ -448,6 +518,7 @@ async def _log_export(
       "file_size": file_size,
       "b2_file_name": b2_file_name,
       "invalidated": invalidated,
+      "checksum": checksum,
       "created_at": datetime.datetime.utcnow(),
     }
     result = await db.export_logs.insert_one(export_log)
@@ -1034,7 +1105,9 @@ async def _ensure_db_indices(db: AsyncIOMotorDatabase):
     # Index for export logs - commonly queried by slug_id
     await db.export_logs.create_index("slug_id", background=True)
     await db.export_logs.create_index("created_at", background=True)
-    logger.info(" Core MongoDB indexes ensured (users.email, experiments_config.slug, export_logs.slug_id).")
+    await db.export_logs.create_index("checksum", background=True)
+    await db.export_logs.create_index([("checksum", 1), ("invalidated", 1)], background=True)
+    logger.info(" Core MongoDB indexes ensured (users.email, experiments_config.slug, export_logs.slug_id, export_logs.checksum).")
   except Exception as e:
     logger.error(f" Failed to ensure core MongoDB indexes: {e}", exc_info=True)
 
@@ -2798,49 +2871,80 @@ async def package_standalone_experiment(
     file_name = f"{slug_id}_intelligent_export_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     file_size = zip_buffer.getbuffer().nbytes
     
+    # Calculate checksum for deduplication
+    checksum = _calculate_export_checksum(zip_buffer)
+    
+    # Check for existing export with same checksum
+    existing_export = await _find_existing_export_by_checksum(db, checksum, slug_id)
+    
     # Upload to B2 if enabled, otherwise save locally
     b2_file_name = None
     download_url = None
     b2_bucket = getattr(request.app.state, "b2_bucket", None)
     
-    if B2_ENABLED and b2_bucket:
+    # If we found an existing export with same checksum and it has B2 file, reuse it
+    if existing_export and existing_export.get("b2_file_name") and B2_ENABLED and b2_bucket:
       try:
-        # Upload to B2
-        b2_file_name = f"exports/{file_name}"
-        logger.info(f"[{slug_id}] Uploading export to B2: {b2_file_name}")
-        await _upload_export_to_b2(b2_bucket, zip_buffer, b2_file_name)
-        
-        # Generate presigned download URL from B2
+        b2_file_name = existing_export["b2_file_name"]
+        # Generate new presigned URL (existing file in B2)
         download_url = _generate_presigned_download_url(b2_bucket, b2_file_name, duration_seconds=86400)  # 24 hours
-        logger.info(f"[{slug_id}] Export uploaded to B2. Generated presigned URL.")
+        logger.info(f"[{slug_id}] Reusing existing B2 export with matching checksum: {b2_file_name}")
       except Exception as e:
-        logger.error(f"[{slug_id}] B2 upload failed, falling back to local storage: {e}", exc_info=True)
-        # Fallback to local storage
+        logger.warning(f"[{slug_id}] Failed to generate presigned URL for existing export, uploading new copy: {e}")
+        existing_export = None  # Fall through to upload new copy
+    
+    # If no existing export found, upload/save new one
+    export_file_path = None  # Track local file for cleanup
+    if not existing_export or not existing_export.get("b2_file_name"):
+      if B2_ENABLED and b2_bucket:
+        try:
+          # Upload to B2
+          b2_file_name = f"exports/{file_name}"
+          logger.info(f"[{slug_id}] Uploading export to B2: {b2_file_name}")
+          await _upload_export_to_b2(b2_bucket, zip_buffer, b2_file_name)
+          
+          # Generate presigned download URL from B2
+          download_url = _generate_presigned_download_url(b2_bucket, b2_file_name, duration_seconds=86400)  # 24 hours
+          logger.info(f"[{slug_id}] Export uploaded to B2. Generated presigned URL.")
+          
+          # Clean up any local files after successful B2 upload (performance optimization)
+          # Files can always be re-downloaded from B2 if needed
+          local_file = EXPORTS_TEMP_DIR / file_name
+          if local_file.exists():
+            await _cleanup_local_export_file(local_file)
+        except Exception as e:
+          logger.error(f"[{slug_id}] B2 upload failed, falling back to local storage: {e}", exc_info=True)
+          # Fallback to local storage
+          export_file_path = await _save_export_locally(zip_buffer, file_name)
+          relative_url = str(request.url_for("exports", filename=file_name))
+          download_url = _build_absolute_https_url(request, relative_url)
+          logger.info(f"[{slug_id}] Export saved locally as fallback.")
+      else:
+        # Save to local temp directory (fallback if B2 not enabled)
+        logger.info(f"[{slug_id}] B2 not enabled, saving export locally: {file_name}")
         export_file_path = await _save_export_locally(zip_buffer, file_name)
         relative_url = str(request.url_for("exports", filename=file_name))
         download_url = _build_absolute_https_url(request, relative_url)
-        logger.info(f"[{slug_id}] Export saved locally as fallback.")
-    else:
-      # Save to local temp directory (fallback if B2 not enabled)
-      logger.info(f"[{slug_id}] B2 not enabled, saving export locally: {file_name}")
-      export_file_path = await _save_export_locally(zip_buffer, file_name)
-      relative_url = str(request.url_for("exports", filename=file_name))
-      download_url = _build_absolute_https_url(request, relative_url)
     
     # Trigger cleanup of old exports in background (non-blocking)
     asyncio.create_task(_cleanup_old_exports(max_age_hours=24))
     
-    # Log export to database
-    export_log_id = await _log_export(
-      db=db,
-      slug_id=slug_id,
-      export_type="intelligent",
-      user_email=user_email,
-      local_file_path=str(export_file_path.relative_to(BASE_DIR)) if 'export_file_path' in locals() else None,
-      file_size=file_size,
-      b2_file_name=b2_file_name,
-      invalidated=False
-    )
+    # Log export to database (only if we didn't reuse an existing export)
+    export_log_id = None
+    if not existing_export:
+      export_log_id = await _log_export(
+        db=db,
+        slug_id=slug_id,
+        export_type="intelligent",
+        user_email=user_email,
+        local_file_path=str(export_file_path.relative_to(BASE_DIR)) if 'export_file_path' in locals() else None,
+        file_size=file_size,
+        b2_file_name=b2_file_name,
+        invalidated=False,
+        checksum=checksum
+      )
+    else:
+      logger.info(f"[{slug_id}] Reused existing export, skipping duplicate log entry")
     
     logger.info(f"[{slug_id}] Export created successfully. Download URL generated.")
     # Return JSON with download URL
@@ -3044,49 +3148,80 @@ async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any
     file_name = f"{slug_id}_intelligent_export_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     file_size = zip_buffer.getbuffer().nbytes
     
+    # Calculate checksum for deduplication
+    checksum = _calculate_export_checksum(zip_buffer)
+    
+    # Check for existing export with same checksum
+    existing_export = await _find_existing_export_by_checksum(db, checksum, slug_id)
+    
     # Upload to B2 if enabled, otherwise save locally
     b2_file_name = None
     download_url = None
     b2_bucket = getattr(request.app.state, "b2_bucket", None)
     
-    if B2_ENABLED and b2_bucket:
+    # If we found an existing export with same checksum and it has B2 file, reuse it
+    if existing_export and existing_export.get("b2_file_name") and B2_ENABLED and b2_bucket:
       try:
-        # Upload to B2
-        b2_file_name = f"exports/{file_name}"
-        logger.info(f"[{slug_id}] Uploading export to B2: {b2_file_name}")
-        await _upload_export_to_b2(b2_bucket, zip_buffer, b2_file_name)
-        
-        # Generate presigned download URL from B2
+        b2_file_name = existing_export["b2_file_name"]
+        # Generate new presigned URL (existing file in B2)
         download_url = _generate_presigned_download_url(b2_bucket, b2_file_name, duration_seconds=86400)  # 24 hours
-        logger.info(f"[{slug_id}] Export uploaded to B2. Generated presigned URL.")
+        logger.info(f"[{slug_id}] Reusing existing B2 export with matching checksum: {b2_file_name}")
       except Exception as e:
-        logger.error(f"[{slug_id}] B2 upload failed, falling back to local storage: {e}", exc_info=True)
-        # Fallback to local storage
+        logger.warning(f"[{slug_id}] Failed to generate presigned URL for existing export, uploading new copy: {e}")
+        existing_export = None  # Fall through to upload new copy
+    
+    # If no existing export found, upload/save new one
+    export_file_path = None  # Track local file for cleanup
+    if not existing_export or not existing_export.get("b2_file_name"):
+      if B2_ENABLED and b2_bucket:
+        try:
+          # Upload to B2
+          b2_file_name = f"exports/{file_name}"
+          logger.info(f"[{slug_id}] Uploading export to B2: {b2_file_name}")
+          await _upload_export_to_b2(b2_bucket, zip_buffer, b2_file_name)
+          
+          # Generate presigned download URL from B2
+          download_url = _generate_presigned_download_url(b2_bucket, b2_file_name, duration_seconds=86400)  # 24 hours
+          logger.info(f"[{slug_id}] Export uploaded to B2. Generated presigned URL.")
+          
+          # Clean up any local files after successful B2 upload (performance optimization)
+          # Files can always be re-downloaded from B2 if needed
+          local_file = EXPORTS_TEMP_DIR / file_name
+          if local_file.exists():
+            await _cleanup_local_export_file(local_file)
+        except Exception as e:
+          logger.error(f"[{slug_id}] B2 upload failed, falling back to local storage: {e}", exc_info=True)
+          # Fallback to local storage
+          export_file_path = await _save_export_locally(zip_buffer, file_name)
+          relative_url = str(request.url_for("exports", filename=file_name))
+          download_url = _build_absolute_https_url(request, relative_url)
+          logger.info(f"[{slug_id}] Export saved locally as fallback.")
+      else:
+        # Save to local temp directory (fallback if B2 not enabled)
+        logger.info(f"[{slug_id}] B2 not enabled, saving export locally: {file_name}")
         export_file_path = await _save_export_locally(zip_buffer, file_name)
         relative_url = str(request.url_for("exports", filename=file_name))
         download_url = _build_absolute_https_url(request, relative_url)
-        logger.info(f"[{slug_id}] Export saved locally as fallback.")
-    else:
-      # Save to local temp directory (fallback if B2 not enabled)
-      logger.info(f"[{slug_id}] B2 not enabled, saving export locally: {file_name}")
-      export_file_path = await _save_export_locally(zip_buffer, file_name)
-      relative_url = str(request.url_for("exports", filename=file_name))
-      download_url = _build_absolute_https_url(request, relative_url)
     
     # Trigger cleanup of old exports in background (non-blocking)
     asyncio.create_task(_cleanup_old_exports(max_age_hours=24))
     
-    # Log export to database
-    export_log_id = await _log_export(
-      db=db,
-      slug_id=slug_id,
-      export_type="intelligent",
-      user_email=user_email,
-      local_file_path=str(export_file_path.relative_to(BASE_DIR)) if 'export_file_path' in locals() else None,
-      file_size=file_size,
-      b2_file_name=b2_file_name,
-      invalidated=False
-    )
+    # Log export to database (only if we didn't reuse an existing export)
+    export_log_id = None
+    if not existing_export:
+      export_log_id = await _log_export(
+        db=db,
+        slug_id=slug_id,
+        export_type="intelligent",
+        user_email=user_email,
+        local_file_path=str(export_file_path.relative_to(BASE_DIR)) if 'export_file_path' in locals() else None,
+        file_size=file_size,
+        b2_file_name=b2_file_name,
+        invalidated=False,
+        checksum=checksum
+      )
+    else:
+      logger.info(f"[{slug_id}] Reused existing export, skipping duplicate log entry")
     
     logger.info(f"[{slug_id}] Export created successfully. Download URL generated.")
     # Return JSON with download URL
