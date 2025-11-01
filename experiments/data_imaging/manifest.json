@@ -22,6 +22,10 @@
             {
               "type": "filter",
               "path": "_id"
+            },
+            {
+              "type": "filter",
+              "path": "experiment_id"
             }
           ]
         }
