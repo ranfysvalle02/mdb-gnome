@@ -159,7 +159,9 @@ async def ensure_indexes():
             collection = mongo_db[full_collection_name]
             
             for index_def in index_defs:
-                index_name = index_def.get("name", "unnamed_index")
+                base_index_name = index_def.get("name", "unnamed_index")
+                # Prefix index name with experiment slug to match actor's expectation
+                index_name = f"{SLUG}_{base_index_name}"
                 index_type = index_def.get("type", "search")
                 definition = index_def.get("definition", {})
                 
@@ -184,9 +186,10 @@ async def ensure_indexes():
                     )
                     logger.info(f"Created search index '{index_name}' on '{full_collection_name}'.")
                 else:
-                    # Standard MongoDB index
+                    # Standard MongoDB index - use prefixed index name
                     try:
-                        await collection.create_index(index_def.get("keys", {}), background=True)
+                        keys = index_def.get("keys", {})
+                        await collection.create_index(keys, name=index_name, background=True)
                         logger.info(f"Created standard index '{index_name}' on '{full_collection_name}'.")
                     except Exception as e:
                         logger.error(f"Error creating standard index '{index_name}': {e}")
