@@ -1115,6 +1115,16 @@ def _make_standalone_main_py(slug_id: str) -> str:
   return standalone_main_source
 
 
+def _make_intelligent_standalone_main_py(slug_id: str) -> str:
+  """Generate intelligent standalone main.py using real MongoDB."""
+  global templates
+  if not templates:
+    raise RuntimeError("Jinja2 templates object is not initialized.")
+  template = templates.get_template("standalone_main_intelligent.py.jinja2")
+  standalone_main_source = template.render(slug_id=slug_id)
+  return standalone_main_source
+
+
 ########################################################
 # NEW: advanced fix_static_paths to handle single quotes
 ########################################################
@@ -1333,6 +1343,105 @@ def _create_dockerfile_for_experiment(slug_id: str, source_dir: Path, experiment
   return "\n".join(dockerfile_lines)
 
 
+def _create_intelligent_dockerfile(slug_id: str, source_dir: Path, experiment_path: Path) -> str:
+  """
+  Generates a clean Dockerfile WITHOUT Ray dependencies by default.
+  Only includes FastAPI, MongoDB (Motor), and experiment-specific requirements.
+  """
+  local_reqs_path = experiment_path / "requirements.txt"
+  
+  # Base requirements WITHOUT Ray
+  base_requirements = [
+    "fastapi",
+    "uvicorn[standard]",
+    "motor>=3.0.0",
+    "pymongo==4.15.3",
+    "python-multipart",
+    "jinja2",
+  ]
+  
+  # Add experiment-specific requirements
+  all_requirements = base_requirements.copy()
+  if local_reqs_path.is_file():
+    local_requirements = _parse_requirements_file(local_reqs_path)
+    for req in local_requirements:
+      pkg_name = _extract_pkgname(req)
+      # Skip Ray if present
+      if "ray" in pkg_name.lower():
+        logger.debug(f"Skipping Ray requirement: {req}")
+        continue
+      # Replace if exists, otherwise add
+      all_requirements = [r for r in all_requirements if _extract_pkgname(r) != pkg_name]
+      all_requirements.append(req)
+  
+  # Also need async_mongo_wrapper - check if it needs to be included
+  # For now, we'll copy it in the Dockerfile
+  
+  dockerfile_lines = [
+    "# --- Stage 1: Build dependencies ---",
+    "FROM python:3.10-slim-bookworm as builder",
+    "WORKDIR /app",
+    "",
+    "# Install build deps",
+    "RUN apt-get update && apt-get install -y build-essential && rm -rf /var/lib/apt/lists/*",
+    "",
+    "# Create requirements file"
+  ]
+  
+  # Write requirements
+  for req in all_requirements:
+    escaped_req = req.replace("'", "'\"'\"'")
+    dockerfile_lines.append(f"RUN echo '{escaped_req}' >> /tmp/requirements.txt")
+  
+  dockerfile_lines.extend([
+    "",
+    "# Install dependencies",
+    "RUN python -m venv /opt/venv && \\",
+    "    . /opt/venv/bin/activate && \\",
+    "    pip install --upgrade pip && \\",
+    "    pip install -r /tmp/requirements.txt",
+    "",
+    "# --- Stage 2: Final image ---",
+    "FROM python:3.10-slim-bookworm",
+    "WORKDIR /app",
+    "",
+    "# Copy venv from builder",
+    "COPY --from=builder /opt/venv /opt/venv",
+    'ENV PATH="/opt/venv/bin:$PATH"',
+    "",
+    "# Copy core MongoDB wrapper (required for scoped access)",
+    "COPY async_mongo_wrapper.py /app/async_mongo_wrapper.py",
+    "",
+    "# Copy experiment code",
+    f"COPY experiments/{slug_id} /app/experiments/{slug_id}",
+    "COPY experiments/__init__.py /app/experiments/__init__.py",
+    "",
+    "# Copy configuration files",
+    "COPY db_config.json /app/db_config.json",
+    "COPY db_collections.json /app/db_collections.json",
+    "",
+    "# Copy standalone main application",
+    "COPY main.py /app/main.py",
+    "",
+    "# Create non-root user",
+    "RUN addgroup --system app && adduser --system --group app",
+    "RUN chown -R app:app /app",
+    "USER app",
+    "",
+    "# Build ARG and ENV for port",
+    "ARG APP_PORT=8000",
+    "ENV PORT=$APP_PORT",
+    "",
+    "# Expose the port",
+    "EXPOSE ${APP_PORT}",
+    "",
+    "# Default command: Run the standalone server",
+    "CMD python main.py",
+  ])
+  
+  return "\n".join(dockerfile_lines)
+
+
 def _create_docker_compose_for_experiment(slug_id: str, source_dir: Path) -> str:
   """
   Generates a docker-compose.yml specifically for the data_imaging experiment.
@@ -1376,6 +1485,99 @@ def _create_docker_compose_for_experiment(slug_id: str, source_dir: Path) -> str
 
 volumes:
   mongo-data:
+"""
+  return docker_compose_content
+
+
+def _create_intelligent_docker_compose(slug_id: str) -> str:
+  """
+  Generates an intelligent docker-compose.yml with MongoDB Atlas Local
+  and optional Ray service for distributed computing.
+  """
+  docker_compose_content = f"""services:
+  # --------------------------------------------------------------------------
+  # FastAPI Application (Standalone Experiment)
+  # --------------------------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: {slug_id}-app
+    platform: linux/arm64
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/
+      - DB_NAME=labs_db
+      - PORT=8000
+      - LOG_LEVEL=INFO
+    volumes:
+      - .:/app
+    depends_on:
+      mongo:
+        condition: service_healthy
+      # Optional: Uncomment below to enable Ray support
+      # ray-head:
+      #   condition: service_healthy
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
+  # MongoDB Atlas Local (for index management support)
+  # --------------------------------------------------------------------------
+  mongo:
+    image: mongodb/mongodb-atlas-local:latest
+    container_name: {slug_id}-mongo
+    platform: linux/arm64
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.hello()", "--quiet"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
+  # Ray Head Node (OPTIONAL - Uncomment to enable distributed computing)
+  # --------------------------------------------------------------------------
+  # ray-head:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.ray
+  #   container_name: {slug_id}-ray-head
+  #   platform: linux/arm64
+  #   ports:
+  #     - "10001:10001"  # Ray client server port
+  #     - "8265:8265"     # Ray Dashboard
+  #   volumes:
+  #     - .:/app
+  #   environment:
+  #     - RAY_ENABLE_RUNTIME_ENV=1
+  #     - RAY_RUNTIME_ENV_WORKING_DIR=/app
+  #     - RAY_NAMESPACE=experiment_{slug_id}
+  #   command: [
+  #     "ray", "start", "--head",
+  #     "--port=6379",
+  #     "--ray-client-server-port=10001",
+  #     "--dashboard-host=0.0.0.0",
+  #     "--disable-usage-stats",
+  #     "--block"
+  #   ]
+  #   shm_size: 4gb
+  #   healthcheck:
+  #     test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 10001))"]
+  #     interval: 5s
+  #     timeout: 2s
+  #     retries: 10
+  #     start_period: 5s
+  #   restart: unless-stopped
+
+volumes:
+  mongo-data:
+    driver: local
 """
   return docker_compose_content
 
@@ -1526,6 +1728,363 @@ docker-compose down -v
   return zip_buffer
 
 
+def _create_intelligent_readme(slug_id: str, experiment_name: str, description: str) -> str:
+  """
+  Generates a comprehensive README with scaling instructions.
+  """
+  readme_content = f"""# Intelligent Export: {experiment_name}
+
+{description}
+
+This is a clean, production-ready FastAPI application extracted from the MDB-Gnome platform. It includes everything needed to run this experiment as a standalone service, with MongoDB Atlas Local support for index management and optional Ray integration for distributed computing.
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- **Docker** and **Docker Compose** installed on your system
+- **Python 3.10+** (if running locally without Docker)
+
+### Option 1: Run with Docker (Recommended)
+
+1. **Extract the package:**
+   ```bash
+   unzip {slug_id}_intelligent_export_*.zip
+   cd {slug_id}_intelligent_export_*
+   ```
+
+2. **Start the services:**
+   ```bash
+   docker-compose up --build
+   ```
+
+3. **Access the application:**
+   - Main application: http://localhost:8000
+   - API documentation: http://localhost:8000/docs
+   - MongoDB: localhost:27017
+
+### Option 2: Run Locally (Without Docker)
+
+1. **Setup Python environment:**
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate  # On Windows: venv\\Scripts\\activate
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Ensure MongoDB is running:**
+   - You need MongoDB Atlas Local or a local MongoDB instance
+   - Default connection: `mongodb://localhost:27017/`
+   - Set `MONGO_URI` environment variable if different
+
+4. **Run the application:**
+   ```bash
+   export MONGO_URI=mongodb://localhost:27017/
+   export DB_NAME=labs_db
+   export PORT=8000
+   python main.py
+   ```
+
+## 📦 Package Contents
+
+- **`main.py`**: Clean FastAPI application without Ray dependencies (Ray optional via docker-compose)
+- **`experiments/{slug_id}/`**: Complete experiment code (router, templates, static files)
+- **`async_mongo_wrapper.py`**: MongoDB scoped wrapper for data isolation
+- **`db_config.json`**: Experiment configuration snapshot
+- **`db_collections.json`**: Database collections snapshot (for initial seeding)
+- **`Dockerfile`**: Multi-stage build without Ray
+- **`docker-compose.yml`**: Includes MongoDB Atlas Local + optional Ray service
+- **`requirements.txt`**: Clean dependencies (Ray excluded by default)
+
+## 🎯 Key Features
+
+### ✅ Clean FastAPI Application
+- No Ray dependencies required (works out of the box)
+- Uses real MongoDB (Motor) for persistent storage
+- Proper database initialization and index management
+- Experiment-scoped data isolation
+
+### ✅ MongoDB Atlas Local
+- Full index management support (vector search, Lucene search, standard indexes)
+- Data persistence via Docker volumes
+- Production-ready database setup
+
+### ✅ Optional Ray Integration
+- Ray service available via docker-compose (commented out by default)
+- Uncomment `ray-head` service in `docker-compose.yml` to enable
+- Distributed computing support when needed
+
+## 🔧 Configuration
+
+### Environment Variables
+
+- `MONGO_URI`: MongoDB connection string (default: `mongodb://mongo:27017/`)
+- `DB_NAME`: Database name (default: `labs_db`)
+- `PORT`: Application port (default: `8000`)
+- `LOG_LEVEL`: Logging level (default: `INFO`)
+
+### Enabling Ray (Optional)
+
+To enable Ray support:
+
+1. **Edit `docker-compose.yml`** and uncomment the `ray-head` service
+2. **Update `app` service** to depend on `ray-head`:
+   ```yaml
+   depends_on:
+     mongo:
+       condition: service_healthy
+     ray-head:
+       condition: service_healthy  # Uncomment this
+   ```
+3. **Rebuild and start:**
+   ```bash
+   docker-compose up --build
+   ```
+
+## 📈 Scaling This Experiment
+
+### Horizontal Scaling (Multiple Instances)
+
+1. **Scale the FastAPI application:**
+   ```bash
+   docker-compose up --scale app=3
+   ```
+   Use a load balancer (nginx, traefik) in front of multiple app instances.
+
+2. **For Ray workloads**, connect multiple Ray workers:
+   ```bash
+   # Start Ray head node
+   docker-compose up ray-head
+   
+   # Connect worker nodes (on different machines)
+   ray start --address=<ray-head-ip>:6379
+   ```
+
+### Vertical Scaling (Single Instance)
+
+1. **Increase container resources:**
+   ```yaml
+   # In docker-compose.yml
+   app:
+     deploy:
+       resources:
+         limits:
+           cpus: '4'
+           memory: 8G
+   ```
+
+2. **Use multiple Uvicorn workers:**
+   ```bash
+   # Instead of python main.py
+   uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+   ```
+
+### Database Scaling
+
+1. **MongoDB Replica Set:**
+   - Replace single MongoDB instance with a replica set
+   - Update `MONGO_URI` to use replica set connection string
+
+2. **MongoDB Atlas Cloud:**
+   - Point `MONGO_URI` to your Atlas cluster
+   - Remove local MongoDB service from docker-compose.yml
+
+### Production Deployment
+
+1. **Use a production WSGI server:**
+   ```bash
+   pip install gunicorn
+   gunicorn main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+   ```
+
+2. **Add reverse proxy (nginx):**
+   ```nginx
+   upstream app {{
+       server app:8000;
+   }}
+   
+   server {{
+       listen 80;
+       server_name your-domain.com;
+       
+       location / {{
+           proxy_pass http://app;
+       }}
+   }}
+   ```
+
+3. **Enable HTTPS:**
+   - Use Let's Encrypt with certbot
+   - Or terminate SSL at the load balancer
+
+4. **Monitoring & Logging:**
+   - Add Prometheus metrics endpoint
+   - Integrate with logging aggregation (ELK, Loki)
+   - Set up health checks and alerts
+
+## 🐛 Troubleshooting
+
+### MongoDB Connection Issues
+
+- **Check MongoDB is running:** `docker-compose ps`
+- **Verify connection string:** Check `MONGO_URI` environment variable
+- **Check logs:** `docker-compose logs mongo`
+
+### Ray Issues
+
+- **Ray not available:** This is expected if Ray service is commented out. The app works without Ray.
+- **Enable Ray:** Uncomment Ray service in docker-compose.yml
+- **Ray dashboard:** http://localhost:8265 (if Ray is enabled)
+
+### Index Management
+
+- **Indexes not created:** Check MongoDB logs for index creation errors
+- **Vector search not working:** Ensure MongoDB Atlas Local supports vector search indexes
+- **Verify indexes:** Connect to MongoDB and run `db.getCollection('{slug_id}_<collection>').getIndexes()`
+
+## 📚 Next Steps
+
+1. **Review the experiment code** in `experiments/{slug_id}/`
+2. **Customize configuration** as needed
+3. **Add environment-specific settings** via `.env` file
+4. **Set up CI/CD** for automated deployments
+5. **Configure monitoring** and alerting
+6. **Scale based on traffic** using the guidelines above
+
+## 🔗 Resources
+
+- **FastAPI Documentation:** https://fastapi.tiangolo.com
+- **MongoDB Atlas Local:** https://www.mongodb.com/docs/atlas/atlas-local/
+- **Ray Documentation:** https://docs.ray.io
+- **Docker Compose:** https://docs.docker.com/compose/
+
+## 📝 License
+
+Same license as the original MDB-Gnome platform.
+
+---
+
+**Generated by MDB-Gnome Intelligent Export**
+"""
+  return readme_content
+
+
+def _create_intelligent_export_zip(
+  slug_id: str,
+  source_dir: Path,
+  db_data: Dict[str, Any],
+  db_collections: Dict[str, List[Dict[str, Any]]]
+) -> io.BytesIO:
+  """
+  Creates an intelligent export package:
+  - Clean FastAPI application WITHOUT Ray dependencies
+  - MongoDB Atlas Local via docker-compose
+  - Optional Ray service (commented out by default)
+  - Comprehensive README with scaling instructions
+  - Proper index management support
+  """
+  logger.info(f"Starting creation of intelligent export package for '{slug_id}'.")
+  zip_buffer = io.BytesIO()
+  experiment_path = source_dir / "experiments" / slug_id
+  
+  # --- 1. Generate intelligent standalone main.py (with real MongoDB) ---
+  standalone_main_source = _make_intelligent_standalone_main_py(slug_id)
+  
+  # --- 2. Generate clean requirements (without Ray) ---
+  local_reqs_path = experiment_path / "requirements.txt"
+  base_requirements = [
+    "fastapi",
+    "uvicorn[standard]",
+    "motor>=3.0.0",
+    "pymongo==4.15.3",
+    "python-multipart",
+    "jinja2",
+  ]
+  
+  all_requirements = base_requirements.copy()
+  if local_reqs_path.is_file():
+    local_requirements = _parse_requirements_file(local_reqs_path)
+    for req in local_requirements:
+      pkg_name = _extract_pkgname(req)
+      # Skip Ray dependencies
+      if "ray" in pkg_name.lower():
+        logger.debug(f"Skipping Ray requirement: {req}")
+        continue
+      # Replace if exists, otherwise add
+      all_requirements = [r for r in all_requirements if _extract_pkgname(r) != pkg_name]
+      all_requirements.append(req)
+  requirements_content = "\n".join(all_requirements)
+  
+  # --- 3. Generate Docker files ---
+  dockerfile_content = _create_intelligent_dockerfile(slug_id, source_dir, experiment_path)
+  docker_compose_content = _create_intelligent_docker_compose(slug_id)
+  
+  # --- 4. Generate comprehensive README ---
+  experiment_name = db_data.get("name", slug_id)
+  experiment_description = db_data.get("description", f"Standalone experiment: {slug_id}")
+  readme_content = _create_intelligent_readme(slug_id, experiment_name, experiment_description)
+  
+  # --- 5. Create ZIP archive ---
+  EXCLUSION_PATTERNS = [
+    "__pycache__", ".DS_Store", "*.pyc", "*.tmp", ".git", ".idea", ".vscode"
+  ]
+  with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+    # Include experiment directory
+    if experiment_path.is_dir():
+      logger.debug(f"Including experiment code from: {experiment_path}")
+      for folder_name, _, file_names in os.walk(experiment_path):
+        if Path(folder_name).name in EXCLUSION_PATTERNS:
+          continue
+
+        for file_name in file_names:
+          if any(fnmatch.fnmatch(file_name, p) for p in EXCLUSION_PATTERNS):
+            continue
+
+          file_path = Path(folder_name) / file_name
+          try:
+            arcname = f"experiments/{slug_id}/{file_path.relative_to(experiment_path)}"
+          except ValueError:
+            logger.error(f"Failed to get relative path for {file_path}")
+            continue
+
+          if file_path.suffix in (".html", ".htm"):
+            original_html = file_path.read_text(encoding="utf-8")
+            fixed_html = _fix_static_paths(original_html, slug_id)
+            zf.writestr(arcname, fixed_html)
+          else:
+            zf.write(file_path, arcname)
+
+    # Add __init__.py for experiments package
+    experiments_init = source_dir / "experiments" / "__init__.py"
+    if experiments_init.is_file():
+      zf.write(experiments_init, "experiments/__init__.py")
+    
+    # Add async_mongo_wrapper.py (required for scoped access)
+    mongo_wrapper = source_dir / "async_mongo_wrapper.py"
+    if mongo_wrapper.is_file():
+      zf.write(mongo_wrapper, "async_mongo_wrapper.py")
+      logger.debug("Included async_mongo_wrapper.py")
+    else:
+      logger.warning("async_mongo_wrapper.py not found - export may not work correctly")
+
+    # Add generated files
+    zf.writestr("Dockerfile", dockerfile_content)
+    zf.writestr("docker-compose.yml", docker_compose_content)
+    zf.writestr("db_config.json", json.dumps(db_data, indent=2))
+    zf.writestr("db_collections.json", json.dumps(db_collections, indent=2))
+    zf.writestr("main.py", standalone_main_source)
+    zf.writestr("requirements.txt", requirements_content)
+    zf.writestr("README.md", readme_content)
+
+  zip_buffer.seek(0)
+  logger.info(f"Intelligent export package created successfully for '{slug_id}'.")
+  return zip_buffer
+
+
 # -----------------------------------------------------
 # NEW: Public Standalone Export Endpoint
 # -----------------------------------------------------
@@ -1557,10 +2116,10 @@ async def package_standalone_experiment(
       response = RedirectResponse(url=login_url, status_code=status.HTTP_302_FOUND)
       return response
 
-  # 3. Perform Packaging
+  # 3. Perform Intelligent Packaging
   try:
     config_data, collections_data = await _dump_db_to_json(db, slug_id)
-    zip_buffer = _create_standalone_zip(
+    zip_buffer = _create_intelligent_export_zip(
       slug_id=slug_id,
       source_dir=BASE_DIR,
       db_data=config_data,
@@ -1568,11 +2127,11 @@ async def package_standalone_experiment(
     )
 
     user_email = user.get('email', 'Guest') if user else 'Guest'
-    file_name = f"{slug_id}_standalone_package_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    file_name = f"{slug_id}_intelligent_export_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     file_size = zip_buffer.getbuffer().nbytes
     
     # Save to local temp directory (saves B2 storage costs)
-    logger.info(f"[{slug_id}] Saving standalone export locally: {file_name}")
+    logger.info(f"[{slug_id}] Saving intelligent export locally: {file_name}")
     export_file_path = _save_export_locally(zip_buffer, file_name)
     
     # Trigger cleanup of old exports in background (non-blocking)
@@ -1599,13 +2158,13 @@ async def package_standalone_experiment(
     await _log_export(
       db=db,
       slug_id=slug_id,
-      export_type="standalone",
+      export_type="intelligent",
       user_email=user_email,
       local_file_path=str(export_file_path.relative_to(BASE_DIR)),
       file_size=file_size
     )
     
-    logger.info(f"[{slug_id}] Standalone export saved locally. Returning download URL.")
+    logger.info(f"[{slug_id}] Intelligent export saved locally. Returning download URL.")
     # Return JSON with download URL (served via HTTPS by this app)
     return JSONResponse({
       "status": "success",
@@ -1651,10 +2210,10 @@ async def package_docker_experiment(
       response = RedirectResponse(url=login_url, status_code=status.HTTP_302_FOUND)
       return response
 
-  # 3. Perform Docker Packaging
+  # 3. Perform Intelligent Packaging (Docker-enabled)
   try:
     config_data, collections_data = await _dump_db_to_json(db, slug_id)
-    zip_buffer = _create_docker_zip(
+    zip_buffer = _create_intelligent_export_zip(
       slug_id=slug_id,
       source_dir=BASE_DIR,
       db_data=config_data,
@@ -1662,11 +2221,11 @@ async def package_docker_experiment(
     )
 
     user_email = user.get('email', 'Guest') if user else 'Guest'
-    file_name = f"{slug_id}_docker_package_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    file_name = f"{slug_id}_intelligent_export_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     file_size = zip_buffer.getbuffer().nbytes
     
     # Save to local temp directory (saves B2 storage costs)
-    logger.info(f"[{slug_id}] Saving Docker export locally: {file_name}")
+    logger.info(f"[{slug_id}] Saving intelligent export locally: {file_name}")
     export_file_path = _save_export_locally(zip_buffer, file_name)
     
     # Trigger cleanup of old exports in background (non-blocking)
@@ -1693,7 +2252,7 @@ async def package_docker_experiment(
     await _log_export(
       db=db,
       slug_id=slug_id,
-      export_type="docker",
+      export_type="intelligent",
       user_email=user_email,
       local_file_path=str(export_file_path.relative_to(BASE_DIR)),
       file_size=file_size
@@ -1767,7 +2326,7 @@ async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any
   db: AsyncIOMotorDatabase = request.app.state.mongo_db
   try:
     config_data, collections_data = await _dump_db_to_json(db, slug_id)
-    zip_buffer = _create_standalone_zip(
+    zip_buffer = _create_intelligent_export_zip(
       slug_id=slug_id,
       source_dir=BASE_DIR,
       db_data=config_data,
@@ -1775,11 +2334,11 @@ async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any
     )
     
     user_email = user.get('email', 'Unknown')
-    file_name = f"{slug_id}_standalone_package_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    file_name = f"{slug_id}_intelligent_export_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     file_size = zip_buffer.getbuffer().nbytes
     
     # Save to local temp directory (saves B2 storage costs)
-    logger.info(f"[{slug_id}] Admin saving standalone export locally: {file_name}")
+    logger.info(f"[{slug_id}] Admin saving intelligent export locally: {file_name}")
     export_file_path = _save_export_locally(zip_buffer, file_name)
     
     # Trigger cleanup of old exports in background (non-blocking)
@@ -1806,7 +2365,7 @@ async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any
     await _log_export(
       db=db,
       slug_id=slug_id,
-      export_type="standalone",
+      export_type="intelligent",
       user_email=user_email,
       local_file_path=str(export_file_path.relative_to(BASE_DIR)),
       file_size=file_size

@@ -1,0 +1,374 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Intelligent Standalone FastAPI Application for experiment '{{ slug_id }}'.
+
+This is a clean, production-ready FastAPI application that:
+- Uses real MongoDB (Motor) for persistent storage
+- Does NOT require Ray (optional via docker-compose)
+- Includes proper database initialization and index management
+- Supports experiment-specific routes and static files
+
+Environment Variables:
+- MONGO_URI: MongoDB connection string (default: mongodb://mongo:27017/)
+- DB_NAME: Database name (default: labs_db)
+- PORT: Server port (default: 8000)
+- LOG_LEVEL: Logging level (default: INFO)
+"""
+
+import os
+import sys
+import json
+import logging
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request, HTTPException, status, Depends
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+# MongoDB imports
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+
+# Import experiment-specific dependencies
+try:
+    from async_mongo_wrapper import ScopedMongoWrapper, AsyncAtlasIndexManager
+    MONGO_WRAPPER_AVAILABLE = True
+except ImportError:
+    MONGO_WRAPPER_AVAILABLE = False
+    logging.warning("async_mongo_wrapper not available. Using direct MongoDB access.")
+
+# --------------------------------------------------------------------------
+# Logging Configuration
+# --------------------------------------------------------------------------
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s | standalone | %(levelname)-8s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("standalone")
+
+# --------------------------------------------------------------------------
+# Constants and Paths
+# --------------------------------------------------------------------------
+BASE_DIR = Path(__file__).resolve().parent
+SLUG = "{{ slug_id }}"
+EXPERIMENT_DIR = BASE_DIR / "experiments" / SLUG
+
+# --------------------------------------------------------------------------
+# Environment Configuration
+# --------------------------------------------------------------------------
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017/")
+DB_NAME = os.getenv("DB_NAME", "labs_db")
+PORT = int(os.getenv("PORT", "8000"))
+
+# --------------------------------------------------------------------------
+# Load Configuration from JSON files
+# --------------------------------------------------------------------------
+def _load_json(path: Path, default: Any) -> Any:
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.warning(f"JSON file not found: {path.name}. Using default.")
+    except Exception as e:
+        logger.error(f"Failed to read '{path.name}': {e}")
+    return default
+
+DB_CONFIG: Dict[str, Any] = _load_json(BASE_DIR / "db_config.json", {})
+DB_COLLECTIONS: Dict[str, List[Dict[str, Any]]] = _load_json(BASE_DIR / "db_collections.json", {})
+
+# --------------------------------------------------------------------------
+# MongoDB Connection and Database Setup
+# --------------------------------------------------------------------------
+mongo_client: Optional[AsyncIOMotorClient] = None
+mongo_db: Optional[AsyncIOMotorDatabase] = None
+
+async def connect_mongodb():
+    """Initialize MongoDB connection."""
+    global mongo_client, mongo_db
+    try:
+        logger.info(f"Connecting to MongoDB at '{MONGO_URI}'...")
+        mongo_client = AsyncIOMotorClient(
+            MONGO_URI,
+            serverSelectionTimeoutMS=5000,
+            appname=f"Standalone-{SLUG}"
+        )
+        await mongo_client.admin.command("ping")
+        mongo_db = mongo_client[DB_NAME]
+        logger.info(f"MongoDB connection successful (Database: '{DB_NAME}').")
+        
+        # Seed database with exported data if collections are empty
+        await seed_database()
+        
+        # Ensure indexes from manifest
+        await ensure_indexes()
+        
+    except Exception as e:
+        logger.critical(f"CRITICAL ERROR: Failed to connect to MongoDB: {e}", exc_info=True)
+        raise RuntimeError(f"MongoDB connection failed: {e}") from e
+
+async def close_mongodb():
+    """Close MongoDB connection."""
+    global mongo_client
+    if mongo_client:
+        mongo_client.close()
+        logger.info("MongoDB connection closed.")
+
+async def seed_database():
+    """Seed database collections with exported data."""
+    if not mongo_db:
+        return
+    
+    for collection_name, docs in DB_COLLECTIONS.items():
+        try:
+            collection = mongo_db[collection_name]
+            existing_count = await collection.count_documents({})
+            if existing_count == 0 and docs:
+                logger.info(f"Seeding collection '{collection_name}' with {len(docs)} documents...")
+                # Convert string _id back to ObjectId if needed
+                for doc in docs:
+                    if "_id" in doc and isinstance(doc["_id"], str):
+                        try:
+                            from bson import ObjectId
+                            doc["_id"] = ObjectId(doc["_id"])
+                        except Exception:
+                            pass  # Keep as string if ObjectId conversion fails
+                await collection.insert_many(docs)
+                logger.info(f"Successfully seeded '{collection_name}'.")
+        except Exception as e:
+            logger.error(f"Error seeding collection '{collection_name}': {e}", exc_info=True)
+
+async def ensure_indexes():
+    """Ensure MongoDB indexes from experiment manifest."""
+    if not mongo_db or not MONGO_WRAPPER_AVAILABLE:
+        return
+    
+    if "managed_indexes" not in DB_CONFIG:
+        return
+    
+    try:
+        managed_indexes = DB_CONFIG.get("managed_indexes", {})
+        for collection_name, index_defs in managed_indexes.items():
+            # Construct the full collection name (with experiment prefix)
+            full_collection_name = f"{SLUG}_{collection_name}"
+            collection = mongo_db[full_collection_name]
+            
+            for index_def in index_defs:
+                index_name = index_def.get("name", "unnamed_index")
+                index_type = index_def.get("type", "search")
+                definition = index_def.get("definition", {})
+                
+                if index_type == "vectorSearch":
+                    # Use AsyncAtlasIndexManager for vector search indexes
+                    manager = AsyncAtlasIndexManager(collection)
+                    await manager.create_search_index(
+                        name=index_name,
+                        definition=definition,
+                        index_type="vectorSearch",
+                        wait_for_ready=True
+                    )
+                    logger.info(f"Created vector search index '{index_name}' on '{full_collection_name}'.")
+                elif index_type == "search":
+                    # Lucene search index
+                    manager = AsyncAtlasIndexManager(collection)
+                    await manager.create_search_index(
+                        name=index_name,
+                        definition=definition,
+                        index_type="search",
+                        wait_for_ready=True
+                    )
+                    logger.info(f"Created search index '{index_name}' on '{full_collection_name}'.")
+                else:
+                    # Standard MongoDB index
+                    try:
+                        await collection.create_index(index_def.get("keys", {}), background=True)
+                        logger.info(f"Created standard index '{index_name}' on '{full_collection_name}'.")
+                    except Exception as e:
+                        logger.error(f"Error creating standard index '{index_name}': {e}")
+    except Exception as e:
+        logger.error(f"Error ensuring indexes: {e}", exc_info=True)
+
+# --------------------------------------------------------------------------
+# Core Dependencies Stubs (minimal auth for standalone)
+# --------------------------------------------------------------------------
+async def get_current_user(token: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Simple auth stub - returns None (no auth required)."""
+    return None
+
+async def require_admin(current_user: Optional[Dict[str, Any]] = Depends(get_current_user)):
+    """Admin check - always allows in standalone mode."""
+    return current_user or {"email": "admin@standalone", "is_admin": True}
+
+async def get_scoped_db(request: Request) -> ScopedMongoWrapper:
+    """Provide scoped database wrapper."""
+    if not MONGO_WRAPPER_AVAILABLE or not mongo_db:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database not available."
+        )
+    
+    # Create scoped wrapper with experiment slug as scope
+    return ScopedMongoWrapper(
+        real_db=mongo_db,
+        read_scopes=[SLUG],
+        write_scope=SLUG
+    )
+
+# Create a minimal core_deps module
+import types
+core_deps = types.ModuleType("core_deps")
+core_deps.get_current_user = get_current_user
+core_deps.require_admin = require_admin
+core_deps.get_scoped_db = get_scoped_db
+sys.modules["core_deps"] = core_deps
+
+# --------------------------------------------------------------------------
+# Optional Ray Support (stub if Ray not available)
+# --------------------------------------------------------------------------
+try:
+    import ray
+    RAY_AVAILABLE = True
+    logger.info("Ray is available (optional).")
+except ImportError:
+    RAY_AVAILABLE = False
+    logger.info("Ray not available - using direct MongoDB access.")
+    # Create minimal Ray stub
+    ray = types.ModuleType("ray")
+    
+    def _stub_remote(obj):
+        class FakeActor:
+            def __init__(self, *args, **kwargs):
+                logger.warning("Ray actor called but Ray not available. Using direct access.")
+                self._args = args
+                self._kwargs = kwargs
+            def __getattr__(self, name):
+                async def method_stub(*a, **kw):
+                    logger.warning(f"Ray method '{name}' called but Ray not available.")
+                    return None
+                return method_stub
+            @classmethod
+            def remote(cls, *a, **kw):
+                return cls(*a, **kw)
+        return FakeActor
+    
+    def _stub_get_actor(name, namespace=None):
+        logger.warning(f"ray.get_actor('{name}') called but Ray not available.")
+        return _stub_remote(None)
+    
+    ray.remote = _stub_remote
+    ray.get_actor = _stub_get_actor
+    ray.init = lambda *args, **kwargs: None
+    ray.shutdown = lambda *args, **kwargs: None
+    
+    sys.modules["ray"] = ray
+
+# --------------------------------------------------------------------------
+# FastAPI Application
+# --------------------------------------------------------------------------
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan manager."""
+    # Startup
+    await connect_mongodb()
+    yield
+    # Shutdown
+    await close_mongodb()
+
+app = FastAPI(
+    title=f"Standalone: {SLUG}",
+    version="1.0.0",
+    description=f"Clean standalone FastAPI application for experiment '{SLUG}'",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+    lifespan=lifespan
+)
+
+# Mount static files
+static_dir = EXPERIMENT_DIR / "static"
+if static_dir.is_dir():
+    app.mount(
+        f"/experiments/{SLUG}/static",
+        StaticFiles(directory=str(static_dir)),
+        name=f"{SLUG}_static"
+    )
+    logger.info(f"Mounted static files from: {static_dir}")
+
+# Root route - serve experiment index.html
+@app.get("/", response_class=HTMLResponse)
+async def standalone_index(request: Request):
+    """Serve index.html from the experiment templates."""
+    local_index = EXPERIMENT_DIR / "templates" / "index.html"
+    if local_index.is_file():
+        templates = Jinja2Templates(directory=str(EXPERIMENT_DIR / "templates"))
+        return templates.TemplateResponse("index.html", {"request": request})
+    
+    # Fallback
+    return HTMLResponse(f"""
+    <html>
+        <head><title>Standalone: {SLUG}</title></head>
+        <body>
+            <h2>Standalone experiment: '{SLUG}'</h2>
+            <p>No local index.html found. Check templates directory.</p>
+            <p><a href="/docs">API Documentation</a></p>
+        </body>
+    </html>
+    """, status_code=200)
+
+# Debug endpoint
+@app.get("/_debug/db", response_class=JSONResponse)
+async def debug_db():
+    """Debug endpoint to check database status."""
+    if not mongo_db:
+        return {"error": "Database not connected"}
+    
+    collections_info = {}
+    for collection_name in await mongo_db.list_collection_names():
+        collection = mongo_db[collection_name]
+        count = await collection.count_documents({})
+        collections_info[collection_name] = {"count": count}
+    
+    return {
+        "mongo_uri": MONGO_URI,
+        "db_name": DB_NAME,
+        "collections": collections_info,
+        "ray_available": RAY_AVAILABLE
+    }
+
+# --------------------------------------------------------------------------
+# Import and Mount Experiment Router
+# --------------------------------------------------------------------------
+sys.path.insert(0, str(BASE_DIR))
+try:
+    mod_name = f"experiments.{SLUG.replace('-', '_')}"
+    exp_mod = __import__(mod_name, fromlist=["bp"])
+    if not hasattr(exp_mod, "bp"):
+        raise RuntimeError(f"Module '{mod_name}' has no 'bp' APIRouter.")
+    exp_router = getattr(exp_mod, "bp")
+    app.include_router(exp_router, prefix=f"/experiments/{SLUG}", tags=[f"Experiment: {SLUG}"])
+    logger.info(f"Included APIRouter for experiment '{SLUG}'.")
+except ModuleNotFoundError as e:
+    logger.error(f"No local experiment module found for '{SLUG}': {e}")
+except Exception as e:
+    logger.error(f"Failed to include experiment router: {e}", exc_info=True)
+
+# --------------------------------------------------------------------------
+# Main Entry Point
+# --------------------------------------------------------------------------
+if __name__ == "__main__":
+    import uvicorn
+    logger.info(f"Starting standalone server for experiment '{SLUG}'...")
+    logger.info(f"MongoDB URI: {MONGO_URI}")
+    logger.info(f"Database: {DB_NAME}")
+    logger.info(f"Port: {PORT}")
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=PORT,
+        log_level="info",
+        reload=False
+    )
