@@ -1129,6 +1129,56 @@ Ray offers the right set of tools to **scale this hybrid workload horizontally**
 
 ---
 
+Here is a new section, formatted as an appendix, to add to your documentation.
+
+-----
+
+## Appendix G: Local Development with HTTPS (SSL) 🔐
+
+When you're building locally, you often run into a frustrating modern web problem: many features simply **require HTTPS (`https://`) to work**, even on `localhost`. This includes:
+
+  * **Secure Cookies**: Setting cookies with the `Secure` flag (essential for robust authentication).
+  * **OAuth Callbacks**: Services like "Sign in with Google" or "Sign in with GitHub" often refuse to redirect back to an `http://` address.
+  * **Browser APIs**: Many new APIs, like geolocation, camera/microphone access, or web crypto, are disabled by browsers on insecure origins.
+
+Since g.nome is designed to be the engine for *all* your projects, it needs to support this workflow. Because g.nome is a standard FastAPI application at its core, enabling local SSL is straightforward.
+
+### Step 1: Create a Self-Signed Certificate
+
+You only need to do this once. Run the following `openssl` command in the root directory of your g.nome project. This will generate two files: `localhost.key` and `localhost.crt`, valid for one year.
+
+```bash
+openssl req -x509 -newkey rsa:4096 -nodes -keyout localhost.key -out localhost.crt -days 365 -subj "/CN=localhost"
+```
+
+  * `req -x509`: Creates a self-signed certificate.
+  * `-newkey rsa:4096`: Generates a new 4096-bit RSA private key.
+  * `-nodes`: "No DES," meaning the private key won't be encrypted with a passphrase (ideal for local dev).
+  * `-keyout/ -out`: Specifies the output filenames for the key and certificate.
+  * `-subj "/CN=localhost"`: Sets the "Common Name" to `localhost`, which is what the browser will check.
+
+### Step 2: Run g.nome with Uvicorn's SSL Flags
+
+Now, simply tell `uvicorn` (the ASGI server that runs FastAPI) to use these files when it starts. If you normally run your app with a command like `uvicorn main:app --reload`, you just need to add two flags:
+
+```bash
+uvicorn main:app --reload --ssl-keyfile=localhost.key --ssl-certfile=localhost.crt
+```
+
+Your server will now start on `https://localhost:8000` instead of `http://localhost:8000`.
+
+### Step 3: Trusting Your Local Certificate
+
+Your browser will now show a **"Not Secure"** warning (e.g., "NET::ERR\_CERT\_AUTHORITY\_INVALID").
+
+**This is expected and normal.**
+
+It's happening because the certificate was signed by "you" (via `openssl`), not by a globally trusted Certificate Authority (CA) that the browser recognizes.
+
+> **The Fix:** Simply click **"Advanced"** and then **"Proceed to localhost (unsafe)"**.
+>
+> Your browser will remember this exception for `localhost`, and your g.nome instance will now be running with a valid `https://` connection, allowing all your secure-only features to work perfectly.
+
 ---
   
 ## Conclusion  

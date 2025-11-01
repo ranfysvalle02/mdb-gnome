@@ -461,43 +461,37 @@ async def lifespan(app: FastAPI):
 
       try:
           if RAY_CONNECTION_ADDRESS:
-              # Explicit connection attempt to an external or specific cluster
+              # --- THIS BLOCK IS FOR DOCKER-COMPOSE ---
+              # We remove the lines here because we are connecting
+              # to an existing cluster that already has its own config.
               logger.info(f"Connecting to Ray cluster (address='{RAY_CONNECTION_ADDRESS}', namespace='modular_labs')...")
               ray.init(
                   address=RAY_CONNECTION_ADDRESS,
                   namespace="modular_labs",
                   ignore_reinit_error=True,
                   runtime_env=job_runtime_env,
-                  log_to_driver=False,
-                  num_cpus=2, # <-- Limit Ray's core usage
-                  object_store_memory=2_000_000_000
+                  log_to_driver=False
+                  # num_cpus=2,  <--- REMOVE THIS
+                  # object_store_memory=2_000_000_000 <--- AND REMOVE THIS
               )
               connect_mode = f"EXTERNAL ({RAY_CONNECTION_ADDRESS})"
           else:
-              # Start a new, local Ray runtime within the container
+              # We LEAVE this block 100% UNCHANGED.
+              # These settings are correct for limiting a new local instance.
               logger.info("Starting a new LOCAL Ray cluster instance inside the container...")
               ray.init(
                   namespace="modular_labs",
                   ignore_reinit_error=True,
                   runtime_env=job_runtime_env,
                   log_to_driver=False,
-                  num_cpus=2, # <-- Limit Ray's core usage
-                  object_store_memory=2_000_000_000
+                  num_cpus=2, # <-- THIS STAYS (for Render)
+                  object_store_memory=2_000_000_000 # <-- THIS STAYS (for Render)
               )
               connect_mode = "LOCAL INSTANCE"
               
           app.state.ray_is_available = True
-          logger.info(f" Ray connection successful (Mode: {connect_mode}).")
-          
-          try:
-            dash_url = ray.get_dashboard_url()
-            if dash_url:
-              logger.info(f"Ray Dashboard URL: {dash_url}")
-          except Exception:
-            pass
-            
       except Exception as e:
-          logger.exception(f" Ray connection failed: {e}. Ray features will be disabled.")
+          logger.error(f"Failed to initialize Ray: {e}", exc_info=True)
           app.state.ray_is_available = False
   else:
       logger.warning("Ray library not found. Ray integration is disabled.")
@@ -590,15 +584,181 @@ class ExperimentScopeMiddleware(BaseHTTPMiddleware):
     return response
 
 
+class ProxyAwareHTTPSMiddleware(BaseHTTPMiddleware):
+  """
+  Proxy-aware middleware: Detects proxy headers and rewrites request.url
+  to reflect the actual client scheme/host BEFORE route handlers execute.
+  This ensures FastAPI's url_for() generates correct HTTPS URLs when behind proxies.
+  
+  Handles multiple proxy header formats:
+  - X-Forwarded-Proto (Render.com, AWS ELB, etc.)
+  - X-Forwarded-Ssl (older proxies)
+  - Forwarded (RFC 7239)
+  - X-Forwarded-Host
+  """
+  async def dispatch(self, request: Request, call_next: ASGIApp):
+    # Store original values for debugging
+    original_scheme = request.url.scheme
+    original_host = request.url.hostname
+    
+    # Detect if we're in localhost/development (no proxy)
+    is_localhost = original_host in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")
+    has_proxy_headers = any((
+      request.headers.get("X-Forwarded-Proto"),
+      request.headers.get("X-Forwarded-Host"),
+      request.headers.get("Forwarded"),
+      request.headers.get("X-Forwarded-Ssl")
+    ))
+    
+    # Detect actual scheme from proxy headers (priority order)
+    # Only trust proxy headers if we're NOT on localhost OR we have explicit proxy headers
+    detected_scheme = original_scheme
+    detected_host = original_host
+    detected_port = request.url.port
+    
+    # On localhost without proxy headers, use HTTP (most local dev servers don't have SSL)
+    # This prevents forcing HTTPS when the server doesn't actually serve SSL
+    # If user accesses via https://localhost, the request will come in as HTTPS,
+    # but we should normalize to HTTP for URL generation to match actual server
+    if is_localhost and not has_proxy_headers:
+      # In localhost dev, force HTTP to match typical dev server setup
+      # This prevents SSL errors when browser tries HTTPS but server is HTTP-only
+      detected_scheme = "http"
+      logger.debug(f"Localhost request without proxy headers - using HTTP (original was {original_scheme})")
+    else:
+      # We're behind a proxy or on a real server - check proxy headers
+      
+      # Check X-Forwarded-Proto (most common - Render.com, AWS ELB)
+      forwarded_proto = request.headers.get("X-Forwarded-Proto", "").lower()
+      if forwarded_proto in ("https", "http"):
+        detected_scheme = forwarded_proto
+        logger.debug(f"Detected scheme from X-Forwarded-Proto: {detected_scheme}")
+      
+      # Check X-Forwarded-Ssl (older proxies)
+      if request.headers.get("X-Forwarded-Ssl", "").lower() == "on":
+        detected_scheme = "https"
+        logger.debug(f"Detected HTTPS from X-Forwarded-Ssl header")
+      
+      # Check Forwarded header (RFC 7239 format: proto=https;host=example.com)
+      forwarded_header = request.headers.get("Forwarded", "")
+      if forwarded_header:
+        # Simple parsing for proto parameter
+        if "proto=https" in forwarded_header.lower():
+          detected_scheme = "https"
+          logger.debug(f"Detected HTTPS from Forwarded header")
+        # Parse host from Forwarded header if present
+        host_match = re.search(r'host=([^;,\s]+)', forwarded_header, re.IGNORECASE)
+        if host_match:
+          host_value = host_match.group(1).strip('"')
+          if ":" in host_value:
+            detected_host, port_str = host_value.rsplit(":", 1)
+            try:
+              detected_port = int(port_str)
+            except ValueError:
+              pass
+          else:
+            detected_host = host_value
+      
+      # Check X-Forwarded-Host
+      forwarded_host = request.headers.get("X-Forwarded-Host")
+      if forwarded_host:
+        # X-Forwarded-Host may include port
+        if ":" in forwarded_host:
+          detected_host, port_str = forwarded_host.rsplit(":", 1)
+          try:
+            detected_port = int(port_str)
+          except ValueError:
+            pass
+        else:
+          detected_host = forwarded_host
+        logger.debug(f"Detected host from X-Forwarded-Host: {detected_host}")
+    
+    # Force HTTPS in production when FORCE_HTTPS env var is set
+    # But NOT on localhost unless explicitly requested
+    force_https = os.getenv("FORCE_HTTPS", "").lower() == "true"
+    if force_https and not is_localhost:
+      detected_scheme = "https"
+      logger.debug("Forcing HTTPS due to FORCE_HTTPS environment variable")
+    
+    # Store corrected values in request.state for later use
+    request.state.original_scheme = original_scheme
+    request.state.original_host = original_host
+    request.state.detected_scheme = detected_scheme
+    request.state.detected_host = detected_host
+    request.state.detected_port = detected_port
+    
+    # Rewrite request.scope to reflect actual client scheme/host
+    # This ensures request.url and url_for() use correct values
+    if detected_scheme != original_scheme or detected_host != original_host:
+      # Modify the ASGI scope to change URL components
+      request.scope["scheme"] = detected_scheme
+      # Update server tuple (host, port)
+      if detected_port:
+        request.scope["server"] = (detected_host, detected_port)
+      else:
+        # Use default port based on scheme
+        default_port = 443 if detected_scheme == "https" else 80
+        request.scope["server"] = (detected_host, default_port)
+      
+      # Reconstruct the URL object
+      # Note: Starlette's Request.url is cached, so we need to clear it
+      if hasattr(request, "_url"):
+        delattr(request, "_url")
+      
+      logger.info(
+        f"Proxy-aware HTTPS: Rewrote request URL "
+        f"{original_scheme}://{original_host} -> {detected_scheme}://{detected_host}"
+      )
+    
+    response = await call_next(request)
+    return response
+
+
 class HTTPSEnforcementMiddleware(BaseHTTPMiddleware):
   """
-  Security middleware: Forces HTTPS on all redirects and adds HSTS headers.
-  Prevents HTTP downgrade attacks and mixed content issues.
+  Proxy-aware security middleware: Only enforces HTTPS when the request actually
+  came via HTTPS (detected through proxy headers or direct connection).
+  
+  This is intelligent for deployments behind proxies like Render.com:
+  - If the proxy indicates HTTPS (X-Forwarded-Proto: https), enforces HTTPS
+  - If the proxy indicates HTTP, does NOT enforce HTTPS (allows proxy to handle it)
+  - Prevents HTTP downgrade attacks and mixed content issues only when HTTPS is active.
   """
   async def dispatch(self, request: Request, call_next: ASGIApp):
     response = await call_next(request)
     
+    # Check if this request is actually using HTTPS
+    # Use the detected scheme from ProxyAwareHTTPSMiddleware if available
+    # Otherwise check the request URL scheme directly
+    detected_scheme = getattr(request.state, "detected_scheme", None)
+    if detected_scheme is None:
+      # Fallback: check proxy headers directly
+      forwarded_proto = request.headers.get("X-Forwarded-Proto", "").lower()
+      if forwarded_proto in ("https", "http"):
+        detected_scheme = forwarded_proto
+      elif request.headers.get("X-Forwarded-Ssl", "").lower() == "on":
+        detected_scheme = "https"
+      elif "proto=https" in request.headers.get("Forwarded", "").lower():
+        detected_scheme = "https"
+      else:
+        detected_scheme = request.url.scheme
+    
+    # Only enforce HTTPS if the request actually came via HTTPS
+    # This allows the proxy (like Render.com) to handle HTTPS termination
+    # without our app trying to force it when it shouldn't
+    is_https = detected_scheme == "https"
+    
+    if not is_https:
+      # Request came via HTTP - don't enforce HTTPS
+      # This allows proper operation behind proxies that handle HTTPS at the edge
+      logger.debug(f"Skipping HTTPS enforcement - request came via {detected_scheme}")
+      return response
+    
+    # Request came via HTTPS - enforce it
+    logger.debug("Enforcing HTTPS - request came via HTTPS")
+    
     # Add HSTS header - tells browsers to always use HTTPS for this domain
+    # Only add this when we're actually serving HTTPS
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
     
     # Force HTTPS on any Location redirect headers - catch ANY http:// redirect
@@ -608,16 +768,75 @@ class HTTPSEnforcementMiddleware(BaseHTTPMiddleware):
       if location.startswith("http://"):
         https_location = location.replace("http://", "https://", 1)
         response.headers["Location"] = https_location
-        logger.warning(f"FORCED HTTPS redirect: {location} -> {https_location}")
+        logger.debug(f"Enforced HTTPS redirect: {location} -> {https_location}")
+    
+    # Sanitize mixed content in response bodies
+    content_type = response.headers.get("content-type", "").lower()
+    
+    # Only process text-based content types
+    text_content_types = [
+      "application/json",
+      "text/html",
+      "text/css",
+      "text/javascript",
+      "application/javascript",
+      "text/plain",
+      "text/xml",
+      "application/xml",
+    ]
+    
+    if any(ct in content_type for ct in text_content_types):
+      # Check if response has a body
+      if hasattr(response, "body") and response.body:
+        try:
+          # Decode response body
+          if isinstance(response.body, bytes):
+            body_text = response.body.decode("utf-8")
+          else:
+            body_text = str(response.body)
+          
+          original_body = body_text
+          
+          # Replace http:// URLs with https://
+          # Pattern 1: Quoted URLs in JSON/HTML attributes: "http://...
+          body_text = re.sub(r'"http://', '"https://', body_text)
+          
+          # Pattern 2: Unquoted URLs: http://...
+          body_text = re.sub(r'\bhttp://', 'https://', body_text)
+          
+          # Pattern 3: HTML/CSS attributes: src="http://, href="http://, url(http://
+          body_text = re.sub(r'(src|href)=["\']http://', r'\1="https://', body_text)
+          body_text = re.sub(r'url\(http://', 'url(https://', body_text)
+          
+          # Pattern 4: JSON string values (more specific)
+          body_text = re.sub(r'":\s*"http://', '": "https://', body_text)
+          
+          # Only update if changes were made
+          if body_text != original_body:
+            # Re-encode as bytes
+            response.body = body_text.encode("utf-8")
+            # Update content length if present
+            if "content-length" in response.headers:
+              response.headers["content-length"] = str(len(response.body))
+            
+            logger.debug("Sanitized mixed content in response body (HTTP -> HTTPS)")
+        
+        except (UnicodeDecodeError, AttributeError) as e:
+          # Skip if body isn't text or can't be decoded
+          logger.debug(f"Skipping mixed content sanitization: {e}")
     
     return response
 
 
+# Middleware order matters: Proxy-aware middleware must run FIRST
+# so that request.url is corrected before route handlers execute
+app.add_middleware(ProxyAwareHTTPSMiddleware)
 app.add_middleware(ExperimentScopeMiddleware)
 G_NOME_ENV = os.getenv("G_NOME_ENV", "production").lower()
 
 if G_NOME_ENV == "production":
-    logger.info("Production environment detected. Enabling HTTPSEnforcementMiddleware.")
+    logger.info("Production environment detected. Enabling proxy-aware HTTPSEnforcementMiddleware.")
+    logger.info("HTTPS will only be enforced when requests actually come via HTTPS (detected from proxy headers).")
     app.add_middleware(HTTPSEnforcementMiddleware)
 else:
     logger.warning(f"Non-production environment ('{G_NOME_ENV}') detected. Skipping HTTPS enforcement.")
@@ -2093,6 +2312,79 @@ def _create_intelligent_export_zip(
 public_api_router = APIRouter(prefix="/api", tags=["Public API"])
 
 
+def _build_absolute_https_url(request: Request, relative_url: str) -> str:
+  """
+  Build an absolute URL from a relative URL, handling proxy headers intelligently.
+  
+  Uses request.state values from ProxyAwareHTTPSMiddleware if available,
+  falls back to checking proxy headers directly.
+  
+  Args:
+    request: FastAPI Request object
+    relative_url: Relative URL path (e.g., "/exports/file.zip") or absolute URL
+    
+  Returns:
+    Absolute URL (HTTPS in production when behind proxy, respects actual scheme in dev)
+  """
+  # Handle absolute URLs
+  if not relative_url.startswith("/"):
+    # Already absolute, but ensure HTTPS in production (but not on localhost)
+    if relative_url.startswith("http://"):
+      G_NOME_ENV = os.getenv("G_NOME_ENV", "production").lower()
+      host = request.url.hostname
+      is_localhost = host in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")
+      
+      if G_NOME_ENV == "production" and not is_localhost:
+        https_url = relative_url.replace("http://", "https://", 1)
+        logger.warning(f"Forced HTTPS on absolute URL: {relative_url} -> {https_url}")
+        return https_url
+    return relative_url
+  
+  # Use detected scheme/host from proxy middleware if available
+  if hasattr(request.state, "detected_scheme") and hasattr(request.state, "detected_host"):
+    scheme = request.state.detected_scheme
+    host = request.state.detected_host
+  else:
+    # Fallback: check proxy headers directly
+    is_localhost = request.url.hostname in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")
+    has_proxy_headers = any((
+      request.headers.get("X-Forwarded-Proto"),
+      request.headers.get("X-Forwarded-Host"),
+      request.headers.get("Forwarded"),
+      request.headers.get("X-Forwarded-Ssl")
+    ))
+    
+    # On localhost without proxy headers, use HTTP (most dev servers don't have SSL)
+    # This prevents SSL errors when generating URLs that the browser tries to access
+    if is_localhost and not has_proxy_headers:
+      scheme = "http"
+    else:
+      # Behind proxy or real server - trust proxy headers
+      scheme = "https" if (
+        request.url.scheme == "https" or 
+        request.headers.get("X-Forwarded-Proto", "").lower() == "https" or
+        request.headers.get("X-Forwarded-Ssl", "").lower() == "on"
+      ) else request.url.scheme
+    
+    host = (
+      request.headers.get("X-Forwarded-Host") or 
+      request.headers.get("Host") or 
+      request.url.hostname
+    )
+  
+  # Force HTTPS in production, but NOT on localhost (server may not have SSL)
+  G_NOME_ENV = os.getenv("G_NOME_ENV", "production").lower()
+  is_localhost = host in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]") or (host and "localhost" in host.lower())
+  
+  if G_NOME_ENV == "production" and scheme != "https" and not is_localhost:
+    scheme = "https"
+    logger.debug(f"Forcing HTTPS URL in production environment (non-localhost)")
+  
+  # Build absolute URL
+  absolute_url = f"{scheme}://{host}{relative_url}"
+  return absolute_url
+
+
 @public_api_router.get("/package-standalone/{slug_id}", name="package_standalone")
 async def package_standalone_experiment(
   request: Request,
@@ -2141,20 +2433,9 @@ async def package_standalone_experiment(
     
     # Generate local download URL (HTTPS via the app)
     # FastAPI url_for needs filename parameter for path
-    # Ensure absolute HTTPS URL (fixes mixed content issues)
-    relative_url = str(request.url_for("exports", filename=file_name))  # Convert URL object to string
-    # Convert to absolute HTTPS URL
-    if relative_url.startswith("/"):
-      # Use the request's scheme and host to build absolute URL
-      scheme = "https" if request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https" else request.url.scheme
-      host = request.headers.get("X-Forwarded-Host") or request.headers.get("Host") or request.url.hostname
-      download_url = f"{scheme}://{host}{relative_url}"
-    else:
-      # Already absolute, but ensure HTTPS
-      download_url = relative_url
-      if download_url.startswith("http://"):
-        download_url = download_url.replace("http://", "https://", 1)
-        logger.warning(f"Forced HTTPS on download URL: {download_url}")
+    # Use helper function to build absolute HTTPS URL (handles proxy headers)
+    relative_url = str(request.url_for("exports", filename=file_name))
+    download_url = _build_absolute_https_url(request, relative_url)
     
     # Log export to database
     await _log_export(
@@ -2235,20 +2516,9 @@ async def package_docker_experiment(
     
     # Generate local download URL (HTTPS via the app)
     # FastAPI url_for needs filename parameter for path
-    # Ensure absolute HTTPS URL (fixes mixed content issues)
-    relative_url = str(request.url_for("exports", filename=file_name))  # Convert URL object to string
-    # Convert to absolute HTTPS URL
-    if relative_url.startswith("/"):
-      # Use the request's scheme and host to build absolute URL
-      scheme = "https" if request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https" else request.url.scheme
-      host = request.headers.get("X-Forwarded-Host") or request.headers.get("Host") or request.url.hostname
-      download_url = f"{scheme}://{host}{relative_url}"
-    else:
-      # Already absolute, but ensure HTTPS
-      download_url = relative_url
-      if download_url.startswith("http://"):
-        download_url = download_url.replace("http://", "https://", 1)
-        logger.warning(f"Forced HTTPS on download URL: {download_url}")
+    # Use helper function to build absolute HTTPS URL (handles proxy headers)
+    relative_url = str(request.url_for("exports", filename=file_name))
+    download_url = _build_absolute_https_url(request, relative_url)
     
     # Log export to database
     await _log_export(
@@ -2348,20 +2618,9 @@ async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any
     
     # Generate local download URL (HTTPS via the app)
     # FastAPI url_for needs filename parameter for path
-    # Ensure absolute HTTPS URL (fixes mixed content issues)
-    relative_url = str(request.url_for("exports", filename=file_name))  # Convert URL object to string
-    # Convert to absolute HTTPS URL
-    if relative_url.startswith("/"):
-      # Use the request's scheme and host to build absolute URL
-      scheme = "https" if request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https" else request.url.scheme
-      host = request.headers.get("X-Forwarded-Host") or request.headers.get("Host") or request.url.hostname
-      download_url = f"{scheme}://{host}{relative_url}"
-    else:
-      # Already absolute, but ensure HTTPS
-      download_url = relative_url
-      if download_url.startswith("http://"):
-        download_url = download_url.replace("http://", "https://", 1)
-        logger.warning(f"Forced HTTPS on download URL: {download_url}")
+    # Use helper function to build absolute HTTPS URL (handles proxy headers)
+    relative_url = str(request.url_for("exports", filename=file_name))
+    download_url = _build_absolute_https_url(request, relative_url)
     
     # Log export to database
     await _log_export(

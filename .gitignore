@@ -208,3 +208,7 @@ __marimo__/
 
 # Temporary export files (local storage, auto-cleaned after 24h)
 temp_exports/
+
+# SSL certificates for local development
+localhost.key
+localhost.crt

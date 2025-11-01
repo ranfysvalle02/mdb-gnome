@@ -14,10 +14,18 @@ services:
       # Mounts your local code (main.py, experiments/, etc.) into the container
       # This is what makes --reload work.
       - .:/app 
+      - ./localhost.crt:/app/localhost.crt:ro
+      - ./localhost.key:/app/localhost.key:ro
     env_file:
       - .env # Make sure .env contains your B2/AWS credentials
+    environment:
+      # Tell the Ray Client (api) where the Ray Server (ray-head) is.
+      # "ray-head" is the service name, "10001" is the client port.
+      - RAY_ADDRESS=ray://ray-head:10001
     command: >
       uvicorn main:app --host 0.0.0.0 --port 10000 --reload
+      --ssl-keyfile=/app/localhost.key
+      --ssl-certfile=/app/localhost.crt
     depends_on:
       mongo:
         condition: service_healthy
