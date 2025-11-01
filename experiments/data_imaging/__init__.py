@@ -1,50 +1,64 @@
-# (This is the NEW "Thin Client")
+# (This is the NEW "Thin Client" - NOW FIXED)
 
 import logging
 import ray
 from fastapi import APIRouter, Request, HTTPException, Depends, Query
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse # <-- UPDATED
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from starlette import status
+from typing import Any 
 
+from core_deps import get_scoped_db
+
+try:
+    from async_mongo_wrapper import ScopedMongoWrapper
+except ImportError:
+    from core_deps import ScopedMongoWrapper # Fallback import
+      
 # --- This is the *only* local import ---
 from .actor import ExperimentActor
 
 logger = logging.getLogger(__name__)
 bp = APIRouter()
 
-# --- Actor Handle Dependency ---
+# --- Actor Handle Dependency (FIXED) ---
+# This now matches the "working" pattern from click_tracker:
+# 1. It's an `async def` function, not a factory.
+# 2. It `Depends` on `get_scoped_db`.
+# 3. It keeps the superior dynamic slug_id logic.
 
-def get_actor_handle():
+async def get_actor_handle(
+    request: Request,
+    # This dependency is present in the working click_tracker.
+    # It ensures all platform dependencies are ready.
+    db: ScopedMongoWrapper = Depends(get_scoped_db) 
+) -> "ray.actor.ActorHandle":
     """
     FastAPI Dependency to get the handle for the experiment's
     dedicated Ray actor.
     """
-    def _get_handle(request: Request) -> "ray.actor.ActorHandle":
-        if not getattr(request.app.state, "ray_is_available", False):
-            logger.error("Ray is globally unavailable, blocking actor handle request.")
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, 
-                detail="Ray service is unavailable. Check Ray cluster status."
-            )
-            
-        slug_id = getattr(request.state, "slug_id", None)
-        if not slug_id:
-            logger.error("Server error: slug_id not found in request state.")
-            raise HTTPException(500, "Server error: slug_id not found in request state.")
+    if not getattr(request.app.state, "ray_is_available", False):
+        logger.error("Ray is globally unavailable, blocking actor handle request.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, 
+            detail="Ray service is unavailable. Check Ray cluster status."
+        )
         
-        actor_name = f"{slug_id}-actor"
-        
-        try:
-            handle = ray.get_actor(actor_name, namespace="modular_labs")
-            return handle
-        except ValueError:
-            logger.error(f"CRITICAL: Actor '{actor_name}' found no process running.")
-            raise HTTPException(503, f"Experiment service '{actor_name}' is not running.")
-        except Exception as e:
-            logger.error(f"Failed to get actor handle '{actor_name}': {e}", exc_info=True)
-            raise HTTPException(500, "Error connecting to experiment service.")
-
-    return Depends(_get_handle)
+    slug_id = getattr(request.state, "slug_id", None)
+    if not slug_id:
+        logger.error("Server error: slug_id not found in request state.")
+        raise HTTPException(500, "Server error: slug_id not found in request state.")
+    
+    actor_name = f"{slug_id}-actor"
+    
+    try:
+        handle = ray.get_actor(actor_name, namespace="modular_labs")
+        return handle
+    except ValueError:
+        logger.error(f"CRITICAL: Actor '{actor_name}' found no process running.")
+        raise HTTPException(503, f"Experiment service '{actor_name}' is not running.")
+    except Exception as e:
+        logger.error(f"Failed to get actor handle '{actor_name}': {e}", exc_info=True)
+        raise HTTPException(500, "Error connecting to experiment service.")
 
 
 # --- Thin Client Routes (Pure Forwarders) ---
@@ -52,7 +66,7 @@ def get_actor_handle():
 @bp.get("/", response_class=HTMLResponse)
 async def show_gallery(
     request: Request, 
-    actor: "ray.actor.ActorHandle" = get_actor_handle()
+    actor: "ray.actor.ActorHandle" = Depends(get_actor_handle) # <-- FIX: Was get_actor_handle()
 ):
     """
     Renders the main gallery by calling the actor.
@@ -70,7 +84,7 @@ async def show_gallery(
 async def show_detail(
     request: Request, 
     workout_id: int, 
-    actor: "ray.actor.ActorHandle" = get_actor_handle(),
+    actor: "ray.actor.ActorHandle" = Depends(get_actor_handle), # <-- FIX: Was get_actor_handle()
     r: str = Query("heart_rate", alias="r_key"),
     g: str = Query("calories_per_min", alias="g_key"),
     b: str = Query("speed_kph", alias="b_key")
@@ -100,7 +114,7 @@ async def show_detail(
 async def get_viz_data(
     request: Request, 
     workout_id: int, 
-    actor: "ray.actor.ActorHandle" = get_actor_handle(),
+    actor: "ray.actor.ActorHandle" = Depends(get_actor_handle), # <-- FIX: Was get_actor_handle()
     r_key: str = Query(...),
     g_key: str = Query(...),
     b_key: str = Query(...)
@@ -126,7 +140,7 @@ async def get_viz_data(
 async def analyze_workout(
     request: Request, 
     workout_id: int, 
-    actor: "ray.actor.ActorHandle" = get_actor_handle()
+    actor: "ray.actor.ActorHandle" = Depends(get_actor_handle) # <-- FIX: Was get_actor_handle()
 ):
     """
     Calls the actor to run analysis, then redirects.
@@ -148,7 +162,7 @@ async def analyze_workout(
 @bp.post("/generate-demo")
 async def generate_demo(
     request: Request,
-    actor: "ray.actor.ActorHandle" = get_actor_handle()
+    actor: "ray.actor.ActorHandle" = Depends(get_actor_handle) # <-- FIX: Was get_actor_handle()
 ):
     """
     Calls the Ray Actor to create *multiple* new workout docs for a demo.
@@ -171,7 +185,7 @@ async def generate_demo(
 @bp.post("/generate")
 async def generate_one(
     request: Request, 
-    actor: "ray.actor.ActorHandle" = get_actor_handle()
+    actor: "ray.actor.ActorHandle" = Depends(get_actor_handle) # <-- FIX: Was get_actor_handle()
 ):
     """
     Calls the Ray Actor to create a new workout doc in isolation.
@@ -191,7 +205,7 @@ async def generate_one(
 @bp.post("/clear")
 async def clear_all(
     request: Request, 
-    actor: "ray.actor.ActorHandle" = get_actor_handle()
+    actor: "ray.actor.ActorHandle" = Depends(get_actor_handle) # <-- FIX: Was get_actor_handle()
 ):
     """
     Calls the actor to clear all docs in the scoped collection.
