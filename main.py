@@ -1088,6 +1088,277 @@ to run the experiment locally, independent of the main platform.
   return zip_buffer
 
 
+def _create_dockerfile_for_experiment(slug_id: str, source_dir: Path, experiment_path: Path) -> str:
+  """
+  Generates a Dockerfile specifically for the data_imaging experiment.
+  Based on the root Dockerfile but customized for the experiment.
+  """
+  local_reqs_path = experiment_path / "requirements.txt"
+  
+  # Get combined requirements (root + experiment-specific)
+  all_requirements = MASTER_REQUIREMENTS.copy()
+  if local_reqs_path.is_file():
+    local_requirements = _parse_requirements_file(local_reqs_path)
+    for req in local_requirements:
+      pkg_name = _extract_pkgname(req)
+      # Replace if exists, otherwise add
+      all_requirements = [r for r in all_requirements if _extract_pkgname(r) != pkg_name]
+      all_requirements.append(req)
+  
+  # Build Dockerfile with requirements written properly
+  dockerfile_lines = [
+    "# --- Stage 1: Build dependencies ---",
+    "FROM python:3.10-slim-bookworm as builder",
+    "WORKDIR /app",
+    "",
+    "# Install build deps",
+    "RUN apt-get update && apt-get install -y build-essential && rm -rf /var/lib/apt/lists/*",
+    "",
+    "# Create requirements file"
+  ]
+  
+  # Write requirements one by one
+  for req in all_requirements:
+    # Escape any single quotes in the requirement
+    escaped_req = req.replace("'", "'\"'\"'")
+    dockerfile_lines.append(f"RUN echo '{escaped_req}' >> /tmp/requirements.txt")
+  
+  dockerfile_lines.append("")
+  dockerfile_lines.append("# Install dependencies")
+  dockerfile_lines.append("RUN python -m venv /opt/venv && \\")
+  dockerfile_lines.append("    . /opt/venv/bin/activate && \\")
+  dockerfile_lines.append("    pip install --upgrade pip && \\")
+  dockerfile_lines.append("    pip install -r /tmp/requirements.txt")
+  dockerfile_lines.append("")
+  dockerfile_lines.append("# --- Stage 2: Final image ---")
+  dockerfile_lines.append("FROM python:3.10-slim-bookworm")
+  dockerfile_lines.append("WORKDIR /app")
+  dockerfile_lines.append("")
+  dockerfile_lines.append("# Copy venv from builder")
+  dockerfile_lines.append("COPY --from=builder /opt/venv /opt/venv")
+  dockerfile_lines.append('ENV PATH="/opt/venv/bin:$PATH"')
+  dockerfile_lines.append("")
+  dockerfile_lines.append("# Copy experiment code")
+  dockerfile_lines.append(f"COPY experiments/{slug_id} /app/experiments/{slug_id}")
+  dockerfile_lines.append("COPY experiments/__init__.py /app/experiments/__init__.py")
+  dockerfile_lines.append("COPY templates /app/templates")
+  dockerfile_lines.append("COPY db_config.json /app/db_config.json")
+  dockerfile_lines.append("COPY db_collections.json /app/db_collections.json")
+  dockerfile_lines.append("COPY main.py /app/main.py")
+  dockerfile_lines.append("")
+  dockerfile_lines.append("# Create non-root user")
+  dockerfile_lines.append("RUN addgroup --system app && adduser --system --group app")
+  dockerfile_lines.append("RUN chown -R app:app /app")
+  dockerfile_lines.append("USER app")
+  dockerfile_lines.append("")
+  dockerfile_lines.append("# Build ARG and ENV for port")
+  dockerfile_lines.append("ARG APP_PORT=8000")
+  dockerfile_lines.append("ENV PORT=$APP_PORT")
+  dockerfile_lines.append("")
+  dockerfile_lines.append("# Expose the port")
+  dockerfile_lines.append("EXPOSE ${APP_PORT}")
+  dockerfile_lines.append("")
+  dockerfile_lines.append("# Default command: Run the standalone server")
+  dockerfile_lines.append("CMD python main.py")
+  
+  return "\n".join(dockerfile_lines)
+
+
+def _create_docker_compose_for_experiment(slug_id: str, source_dir: Path) -> str:
+  """
+  Generates a docker-compose.yml specifically for the data_imaging experiment.
+  Based on the root docker-compose.yml but customized for standalone experiment.
+  """
+  docker_compose_content = f"""services:
+  # --------------------------------------------------------------------------
+  # Experiment Application (data_imaging)
+  # --------------------------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: {slug_id}-app
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/
+      - DB_NAME=labs_db
+      - PORT=8000
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  # --------------------------------------------------------------------------
+  # MongoDB Database
+  # --------------------------------------------------------------------------
+  mongo:
+    image: mongodb/mongodb-atlas-local:latest
+    container_name: {slug_id}-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.hello()", "--quiet"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  mongo-data:
+"""
+  return docker_compose_content
+
+
+def _create_docker_zip(
+  slug_id: str,
+  source_dir: Path,
+  db_data: Dict[str, Any],
+  db_collections: Dict[str, List[Dict[str, Any]]]
+) -> io.BytesIO:
+  """
+  Creates a Docker export package for data_imaging with Dockerfile and docker-compose.yml.
+  """
+  logger.info(f"Starting creation of Docker package for '{slug_id}'.")
+  zip_buffer = io.BytesIO()
+  experiment_path = source_dir / "experiments" / slug_id
+  templates_dir = source_dir / "templates"
+
+  # --- 1. Generate core files ---
+  standalone_main_source = _make_standalone_main_py(slug_id)
+  root_template_file = "standalone_index.html"
+
+  # --- 2. Get all requirements ---
+  local_reqs_path = experiment_path / "requirements.txt"
+  all_requirements = MASTER_REQUIREMENTS.copy()
+  if local_reqs_path.is_file():
+    local_requirements = _parse_requirements_file(local_reqs_path)
+    for req in local_requirements:
+      pkg_name = _extract_pkgname(req)
+      all_requirements = [r for r in all_requirements if _extract_pkgname(r) != pkg_name]
+      all_requirements.append(req)
+  requirements_content = "\n".join(all_requirements)
+
+  # --- 3. Generate Docker files ---
+  dockerfile_content = _create_dockerfile_for_experiment(slug_id, source_dir, experiment_path)
+  docker_compose_content = _create_docker_compose_for_experiment(slug_id, source_dir)
+
+  # --- 4. Generate README.md with Docker instructions ---
+  readme_content = f"""# Docker Export Package: {slug_id}
+
+This package contains everything needed to run the experiment in Docker containers.
+
+## Prerequisites
+
+- Docker and Docker Compose installed on your system
+
+## How to Run
+
+1. **Extract the package:**
+   ```bash
+   unzip {slug_id}_docker_package_*.zip
+   cd {slug_id}_docker_package_*
+   ```
+
+2. **Build and start containers:**
+   ```bash
+   docker-compose up --build
+   ```
+
+3. **Access:**
+   Open your browser and navigate to: http://localhost:8000/
+
+## Docker Structure
+
+- **Dockerfile**: Builds the application container with all dependencies
+- **docker-compose.yml**: Orchestrates the app and MongoDB containers
+- **main.py**: Standalone server entry point
+- **experiments/{slug_id}/**: Experiment code
+- **db_config.json**: Experiment configuration snapshot
+- **db_collections.json**: Database collections snapshot
+
+## Stopping
+
+Press `Ctrl+C` to stop the containers, or run:
+```bash
+docker-compose down
+```
+
+To remove volumes (including MongoDB data):
+```bash
+docker-compose down -v
+```
+"""
+
+  # --- 5. Create ZIP archive ---
+  EXCLUSION_PATTERNS = [
+    "__pycache__", ".DS_Store", "*.pyc", "*.tmp", ".git", ".idea", ".vscode"
+  ]
+  with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+    # Include experiment directory
+    if experiment_path.is_dir():
+      logger.debug(f"Including experiment code from: {experiment_path}")
+      for folder_name, _, file_names in os.walk(experiment_path):
+        if Path(folder_name).name in EXCLUSION_PATTERNS:
+          continue
+
+        for file_name in file_names:
+          if any(fnmatch.fnmatch(file_name, p) for p in EXCLUSION_PATTERNS):
+            continue
+
+          file_path = Path(folder_name) / file_name
+          try:
+            arcname = f"experiments/{slug_id}/{file_path.relative_to(experiment_path)}"
+          except ValueError:
+            logger.error(f"Failed to get relative path for {file_path}")
+            continue
+
+          if file_path.suffix in (".html", ".htm"):
+            original_html = file_path.read_text(encoding="utf-8")
+            fixed_html = _fix_static_paths(original_html, slug_id)
+            zf.writestr(arcname, fixed_html)
+          else:
+            zf.write(file_path, arcname)
+
+    # Include templates directory
+    if templates_dir.is_dir():
+      for folder_name, _, file_names in os.walk(templates_dir):
+        if Path(folder_name).name in EXCLUSION_PATTERNS:
+          continue
+        for file_name in file_names:
+          if any(fnmatch.fnmatch(file_name, p) for p in EXCLUSION_PATTERNS):
+            continue
+          file_path = Path(folder_name) / file_name
+          try:
+            arcname = f"templates/{file_path.relative_to(templates_dir)}"
+          except ValueError:
+            continue
+          zf.write(file_path, arcname)
+
+    # Add __init__.py for experiments package
+    experiments_init = source_dir / "experiments" / "__init__.py"
+    if experiments_init.is_file():
+      zf.write(experiments_init, "experiments/__init__.py")
+
+    # Add generated files
+    root_template_path = templates_dir / root_template_file
+    if root_template_path.is_file():
+      zf.write(root_template_path, root_template_file)
+
+    zf.writestr("Dockerfile", dockerfile_content)
+    zf.writestr("docker-compose.yml", docker_compose_content)
+    zf.writestr("db_config.json", json.dumps(db_data, indent=2))
+    zf.writestr("db_collections.json", json.dumps(db_collections, indent=2))
+    zf.writestr("main.py", standalone_main_source)
+    zf.writestr("requirements.txt", requirements_content)
+    zf.writestr("README.md", readme_content)
+
+  zip_buffer.seek(0)
+  logger.info(f"Docker package created successfully for '{slug_id}'.")
+  return zip_buffer
+
+
 # -----------------------------------------------------
 # NEW: Public Standalone Export Endpoint
 # -----------------------------------------------------
@@ -1146,6 +1417,64 @@ async def package_standalone_experiment(
   except Exception as e:
     logger.error(f"Unexpected error packaging '{slug_id}': {e}", exc_info=True)
     raise HTTPException(500, "Unexpected server error during packaging.")
+
+
+@public_api_router.get("/package-docker/{slug_id}", name="package_docker")
+async def package_docker_experiment(
+  request: Request,
+  slug_id: str,
+  user: Optional[Mapping[str, Any]] = Depends(get_current_user) # Allows unauthenticated access
+):
+  """
+  Docker export endpoint specifically for data_imaging experiment.
+  Returns a ZIP package with Dockerfile and docker-compose.yml.
+  Backwards compatible - existing standalone export still works.
+  """
+  db: AsyncIOMotorDatabase = request.app.state.mongo_db
+
+  # 1. Check Experiment Configuration
+  config = await db.experiments_config.find_one({"slug": slug_id})
+  if not config or config.get("status") != "active":
+    raise HTTPException(status_code=404, detail="Experiment not found or not active.")
+
+  auth_required = config.get("auth_required", False)
+
+  # 2. Enforce Authentication if required
+  if auth_required:
+    if not user:
+      current_path = quote(request.url.path)
+      login_url = request.url_for("login_get", next=current_path)
+      response = RedirectResponse(url=login_url, status_code=status.HTTP_302_FOUND)
+      return response
+
+  # 3. Perform Docker Packaging
+  try:
+    config_data, collections_data = await _dump_db_to_json(db, slug_id)
+    zip_buffer = _create_docker_zip(
+      slug_id=slug_id,
+      source_dir=BASE_DIR,
+      db_data=config_data,
+      db_collections=collections_data
+    )
+
+    file_name = f"{slug_id}_docker_package_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    response = FastAPIResponse(
+      content=zip_buffer.getvalue(),
+      media_type="application/zip",
+      headers={
+        "Content-Disposition": f'attachment; filename="{file_name}"',
+        "Content-Length": str(zip_buffer.getbuffer().nbytes),
+      }
+    )
+    user_email = user.get('email', 'Guest') if user else 'Guest'
+    logger.info(f"Sending Docker package for '{slug_id}' (User: {user_email}, Auth Required: {auth_required}).")
+    return response
+  except ValueError as e:
+    logger.error(f"Error packaging Docker export for '{slug_id}': {e}")
+    raise HTTPException(status_code=404, detail=str(e))
+  except Exception as e:
+    logger.error(f"Unexpected error packaging Docker export for '{slug_id}': {e}", exc_info=True)
+    raise HTTPException(500, "Unexpected server error during Docker packaging.")
 
 
 app.include_router(public_api_router)
