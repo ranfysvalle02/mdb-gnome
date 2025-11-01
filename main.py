@@ -1154,7 +1154,7 @@ def _create_standalone_zip(
 
   # --- 1. Generate core files ---
   standalone_main_source = _make_standalone_main_py(slug_id)
-  root_template_file = "standalone_index.html"
+  # Note: No root template needed - standalone app serves experiment's own index.html
 
   # --- 2. Determine local requirements to include ---
   local_reqs_path = experiment_path / "requirements.txt"
@@ -1241,12 +1241,7 @@ to run the experiment locally, independent of the main platform.
             zf.write(file_path, arcname)
 
     # --- 5. Add generated core files to the root of the ZIP ---
-    root_template_path = templates_dir / root_template_file
-    if root_template_path.is_file():
-      zf.write(root_template_path, root_template_file)
-      logger.debug(f"Added root template: {root_template_file}")
-    else:
-      logger.warning(f"Missing required root template: {root_template_file}.")
+    # No root template needed - standalone app serves experiment's own index.html directly
 
     zf.writestr("db_config.json", json.dumps(db_data, indent=2))
     zf.writestr("db_collections.json", json.dumps(db_collections, indent=2))
@@ -1401,7 +1396,7 @@ def _create_docker_zip(
 
   # --- 1. Generate core files ---
   standalone_main_source = _make_standalone_main_py(slug_id)
-  root_template_file = "standalone_index.html"
+  # Note: No root template needed - standalone app serves experiment's own index.html
 
   # --- 2. Get all requirements ---
   local_reqs_path = experiment_path / "requirements.txt"
@@ -1516,9 +1511,7 @@ docker-compose down -v
       zf.write(experiments_init, "experiments/__init__.py")
 
     # Add generated files
-    root_template_path = templates_dir / root_template_file
-    if root_template_path.is_file():
-      zf.write(root_template_path, root_template_file)
+    # No root template needed - standalone app serves experiment's own index.html directly
 
     zf.writestr("Dockerfile", dockerfile_content)
     zf.writestr("docker-compose.yml", docker_compose_content)
