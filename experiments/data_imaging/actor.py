@@ -1,14 +1,9 @@
 # File: /app/experiments/data_imaging/actor.py
-
-# import ray  <-- REMOVED
 import logging
 import json
 import pathlib
 from typing import List, Dict, Any
 
-# --- NO HEAVY IMPORTS HERE ---
-# All heavy modules (motor, jinja2, engine, ScopedMongoWrapper)
-# will be imported *inside* the actor's __init__ method.
 import ray
 
 # Actor-local paths
@@ -131,7 +126,15 @@ class ExperimentActor:
 
         snippet_list = []
         for d in docs:
-            arrays = self.engine.generate_workout_viz_arrays(d, size=8)
+            # --- UPDATED: Pass keys to viz array generation ---
+            # Use default keys for the gallery view
+            arrays = self.engine.generate_workout_viz_arrays(
+                d, 
+                size=8, 
+                r_key="heart_rate", 
+                g_key="calories_per_min", 
+                b_key="speed_kph"
+            )
             b64_img = self.engine.encode_png_b64(arrays["rgb_combined"], (128, 128))
             suffix = d["_id"].split("_")[-1]
             snippet_list.append(f"""
@@ -153,7 +156,15 @@ class ExperimentActor:
         return response.body.decode("utf-8")
 
     # --- Method 2: Replaces show_detail ---
-    async def render_detail_page(self, workout_id: int, request_context: dict) -> str:
+    # --- UPDATED: Added r_key, g_key, b_key to the method signature ---
+    async def render_detail_page(
+        self, 
+        workout_id: int, 
+        request_context: dict, 
+        r_key: str, 
+        g_key: str, 
+        b_key: str
+    ) -> str:
         self._check_ready()
         
         doc_id = f"workout_rad_{workout_id}"
@@ -218,15 +229,33 @@ class ExperimentActor:
         else:
             ephemeral_prompt = doc.get("llm_analysis_prompt", self.engine.PLACEHOLDER_PROMPT)
 
-        # Construct images:
-        arrays = self.engine.generate_workout_viz_arrays(doc, size=8)
+        # --- UPDATED: Pass dynamic keys to image/chart generation ---
+        arrays = self.engine.generate_workout_viz_arrays(
+            doc, 
+            size=8,
+            r_key=r_key,
+            g_key=g_key,
+            b_key=b_key
+        )
+        
+        # Combined image
         b64_combined = self.engine.encode_png_b64(arrays["rgb_combined"], (256,256))
-        b64_chart_hr = self.engine.generate_chart_base64(arrays["raw_hr"], "#FF6868")
-        b64_chart_cal = self.engine.generate_chart_base64(arrays["raw_cal"], "#00ED64")
-        b64_chart_speed = self.engine.generate_chart_base64(arrays["raw_speed"], "#58AEFF")
-        b64_r = self.engine.encode_png_b64(arrays["channel_r_2d"], (128,128), tint_color=(255,0,0))
-        b64_g = self.engine.encode_png_b64(arrays["channel_g_2d"], (128,128), tint_color=(0,255,0))
-        b64_b = self.engine.encode_png_b64(arrays["channel_b_2d"], (128,128), tint_color=(0,0,255))
+        
+        # All charts (for Step 1 in HTML)
+        all_charts = {
+            "heart_rate": self.engine.generate_chart_base64(arrays["raw_hr"], "#FF6868"),
+            "calories_per_min": self.engine.generate_chart_base64(arrays["raw_cal"], "#00ED64"),
+            "speed_kph": self.engine.generate_chart_base64(arrays["raw_speed"], "#58AEFF"),
+            "power": self.engine.generate_chart_base64(arrays.get("raw_power", []), "#FFA554"),
+            "cadence": self.engine.generate_chart_base64(arrays.get("raw_cadence", []), "#C792EA")
+        }
+        
+        # Individual channels (for Step 3 in HTML)
+        # Use the dynamic keys to access the correct array
+        b64_r = self.engine.encode_png_b64(arrays[r_key], (128,128), tint_color=(255,0,0))
+        b64_g = self.engine.encode_png_b64(arrays[g_key], (128,128), tint_color=(0,255,0))
+        b64_b = self.engine.encode_png_b64(arrays[b_key], (128,128), tint_color=(0,0,255))
+        # --- END UPDATES ---
 
         # Make doc copy safe for JSON
         doc_copy = dict(doc)
@@ -282,13 +311,12 @@ class ExperimentActor:
         else:
             ai_analysis_button_html = '<span style="color: var(--atlas-green); font-weight:600;">Analysis Complete</span>'
 
+        # --- UPDATED: Pass dynamic keys and bounds to the template ---
         context = {
             "request": request_context,
             "workout_id": workout_id,
             "b64_combined": b64_combined,
-            "b64_chart_hr": b64_chart_hr,
-            "b64_chart_cal": b64_chart_cal,
-            "b64_chart_speed": b64_chart_speed,
+            "all_charts": all_charts, # <-- UPDATED (now a dict)
             "b64_r": b64_r, "b64_g": b64_g, "b64_b": b64_b,
             "json_data_pretty": doc_json,
             "ai_neighbors_html": neighbors_html,
@@ -296,9 +324,17 @@ class ExperimentActor:
             "ai_summary": ai_sum,
             "llm_analysis_prompt": ephemeral_prompt,
             "ai_analysis_button_html": ai_analysis_button_html,
-            "norm_bounds_hr": f"{self.engine.NORM_BOUNDS['heart_rate'][0]}-{self.engine.NORM_BOUNDS['heart_rate'][1]}bpm",
-            "norm_bounds_cal": f"{self.engine.NORM_BOUNDS['calories_per_min'][0]}-{self.engine.NORM_BOUNDS['calories_per_min'][1]}/min",
-            "norm_bounds_speed": f"{self.engine.NORM_BOUNDS['speed_kph'][0]}-{self.engine.NORM_BOUNDS['speed_kph'][1]}kph",
+            
+            # --- NEW keys for the template ---
+            "all_metrics": self.engine.ALL_METRICS,
+            "selected_r_key": r_key,
+            "selected_g_key": g_key,
+            "selected_b_key": b_key,
+            "norm_bounds_r": f"{self.engine.NORM_BOUNDS.get(r_key, ['?','?'])[0]}-{self.engine.NORM_BOUNDS.get(r_key, ['?','?'])[1]}",
+            "norm_bounds_g": f"{self.engine.NORM_BOUNDS.get(g_key, ['?','?'])[0]}-{self.engine.NORM_BOUNDS.get(g_key, ['?','?'])[1]}",
+            "norm_bounds_b": f"{self.engine.NORM_BOUNDS.get(b_key, ['?','?'])[0]}-{self.engine.NORM_BOUNDS.get(b_key, ['?','?'])[1]}",
+            # --- END NEW keys ---
+            
             "workout_type": doc.get("workout_type", "N/A"),
             "session_tag": doc.get("session_tag", "N/A"),
             "gear_used_html": gear_used_html,
@@ -308,6 +344,7 @@ class ExperimentActor:
             "post_session_notes_html": f"<code>{json.dumps(doc.get('post_session_notes', {}))}</code>",
             "vector_index_name": self.vector_index_name,
         }
+        # --- END UPDATES ---
         
         response = self.templates.TemplateResponse("detail.html", context)
         return response.body.decode("utf-8")
@@ -360,7 +397,13 @@ class ExperimentActor:
 
         for attempt in range(5):
             doc = self.engine.create_synthetic_apple_watch_data(new_suffix)
-            feature_vec = self.engine.get_feature_vector(doc)
+            # --- UPDATED: Use default keys for vector generation ---
+            feature_vec = self.engine.get_feature_vector(
+                doc,
+                r_key="heart_rate",
+                g_key="calories_per_min",
+                b_key="speed_kph"
+            )
             doc["workout_vector"] = feature_vec.tolist()
             try:
                 # This insert now correctly uses the scoped DB wrapper
