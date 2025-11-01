@@ -622,17 +622,21 @@ class ProxyAwareHTTPSMiddleware(BaseHTTPMiddleware):
     # Only trust proxy headers if we're NOT on localhost OR we have explicit proxy headers
     detected_scheme = original_scheme
     detected_host = original_host
+    # Get port from original request URL or server scope
     detected_port = request.url.port
+    if not detected_port:
+      # Try to get from server scope
+      server = request.scope.get("server")
+      if server and len(server) == 2:
+        detected_port = server[1]
     
-    # On localhost without proxy headers, use HTTP (most local dev servers don't have SSL)
-    # This prevents forcing HTTPS when the server doesn't actually serve SSL
-    # If user accesses via https://localhost, the request will come in as HTTPS,
-    # but we should normalize to HTTP for URL generation to match actual server
+    # On localhost without proxy headers, respect the original scheme
+    # If user accesses via https://localhost, keep HTTPS; if http://localhost, keep HTTP
+    # This allows local HTTPS development while defaulting to HTTP when appropriate
     if is_localhost and not has_proxy_headers:
-      # In localhost dev, force HTTP to match typical dev server setup
-      # This prevents SSL errors when browser tries HTTPS but server is HTTP-only
-      detected_scheme = "http"
-      logger.debug(f"Localhost request without proxy headers - using HTTP (original was {original_scheme})")
+      # Respect the original scheme - if user accessed via HTTPS, keep it as HTTPS
+      detected_scheme = original_scheme
+      logger.debug(f"Localhost request without proxy headers - respecting original scheme: {detected_scheme}")
     else:
       # We're behind a proxy or on a real server - check proxy headers
       
@@ -697,16 +701,29 @@ class ProxyAwareHTTPSMiddleware(BaseHTTPMiddleware):
     
     # Rewrite request.scope to reflect actual client scheme/host
     # This ensures request.url and url_for() use correct values
-    if detected_scheme != original_scheme or detected_host != original_host:
+    # Always update if scheme changed, or if we need to preserve non-standard ports
+    if detected_scheme != original_scheme or detected_host != original_host or (
+      detected_port and detected_port != request.scope.get("server", (None, None))[1]
+    ):
       # Modify the ASGI scope to change URL components
       request.scope["scheme"] = detected_scheme
       # Update server tuple (host, port)
-      if detected_port:
-        request.scope["server"] = (detected_host, detected_port)
-      else:
-        # Use default port based on scheme
-        default_port = 443 if detected_scheme == "https" else 80
-        request.scope["server"] = (detected_host, default_port)
+      # Preserve the original port if it's non-standard, or use detected_port
+      port_to_use = detected_port
+      if not port_to_use:
+        # Preserve original port if it's non-standard
+        original_server = request.scope.get("server")
+        if original_server and len(original_server) == 2:
+          original_port = original_server[1]
+          default_port = 443 if detected_scheme == "https" else 80
+          if original_port != default_port:
+            port_to_use = original_port
+        
+        # If still no port, use default based on scheme
+        if not port_to_use:
+          port_to_use = 443 if detected_scheme == "https" else 80
+      
+      request.scope["server"] = (detected_host, port_to_use)
       
       # Reconstruct the URL object
       # Note: Starlette's Request.url is cached, so we need to clear it
@@ -715,7 +732,8 @@ class ProxyAwareHTTPSMiddleware(BaseHTTPMiddleware):
       
       logger.info(
         f"Proxy-aware HTTPS: Rewrote request URL "
-        f"{original_scheme}://{original_host} -> {detected_scheme}://{detected_host}"
+        f"{original_scheme}://{original_host}:{request.scope.get('server', (None, None))[1]} -> "
+        f"{detected_scheme}://{detected_host}:{port_to_use}"
       )
     
     response = await call_next(request)
@@ -2378,6 +2396,12 @@ def _build_absolute_https_url(request: Request, relative_url: str) -> str:
   if hasattr(request.state, "detected_scheme") and hasattr(request.state, "detected_host"):
     scheme = request.state.detected_scheme
     host = request.state.detected_host
+    # Include port if it's non-standard (not 80 for HTTP, not 443 for HTTPS)
+    detected_port = getattr(request.state, "detected_port", None)
+    if detected_port:
+      default_port = 443 if scheme == "https" else 80
+      if detected_port != default_port:
+        host = f"{host}:{detected_port}"
   else:
     # Fallback: check proxy headers directly
     is_localhost = request.url.hostname in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")
@@ -2388,10 +2412,14 @@ def _build_absolute_https_url(request: Request, relative_url: str) -> str:
       request.headers.get("X-Forwarded-Ssl")
     ))
     
-    # On localhost without proxy headers, use HTTP (most dev servers don't have SSL)
-    # This prevents SSL errors when generating URLs that the browser tries to access
+    # On localhost without proxy headers, respect the original scheme
+    # If the request came in as HTTPS, use HTTPS; if HTTP, use HTTP
     if is_localhost and not has_proxy_headers:
-      scheme = "http"
+      # Check the original scheme from request.state if available, otherwise use request.url.scheme
+      if hasattr(request.state, "original_scheme"):
+        scheme = request.state.original_scheme
+      else:
+        scheme = request.url.scheme
     else:
       # Behind proxy or real server - trust proxy headers
       scheme = "https" if (
@@ -2405,10 +2433,17 @@ def _build_absolute_https_url(request: Request, relative_url: str) -> str:
       request.headers.get("Host") or 
       request.url.hostname
     )
+    # Include port if it's non-standard for localhost requests
+    if request.url.port:
+      default_port = 443 if scheme == "https" else 80
+      if request.url.port != default_port:
+        # Remove port from host if it's already there, then add correct port
+        host = host.split(":")[0] if ":" in host else host
+        host = f"{host}:{request.url.port}"
   
   # Force HTTPS in production, but NOT on localhost (server may not have SSL)
   G_NOME_ENV = os.getenv("G_NOME_ENV", "production").lower()
-  is_localhost = host in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]") or (host and "localhost" in host.lower())
+  is_localhost = host.split(":")[0] in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]") or (host and "localhost" in host.lower())
   
   if G_NOME_ENV == "production" and scheme != "https" and not is_localhost:
     scheme = "https"
@@ -3487,9 +3522,18 @@ async def root(request: Request, user: Optional[Mapping[str, Any]] = Depends(get
     experiments = getattr(request.app.state, "experiments", {})
     logger.debug(f"Root route accessed. Found {len(experiments)} registered experiment(s).")
     
+    # Convert relative experiment URLs to absolute HTTPS URLs
+    experiments_with_https_urls = {}
+    for slug, meta in experiments.items():
+      meta_copy = dict(meta)
+      if "url" in meta_copy and meta_copy["url"]:
+        # Convert relative URL to absolute HTTPS URL
+        meta_copy["url"] = _build_absolute_https_url(request, meta_copy["url"])
+      experiments_with_https_urls[slug] = meta_copy
+    
     return templates.TemplateResponse("index.html", {
       "request": request,
-      "experiments": experiments,
+      "experiments": experiments_with_https_urls,
       "current_user": user,
       "ENABLE_REGISTRATION": ENABLE_REGISTRATION,
     })
