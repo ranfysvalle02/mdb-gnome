@@ -469,7 +469,31 @@ class ExperimentScopeMiddleware(BaseHTTPMiddleware):
     return response
 
 
+class HTTPSEnforcementMiddleware(BaseHTTPMiddleware):
+  """
+  Security middleware: Forces HTTPS on all redirects and adds HSTS headers.
+  Prevents HTTP downgrade attacks and mixed content issues.
+  """
+  async def dispatch(self, request: Request, call_next: ASGIApp):
+    response = await call_next(request)
+    
+    # Add HSTS header - tells browsers to always use HTTPS for this domain
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
+    
+    # Force HTTPS on any Location redirect headers - catch ANY http:// redirect
+    if "Location" in response.headers:
+      location = response.headers["Location"]
+      # Replace http:// with https:// directly (simple string replacement)
+      if location.startswith("http://"):
+        https_location = location.replace("http://", "https://", 1)
+        response.headers["Location"] = https_location
+        logger.warning(f"FORCED HTTPS redirect: {location} -> {https_location}")
+    
+    return response
+
+
 app.add_middleware(ExperimentScopeMiddleware)
+app.add_middleware(HTTPSEnforcementMiddleware)
 
 
 async def _ensure_db_indices(db: AsyncIOMotorDatabase):
@@ -1409,15 +1433,23 @@ async def package_standalone_experiment(
   # 2. Enforce Authentication if required
   if auth_required:
     if not user:
-      # Always use HTTPS for security - HTTP is vulnerable to attacks
+      # Use request.base_url which automatically respects X-Forwarded-* headers
       current_path = quote(request.url.path)
-      # Get host from X-Forwarded-Host or Host header or request hostname (respect proxy headers)
-      host = request.headers.get("X-Forwarded-Host") or request.headers.get("Host") or request.url.hostname
-      # Build absolute HTTPS URL (always HTTPS, never HTTP)
+      base_url = request.base_url  # FastAPI handles proxy headers automatically
       login_path = request.url_for("login_get").path
-      login_url = f"https://{host}{login_path}?next={current_path}"
       
-      response = RedirectResponse(url=login_url, status_code=status.HTTP_302_FOUND)
+      # Ensure the base URL uses HTTPS if proxy detection failed but X-Forwarded-Proto exists
+      # This fixes the mixed content redirect error behind proxies like Render.
+      if base_url.scheme == "http" and request.headers.get("x-forwarded-proto", "").lower() == "https":
+        from starlette.datastructures import URL
+        # Reconstruct URL with https, assuming standard port (None = 443 for https)
+        base_url = URL(scheme="https", hostname=base_url.hostname, port=None, pathname=base_url.path)
+        
+      login_url = str(base_url).rstrip("/") + login_path + f"?next={current_path}"
+      
+      # Use 307 Temporary Redirect to preserve method (e.g., GET)
+      response = RedirectResponse(url=login_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+      logger.info(f"Redirecting unauthenticated user to login: {login_url}")
       return response
 
   # 3. Perform Packaging
@@ -1477,12 +1509,19 @@ async def package_docker_experiment(
       current_path = quote(request.url.path)
       base_url = request.base_url  # FastAPI handles proxy headers automatically
       login_path = request.url_for("login_get").path
-      # Ensure the base URL uses HTTPS if the original request was HTTPS
-      if base_url.scheme == "http" and request.headers.get("X-Forwarded-Proto") == "https":
+      
+      # Ensure the base URL uses HTTPS if proxy detection failed but X-Forwarded-Proto exists
+      # This fixes the mixed content redirect error behind proxies like Render.
+      if base_url.scheme == "http" and request.headers.get("x-forwarded-proto", "").lower() == "https":
         from starlette.datastructures import URL
-        base_url = URL(scheme="https", hostname=base_url.hostname, port=base_url.port, pathname=base_url.path)
+        # Reconstruct URL with https, assuming standard port (None = 443 for https)
+        base_url = URL(scheme="https", hostname=base_url.hostname, port=None, pathname=base_url.path)
+        
       login_url = str(base_url).rstrip("/") + login_path + f"?next={current_path}"
+      
+      # Use 302 Found for this redirect as it was before
       response = RedirectResponse(url=login_url, status_code=status.HTTP_302_FOUND)
+      logger.info(f"Redirecting unauthenticated user to login: {login_url}")
       return response
 
   # 3. Perform Docker Packaging
