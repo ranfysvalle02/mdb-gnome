@@ -3134,10 +3134,23 @@ async def _run_index_creation_for_collection(
               logger.info(f"{log_prefix} Index '{index_name}' is ready.")
           else:
             logger.warning(f"{log_prefix} Search index '{index_name}' definition changed; updating.")
-            logger.info(f"{log_prefix} Current definition fields: {json.dumps(list(normalized_current.get('fields', [])) if isinstance(normalized_current, dict) else [], indent=2)}")
-            logger.info(f"{log_prefix} Expected definition fields: {json.dumps(list(normalized_expected.get('fields', [])) if isinstance(normalized_expected, dict) else [], indent=2)}")
-            await index_manager.update_search_index(name=index_name, definition=definition, wait_for_ready=True)
-            logger.info(f"{log_prefix} Updated search index '{index_name}'.")
+            # Extract field paths for clearer logging
+            current_fields = normalized_current.get('fields', []) if isinstance(normalized_current, dict) else []
+            expected_fields = normalized_expected.get('fields', []) if isinstance(normalized_expected, dict) else []
+            
+            current_paths = [f.get('path', '?') for f in current_fields if isinstance(f, dict)]
+            expected_paths = [f.get('path', '?') for f in expected_fields if isinstance(f, dict)]
+            
+            logger.info(f"{log_prefix} Current index filter fields: {current_paths}")
+            logger.info(f"{log_prefix} Expected index filter fields: {expected_paths}")
+            logger.info(f"{log_prefix} Updating index '{index_name}' with new definition (this may take a few moments)...")
+            
+            try:
+              await index_manager.update_search_index(name=index_name, definition=definition, wait_for_ready=True)
+              logger.info(f"{log_prefix} ✅ Successfully updated search index '{index_name}'. Index is now ready.")
+            except Exception as update_err:
+              logger.error(f"{log_prefix} ❌ Failed to update search index '{index_name}': {update_err}", exc_info=True)
+              # Don't re-raise - log and continue, the index might still work
         else:
           logger.info(f"{log_prefix} Creating new search index '{index_name}'...")
           await index_manager.create_search_index(name=index_name, definition=definition, index_type=index_type, wait_for_ready=True)

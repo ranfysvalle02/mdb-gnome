@@ -168,23 +168,83 @@ async def ensure_indexes():
                 if index_type == "vectorSearch":
                     # Use AsyncAtlasIndexManager for vector search indexes
                     manager = AsyncAtlasIndexManager(collection)
-                    await manager.create_search_index(
-                        name=index_name,
-                        definition=definition,
-                        index_type="vectorSearch",
-                        wait_for_ready=True
-                    )
-                    logger.info(f"Created vector search index '{index_name}' on '{full_collection_name}'.")
+                    
+                    # Check if index already exists
+                    existing_index = await manager.get_search_index(index_name)
+                    if existing_index:
+                        current_def = existing_index.get("latestDefinition", existing_index.get("definition"))
+                        
+                        # Normalize both definitions for order-insensitive comparison
+                        def _normalize_json_def(obj):
+                            try:
+                                return json.loads(json.dumps(obj, sort_keys=True))
+                            except (TypeError, ValueError):
+                                return obj
+                        
+                        normalized_current = _normalize_json_def(current_def)
+                        normalized_expected = _normalize_json_def(definition)
+                        
+                        if normalized_current == normalized_expected:
+                            logger.info(f"Vector search index '{index_name}' definition matches. Already exists.")
+                            if not existing_index.get("queryable") and existing_index.get("status") != "FAILED":
+                                logger.info(f"Index '{index_name}' not queryable yet; waiting...")
+                                await manager._wait_for_search_index_ready(index_name, 30)
+                        else:
+                            # Index definition changed - update it
+                            current_paths = [f.get('path', '?') for f in (normalized_current.get('fields', []) if isinstance(normalized_current, dict) else []) if isinstance(f, dict)]
+                            expected_paths = [f.get('path', '?') for f in (normalized_expected.get('fields', []) if isinstance(normalized_expected, dict) else []) if isinstance(f, dict)]
+                            logger.warning(f"Vector search index '{index_name}' definition changed. Updating...")
+                            logger.info(f"Current filter fields: {current_paths}")
+                            logger.info(f"Expected filter fields: {expected_paths}")
+                            await manager.update_search_index(name=index_name, definition=definition, wait_for_ready=True)
+                            logger.info(f"✅ Updated vector search index '{index_name}'.")
+                    else:
+                        # Index doesn't exist - create it
+                        await manager.create_search_index(
+                            name=index_name,
+                            definition=definition,
+                            index_type="vectorSearch",
+                            wait_for_ready=True
+                        )
+                        logger.info(f"Created vector search index '{index_name}' on '{full_collection_name}'.")
                 elif index_type == "search":
                     # Lucene search index
                     manager = AsyncAtlasIndexManager(collection)
-                    await manager.create_search_index(
-                        name=index_name,
-                        definition=definition,
-                        index_type="search",
-                        wait_for_ready=True
-                    )
-                    logger.info(f"Created search index '{index_name}' on '{full_collection_name}'.")
+                    
+                    # Check if index already exists
+                    existing_index = await manager.get_search_index(index_name)
+                    if existing_index:
+                        current_def = existing_index.get("latestDefinition", existing_index.get("definition"))
+                        
+                        # Normalize both definitions for order-insensitive comparison
+                        def _normalize_json_def(obj):
+                            try:
+                                return json.loads(json.dumps(obj, sort_keys=True))
+                            except (TypeError, ValueError):
+                                return obj
+                        
+                        normalized_current = _normalize_json_def(current_def)
+                        normalized_expected = _normalize_json_def(definition)
+                        
+                        if normalized_current == normalized_expected:
+                            logger.info(f"Search index '{index_name}' definition matches. Already exists.")
+                            if not existing_index.get("queryable") and existing_index.get("status") != "FAILED":
+                                logger.info(f"Index '{index_name}' not queryable yet; waiting...")
+                                await manager._wait_for_search_index_ready(index_name, 30)
+                        else:
+                            # Index definition changed - update it
+                            logger.warning(f"Search index '{index_name}' definition changed. Updating...")
+                            await manager.update_search_index(name=index_name, definition=definition, wait_for_ready=True)
+                            logger.info(f"✅ Updated search index '{index_name}'.")
+                    else:
+                        # Index doesn't exist - create it
+                        await manager.create_search_index(
+                            name=index_name,
+                            definition=definition,
+                            index_type="search",
+                            wait_for_ready=True
+                        )
+                        logger.info(f"Created search index '{index_name}' on '{full_collection_name}'.")
                 else:
                     # Standard MongoDB index - use prefixed index name
                     try:
@@ -201,6 +261,21 @@ async def ensure_indexes():
                             # _id indexes are automatically created by MongoDB and can't be customized
                             logger.info(f"Skipping '_id' index '{index_name}' - MongoDB creates _id indexes automatically and they can't be customized.")
                             continue
+                        
+                        # Check if index already exists and compare keys
+                        manager = AsyncAtlasIndexManager(collection)
+                        existing_index = await manager.get_index(index_name)
+                        
+                        if existing_index:
+                            # Compare keys to see if they differ
+                            tmp_keys = [(k, v) for k, v in keys.items()] if isinstance(keys, dict) else keys
+                            key_doc = {k: v for k, v in tmp_keys}
+                            if existing_index.get("key") != key_doc:
+                                logger.warning(f"Index '{index_name}' mismatch -> drop & recreate.")
+                                await manager.drop_index(index_name)
+                            else:
+                                logger.info(f"Regular index '{index_name}' matches; skipping.")
+                                continue
                         
                         # For non-_id indexes, use background option
                         await collection.create_index(keys, name=index_name, background=True)
