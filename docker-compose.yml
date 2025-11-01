@@ -21,13 +21,52 @@ services:
     depends_on:
       mongo:
         condition: service_healthy
-      
+      ray-head:
+        condition: service_healthy
 
   # --------------------------------------------------------------------------
   # Ray Head Node (The "Factory Manager" / Ray Server)
-  # CO-LOCATED WITH API FOR SIMPLICITY
   # --------------------------------------------------------------------------
-  
+  ray-head:
+    build: # <-- CHANGED (Was 'image: rayproject/ray:2.50.0-py310')
+      context: .
+      dockerfile: Dockerfile
+    container_name: mlab-ray-head
+    platform: linux/arm64
+    ports:
+      - "10001:10001"
+      - "8265:8265" # Ray Dashboard
+    volumes:
+      # This mount is ALSO needed here so Ray's "working_dir"
+      # can find the class definitions (like ExperimentActor) from main.py
+      - .:/app
+    env_file:
+      - .env # Make sure .env contains your B2/AWS credentials
+    environment:
+      - RAY_ENABLE_RUNTIME_ENV=1
+      # This tells Ray that the "working directory" for all jobs
+      # and code IS /app. This aligns with our volume mount.
+      - RAY_RUNTIME_ENV_WORKING_DIR=/app
+      - RAY_NAMESPACE=modular_labs
+      - AWS_ENDPOINT_URL=${B2_ENDPOINT_URL}
+      - AWS_ACCESS_KEY_ID=${B2_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${B2_SECRET_ACCESS_KEY}
+    command: [
+      "ray", "start", "--head",
+      "--port=6379",
+      "--ray-client-server-port=10001",
+      "--dashboard-host=0.0.0.0",
+      "--disable-usage-stats",
+      "--block"
+    ]
+    shm_size: 4gb
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 10001))"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+      start_period: 5s
+
   # --------------------------------------------------------------------------
   # MongoDB Database
   # --------------------------------------------------------------------------
