@@ -2,6 +2,7 @@
 import logging
 import json
 import pathlib
+import asyncio
 from typing import List, Dict, Any
 
 import ray
@@ -81,6 +82,76 @@ class ExperimentActor:
             self.client = None
             self.real_db = None
             self.db = None
+
+    async def initialize(self):
+        """
+        Post-initialization hook: waits for vector index to be ready,
+        then ensures at least ~10 records exist.
+        """
+        if not self.db or not self.real_db:
+            logger.warning(f"[{self.write_scope}-Actor] Skipping initialize - DB not ready.")
+            return
+        
+        logger.info(f"[{self.write_scope}-Actor] Starting post-initialization setup...")
+        
+        # Wait a bit for vector search index to be ready
+        logger.info(f"[{self.write_scope}-Actor] Waiting for vector search index '{self.vector_index_name}' to be ready...")
+        await asyncio.sleep(3)  # Gentle delay for index to initialize
+        
+        # Check if vector index is queryable (with retries)
+        from async_mongo_wrapper import AsyncAtlasIndexManager
+        index_manager = AsyncAtlasIndexManager(self.real_db[self.write_scope + "_workouts"])
+        max_wait = 30  # Wait up to 30 seconds
+        wait_interval = 2  # Check every 2 seconds
+        waited = 0
+        
+        while waited < max_wait:
+            try:
+                index_info = await index_manager.get_search_index(self.vector_index_name)
+                if index_info and index_info.get("queryable"):
+                    logger.info(f"[{self.write_scope}-Actor] Vector search index '{self.vector_index_name}' is ready!")
+                    break
+                elif index_info and index_info.get("status") == "FAILED":
+                    logger.error(f"[{self.write_scope}-Actor] Vector search index '{self.vector_index_name}' is in FAILED state!")
+                    break
+                else:
+                    logger.debug(f"[{self.write_scope}-Actor] Index '{self.vector_index_name}' not ready yet, waiting...")
+            except Exception as e:
+                logger.debug(f"[{self.write_scope}-Actor] Error checking index status: {e}")
+            
+            await asyncio.sleep(wait_interval)
+            waited += wait_interval
+        
+        if waited >= max_wait:
+            logger.warning(f"[{self.write_scope}-Actor] Timeout waiting for index, but continuing...")
+        
+        # Check if records exist
+        try:
+            count = await self.db.workouts.count_documents({})
+            logger.info(f"[{self.write_scope}-Actor] Found {count} existing workout records.")
+            
+            if count == 0:
+                logger.info(f"[{self.write_scope}-Actor] No records found. Generating ~10 sample workout records...")
+                NUM_TO_GENERATE = 10
+                generated_ids = []
+                
+                for i in range(NUM_TO_GENERATE):
+                    try:
+                        new_id = await self.generate_one()
+                        generated_ids.append(new_id)
+                        # Small delay between generations to avoid overwhelming the system
+                        await asyncio.sleep(0.5)
+                    except Exception as e:
+                        logger.error(f"[{self.write_scope}-Actor] Error generating workout {i+1}/{NUM_TO_GENERATE}: {e}")
+                
+                logger.info(f"[{self.write_scope}-Actor] Successfully generated {len(generated_ids)} workout records: {generated_ids}")
+            else:
+                logger.info(f"[{self.write_scope}-Actor] Records already exist. Skipping auto-generation.")
+                
+        except Exception as e:
+            logger.error(f"[{self.write_scope}-Actor] Error during initialization: {e}", exc_info=True)
+        
+        logger.info(f"[{self.write_scope}-Actor] Post-initialization setup complete.")
 
     def __del__(self):
         if hasattr(self, 'client') and self.client:

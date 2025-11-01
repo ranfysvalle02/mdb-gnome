@@ -3013,9 +3013,31 @@ async def _register_experiments(app: FastAPI, active_cfgs: List[Dict[str, Any]],
         write_scope=slug, read_scopes=read_scopes
       )
       logger.info(f"[{slug}] Ray Actor '{actor_name}' started in {env_mode.upper()} mode.")
+      
+      # Call initialize hook if it exists (for post-startup tasks like data seeding)
+      if hasattr(actor_cls, "initialize"):
+        try:
+          asyncio.create_task(_call_actor_initialize(actor_handle, slug))
+          logger.info(f"[{slug}] Scheduled post-initialization task for actor '{actor_name}'.")
+        except Exception as e:
+          logger.warning(f"[{slug}] Failed to schedule actor initialization: {e}")
     except Exception as e:
       logger.error(f"[{slug}] Actor start error: {e}", exc_info=True)
       continue
+
+
+async def _call_actor_initialize(actor_handle: Any, slug: str):
+  """
+  Helper to call the actor's initialize method asynchronously.
+  This allows actors to perform post-initialization tasks like
+  waiting for indexes and seeding initial data.
+  """
+  try:
+    logger.info(f"[{slug}] Calling actor initialize hook...")
+    await actor_handle.initialize.remote()
+    logger.info(f"[{slug}] Actor initialize hook completed.")
+  except Exception as e:
+    logger.error(f"[{slug}] Actor initialize hook failed: {e}", exc_info=True)
 
 
 def _normalize_json_def(obj: Any) -> Any:

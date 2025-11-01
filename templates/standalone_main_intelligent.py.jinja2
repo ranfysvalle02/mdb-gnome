@@ -189,6 +189,20 @@ async def ensure_indexes():
                     # Standard MongoDB index - use prefixed index name
                     try:
                         keys = index_def.get("keys", {})
+                        
+                        # Check if this is an _id index (MongoDB creates these automatically)
+                        is_id_index = False
+                        if isinstance(keys, dict):
+                            is_id_index = len(keys) == 1 and "_id" in keys
+                        elif isinstance(keys, list):
+                            is_id_index = len(keys) == 1 and keys[0][0] == "_id"
+                        
+                        if is_id_index:
+                            # _id indexes are automatically created by MongoDB and can't be customized
+                            logger.info(f"Skipping '_id' index '{index_name}' - MongoDB creates _id indexes automatically and they can't be customized.")
+                            continue
+                        
+                        # For non-_id indexes, use background option
                         await collection.create_index(keys, name=index_name, background=True)
                         logger.info(f"Created standard index '{index_name}' on '{full_collection_name}'.")
                     except Exception as e:
