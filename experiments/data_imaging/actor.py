@@ -392,9 +392,7 @@ class ExperimentActor:
 
         for attempt in range(5):
             doc = self.engine.create_synthetic_apple_watch_data(new_suffix)
-            feature_vec = self.engine.get_feature_vector(
-                doc, r_key="heart_rate", g_key="calories_per_min", b_key="speed_kph"
-            )
+            feature_vec = self.engine.get_feature_vector(doc)
             doc["workout_vector"] = feature_vec.tolist()
             try:
                 await self.db.workouts.insert_one(doc)
