@@ -3018,6 +3018,21 @@ async def _register_experiments(app: FastAPI, active_cfgs: List[Dict[str, Any]],
       continue
 
 
+def _normalize_json_def(obj: Any) -> Any:
+  """
+  Normalize a JSON-serializable object for comparison by:
+  1. Converting to JSON string (which sorts dict keys)
+  2. Parsing back to dict/list
+  This makes comparisons order-insensitive and format-insensitive.
+  """
+  try:
+    return json.loads(json.dumps(obj, sort_keys=True))
+  except (TypeError, ValueError) as e:
+    # If it can't be serialized, return as-is for fallback comparison
+    logger.warning(f"Could not normalize JSON def: {e}")
+    return obj
+
+
 async def _run_index_creation_for_collection(
   db: AsyncIOMotorDatabase,
   slug: str,
@@ -3065,7 +3080,11 @@ async def _run_index_creation_for_collection(
         existing_index = await index_manager.get_search_index(index_name)
         if existing_index:
           current_def = existing_index.get("latestDefinition", existing_index.get("definition"))
-          if current_def == definition:
+          # Normalize both definitions for order-insensitive comparison
+          normalized_current = _normalize_json_def(current_def)
+          normalized_expected = _normalize_json_def(definition)
+          
+          if normalized_current == normalized_expected:
             logger.info(f"{log_prefix} Search index '{index_name}' definition matches.")
             if not existing_index.get("queryable") and existing_index.get("status") != "FAILED":
               logger.info(f"{log_prefix} Index '{index_name}' not queryable yet; waiting.")
@@ -3076,7 +3095,9 @@ async def _run_index_creation_for_collection(
             else:
               logger.info(f"{log_prefix} Index '{index_name}' is ready.")
           else:
-            logger.warning(f"{log_prefix} Search index '{index_name}' def changed; updating.")
+            logger.warning(f"{log_prefix} Search index '{index_name}' definition changed; updating.")
+            logger.info(f"{log_prefix} Current definition fields: {json.dumps(list(normalized_current.get('fields', [])) if isinstance(normalized_current, dict) else [], indent=2)}")
+            logger.info(f"{log_prefix} Expected definition fields: {json.dumps(list(normalized_expected.get('fields', [])) if isinstance(normalized_expected, dict) else [], indent=2)}")
             await index_manager.update_search_index(name=index_name, definition=definition, wait_for_ready=True)
             logger.info(f"{log_prefix} Updated search index '{index_name}'.")
         else:
