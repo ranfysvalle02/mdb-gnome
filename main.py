@@ -2277,4 +2277,6 @@ if __name__ == "__main__":
     reload=True,
     reload_dirs=[str(BASE_DIR)],
     log_level="info",
+    proxy_headers=True,  
+    forwarded_allow_ips="*" 
   )
