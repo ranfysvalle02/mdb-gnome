@@ -16,29 +16,43 @@ import shutil
 import zipfile
 import fnmatch
 import io
-import re # Needed for requirement parsing
-import hashlib # For checksum calculation
+import re  # Needed for requirement parsing
+import hashlib  # For checksum calculation
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 from contextlib import asynccontextmanager
 from urllib.parse import quote
 
-# Import ScopedMongoWrapper - this is the whole point
-try:
-  from async_mongo_wrapper import ScopedMongoWrapper
-  HAVE_MONGO_WRAPPER = True
-except ImportError:
-  HAVE_MONGO_WRAPPER = False
-  logging.warning("async_mongo_wrapper not found. Database wrapper unavailable.")
-
-# --- NEW: Backblaze B2 SDK (Native Client) ---
-try:
-  from b2sdk.v2 import InMemoryAccountInfo, B2Api
-  from b2sdk.exception import B2Error, B2SimpleError
-  B2SDK_AVAILABLE = True
-except ImportError:
-  B2SDK_AVAILABLE = False
-  logging.warning("b2sdk library not found. Backblaze B2 integration will be disabled.")
+# ============================================================================
+# MODULAR IMPORTS - Configuration and Core Dependencies
+# ============================================================================
+from config import (
+    BASE_DIR,
+    EXPERIMENTS_DIR,
+    TEMPLATES_DIR,
+    EXPORTS_TEMP_DIR,
+    ENABLE_REGISTRATION,
+    MONGO_URI,
+    DB_NAME,
+    SECRET_KEY,
+    ADMIN_EMAIL_DEFAULT,
+    ADMIN_PASSWORD_DEFAULT,
+    B2_APPLICATION_KEY_ID,
+    B2_APPLICATION_KEY,
+    B2_BUCKET_NAME,
+    B2_ENDPOINT_URL,
+    B2_ENABLED,
+    B2SDK_AVAILABLE,
+    RAY_AVAILABLE,
+    HAVE_MONGO_WRAPPER,
+    INDEX_MANAGER_AVAILABLE,
+    AIOFILES_AVAILABLE,
+    InMemoryAccountInfo,
+    B2Api,
+    B2Error,
+    ScopedMongoWrapper,
+    AsyncAtlasIndexManager,
+)
 
 # FastAPI & Starlette imports
 from fastapi import (
@@ -64,82 +78,98 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
-from starlette.types import ASGIApp
 
 # Database imports (Motor for async MongoDB)
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 # Third-party for dependency parsing
 try:
-  import pkg_resources # Used for robust requirement parsing
+    import pkg_resources  # Used for robust requirement parsing
 except ImportError:
   pass
 
-# Async file I/O
-try:
-  import aiofiles
-  AIOFILES_AVAILABLE = True
-except ImportError:
-  AIOFILES_AVAILABLE = False
-  logging.warning("aiofiles not found. File I/O will use asyncio.to_thread() fallback.")
+# ============================================================================
+# MODULAR IMPORTS - Application Modules
+# ============================================================================
+# Ray decorator
+from ray_decorator import ray_actor
 
-# Ray integration
-try:
-  import ray
-  RAY_AVAILABLE = True
-except ImportError as e:
-  RAY_AVAILABLE = False
-  logging.warning(f" Ray integration disabled: Ray library not found ({e}).")
-except Exception as e:
-  RAY_AVAILABLE = False
-  logging.error(f" Unexpected error importing Ray: {e}", exc_info=True)
+# Middleware
+from middleware import (
+    ExperimentScopeMiddleware,
+    ProxyAwareHTTPSMiddleware,
+    HTTPSEnforcementMiddleware,
+)
 
+# Background tasks
+from background_tasks import (
+    BackgroundTaskManager,
+    safe_background_task as _safe_background_task,
+    get_task_manager,
+)
 
-#############################################
-# NEW: Ray Actor Decorator With DB Fallback #
-#############################################
-def ray_actor(
-  name: str = None,
-  namespace: str = "modular_labs",
-  lifetime: str = "detached",
-  max_restarts: int = -1,
-  get_if_exists: bool = True,
-  fallback_if_no_db: bool = True,
-):
-  """
-  A decorator that transforms a normal class into a Ray actor.
-  If 'fallback_if_no_db' is True and we detect ScopedMongoWrapper is missing,
-  we automatically pass 'use_in_memory_fallback=True' to the actor
-  constructor, letting the actor skip real DB usage.
-  """
+# Utilities
+from utils import (
+    read_file_async as _read_file_async,
+    read_json_async as _read_json_async,
+    write_file_async as _write_file_async,
+    calculate_dir_size_sync as _calculate_dir_size_sync,
+    scan_directory as _scan_directory,
+    scan_directory_sync as _scan_directory_sync,
+    secure_path as _secure_path,
+    build_absolute_https_url as _build_absolute_https_url,
+    make_json_serializable as _make_json_serializable,
+)
 
-  def decorator(user_class):
-    # Convert user_class => Ray-remote class
-    ray_remote_cls = ray.remote(user_class)
+# B2 utilities
+from b2_utils import (
+    generate_presigned_download_url as _generate_presigned_download_url,
+    upload_export_to_b2 as _upload_export_to_b2,
+)
 
-    @classmethod
-    def spawn(cls, *args, runtime_env=None, **kwargs):
-      # Decide actor_name
-      actor_name = name if name else f"{user_class.__name__}_actor"
-      # If fallback requested and no ScopedMongoWrapper, pass "use_in_memory_fallback"
-      if fallback_if_no_db and not HAVE_MONGO_WRAPPER:
-        kwargs["use_in_memory_fallback"] = True
+# Lifespan management
+from lifespan import lifespan, get_templates
 
-      return cls.options(
-        name=actor_name,
-        namespace=namespace,
-        lifetime=lifetime,
-        max_restarts=max_restarts,
-        get_if_exists=get_if_exists,
-        runtime_env=runtime_env or {},
-      ).remote(*args, **kwargs)
+# Database initialization and seeding
+from database import (
+    ensure_db_indices,
+    seed_admin,
+    seed_db_from_local_files,
+)
 
-    setattr(ray_remote_cls, "spawn", spawn)
-    return ray_remote_cls
+# Index management
+from index_management import (
+    normalize_json_def as _normalize_json_def,
+    run_index_creation_for_collection as _run_index_creation_for_collection,
+)
 
-  return decorator
+# Export helpers
+from export_helpers import (
+    estimate_export_size as _estimate_export_size,
+    should_use_disk_streaming as _should_use_disk_streaming,
+    calculate_export_checksum as _calculate_export_checksum,
+    find_existing_export_by_checksum as _find_existing_export_by_checksum,
+    save_export_locally as _save_export_locally,
+    cleanup_local_export_file as _cleanup_local_export_file,
+    cleanup_old_exports as _cleanup_old_exports,
+    log_export as _log_export,
+    parse_requirements_file_sync as _parse_requirements_file_sync,
+    parse_requirements_from_string as _parse_requirements_from_string,
+    dump_db_to_json as _dump_db_to_json,
+    make_standalone_main_py as _make_standalone_main_py,
+    make_intelligent_standalone_main_py as _make_intelligent_standalone_main_py,
+    fix_static_paths as _fix_static_paths,
+    create_zip_to_disk as _create_zip_to_disk,
+    MASTER_REQUIREMENTS,
+    _extract_pkgname,
+)
+
+# Ray integration (for lifespan)
+if RAY_AVAILABLE:
+    import ray
+else:
+    ray = None
 
 
 # ============================
@@ -175,470 +205,14 @@ except ImportError:
 
 
 ## Logging Configuration
-logging.basicConfig(
-  level=os.getenv("LOG_LEVEL", "INFO").upper(),
-  format="%(asctime)s | %(name)s | %(levelname)-8s | %(message)s",
-  datefmt="%Y-%m-%d %H:%M:%S",
-)
 logger = logging.getLogger("modular_labs.main")
 
+# B2 API instances (initialized in lifespan)
+b2_api = None
+b2_bucket = None
+_b2_init_lock = asyncio.Lock()
 
-## Global Paths and Configuration Constants
-BASE_DIR = Path(__file__).resolve().parent
-EXPERIMENTS_DIR = BASE_DIR / "experiments"
-TEMPLATES_DIR = BASE_DIR / "templates"
-EXPORTS_TEMP_DIR = BASE_DIR / "temp_exports"  # Temporary local storage for exports
-
-# Ensure exports temp directory exists
-EXPORTS_TEMP_DIR.mkdir(exist_ok=True, mode=0o755)
-logger.info(f"Exports temp directory: {EXPORTS_TEMP_DIR}")
-
-ENABLE_REGISTRATION = os.getenv("ENABLE_REGISTRATION", "true").lower() in {"true", "1", "yes"}
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017/")
-DB_NAME = "labs_db"
-
-SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "a_very_insecure_default_dev_secret_123!")
-if SECRET_KEY == "a_very_insecure_default_dev_secret_123!":
-  logger.critical(" SECURITY WARNING: Using default SECRET_KEY. Set FLASK_SECRET_KEY.")
-
-ADMIN_EMAIL_DEFAULT = os.getenv("ADMIN_EMAIL", "admin@example.com")
-ADMIN_PASSWORD_DEFAULT = os.getenv("ADMIN_PASSWORD", "password123")
-if ADMIN_PASSWORD_DEFAULT == "password123":
-  logger.warning(" Using default admin password.")
-
-# --- NEW: Backblaze B2 Configuration ---
-# B2 SDK uses applicationKeyId and applicationKey (not endpoint_url)
-B2_APPLICATION_KEY_ID = os.getenv("B2_APPLICATION_KEY_ID") or os.getenv("B2_ACCESS_KEY_ID")
-B2_APPLICATION_KEY = os.getenv("B2_APPLICATION_KEY") or os.getenv("B2_SECRET_ACCESS_KEY")
-B2_BUCKET_NAME = os.getenv("B2_BUCKET_NAME")
-
-# Legacy env var support (B2_ENDPOINT_URL not needed for native SDK)
-B2_ENDPOINT_URL = os.getenv("B2_ENDPOINT_URL")  # Kept for Ray compatibility
-
-B2_ENABLED = all([B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET_NAME, B2SDK_AVAILABLE])
-b2_api = None  # Will be initialized in lifespan
-b2_bucket = None  # Will be initialized in lifespan
-_b2_init_lock = asyncio.Lock()  # Lock to prevent race condition during B2 initialization
-
-if not B2SDK_AVAILABLE:
-  logger.critical("b2sdk library not installed. B2 features are impossible. pip install b2sdk")
-elif B2_ENABLED:
-  logger.info(f"Backblaze B2 integration ENABLED for bucket '{B2_BUCKET_NAME}'.")
-else:
-  logger.warning("Backblaze B2 integration DISABLED. Missing one or more B2_... env vars.")
-  logger.warning("Dynamic experiment uploads via /api/upload-experiment will FAIL.")
-
-
-## Utility: B2 Presigned URL Generator (Native B2 SDK)
-def _generate_presigned_download_url(b2_bucket, file_name: str, duration_seconds: int = 3600) -> str:
-  """
-  Generates a secure, time-limited HTTPS download URL using native B2 SDK.
-  B2 SDK always returns HTTPS URLs, avoiding mixed content warnings.
-  
-  Args:
-    b2_bucket: B2 bucket instance from B2Api
-    file_name: Object key in the bucket
-    duration_seconds: URL expiration time (default: 1 hour)
-    
-  Returns:
-    HTTPS presigned download URL
-  """
-  try:
-    # B2 SDK generates HTTPS URLs by default
-    url = b2_bucket.get_download_url(file_name, duration_seconds)
-    
-    # Verify it's HTTPS (B2 SDK should always return HTTPS, but be defensive)
-    if not url.startswith('https://'):
-      logger.error(f"CRITICAL: B2 SDK returned non-HTTPS URL: {url[:100]}...")
-      if url.startswith('http://'):
-        url = url.replace('http://', 'https://', 1)
-        logger.warning(f"Forced HTTPS on B2 presigned URL (was HTTP): {file_name}")
-      else:
-        raise ValueError(f"Invalid URL scheme from B2 SDK: {url[:50]}")
-    
-    logger.debug(f"Generated B2 presigned HTTPS URL for: {file_name}")
-    return url
-  except B2Error as e:
-    logger.error(f"B2 SDK error generating presigned URL for '{file_name}': {e}")
-    raise
-
-
-## Utility: Async File I/O Helpers
-async def _read_file_async(file_path: Path, encoding: str = "utf-8") -> str:
-  """
-  Asynchronously read a text file.
-  Uses aiofiles if available, otherwise falls back to asyncio.to_thread().
-  """
-  if AIOFILES_AVAILABLE:
-    async with aiofiles.open(file_path, "r", encoding=encoding) as f:
-      return await f.read()
-  else:
-    return await asyncio.to_thread(file_path.read_text, encoding=encoding)
-
-async def _read_json_async(file_path: Path, encoding: str = "utf-8") -> Any:
-  """
-  Asynchronously read and parse a JSON file.
-  Uses async file reading and offloads JSON parsing to thread pool.
-  """
-  content = await _read_file_async(file_path, encoding)
-  # JSON parsing is CPU-bound, so offload it
-  return await asyncio.to_thread(json.loads, content)
-
-async def _write_file_async(file_path: Path, content: bytes | str) -> None:
-  """
-  Asynchronously write to a file.
-  Uses aiofiles if available, otherwise falls back to asyncio.to_thread().
-  Automatically detects if content is str or bytes.
-  """
-  if AIOFILES_AVAILABLE:
-    if isinstance(content, str):
-      async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
-        await f.write(content)
-    else:
-      async with aiofiles.open(file_path, "wb") as f:
-        await f.write(content)
-  else:
-    if isinstance(content, str):
-      await asyncio.to_thread(file_path.write_text, content, encoding="utf-8")
-    else:
-      await asyncio.to_thread(file_path.write_bytes, content)
-
-## Background Task Manager: Prevents Task Accumulation
-class BackgroundTaskManager:
-  """
-  Manages background tasks to prevent accumulation and provide tracking.
-  Limits the number of concurrent background tasks and tracks active tasks.
-  """
-  def __init__(self, max_concurrent_tasks: int = 100):
-    self.max_concurrent_tasks = max_concurrent_tasks
-    self.active_tasks: Dict[str, asyncio.Task] = {}
-    self.task_counter = 0
-    self._lock = asyncio.Lock()
-    
-  async def _safe_task_wrapper(self, task_id: str, coro) -> None:
-    """
-    Safely executes a background coroutine with error handling.
-    Removes the task from active_tasks when done.
-    """
-    try:
-      await coro
-    except Exception as e:
-      logger.error(f"Background task {task_id} failed: {e}", exc_info=True)
-    finally:
-      async with self._lock:
-        self.active_tasks.pop(task_id, None)
-  
-  async def create_task(self, coro, task_name: str = None) -> Optional[str]:
-    """
-    Creates a tracked background task. Returns task_id if created, None if rejected.
-    
-    Args:
-      coro: The coroutine to run in background
-      task_name: Optional name for the task (for logging)
-      
-    Returns:
-      task_id if task was created, None if rejected due to max limit
-    """
-    async with self._lock:
-      # Clean up completed tasks first
-      self.active_tasks = {
-        task_id: task for task_id, task in self.active_tasks.items()
-        if not task.done()
-      }
-      
-      # Check if we're at max capacity
-      if len(self.active_tasks) >= self.max_concurrent_tasks:
-        logger.warning(
-          f"Rejected background task '{task_name or 'unnamed'}': "
-          f"{len(self.active_tasks)}/{self.max_concurrent_tasks} tasks active"
-        )
-        return None
-      
-      # Create new task
-      self.task_counter += 1
-      task_id = f"task_{self.task_counter}_{task_name or 'unnamed'}"
-      task = asyncio.create_task(self._safe_task_wrapper(task_id, coro))
-      self.active_tasks[task_id] = task
-      
-      if task_name:
-        logger.debug(f"Created background task: {task_id} ({len(self.active_tasks)}/{self.max_concurrent_tasks} active)")
-      
-      return task_id
-  
-  def get_active_task_count(self) -> int:
-    """Returns the current number of active tasks."""
-    return len(self.active_tasks)
-
-# Global task manager instance
-_task_manager = BackgroundTaskManager(max_concurrent_tasks=100)
-
-## Utility: Safe Background Task Wrapper (backwards compatible)
-async def _safe_background_task(coro) -> None:
-  """
-  Safely executes a background coroutine with error handling.
-  Prevents unhandled exceptions in fire-and-forget tasks.
-  Uses the global task manager to prevent task accumulation.
-  """
-  await _task_manager.create_task(coro, task_name="safe_background_task")
-
-## Utility: Calculate Directory Size (Synchronous)
-def _calculate_dir_size_sync(path: Path) -> int:
-  """
-  Synchronous helper to calculate total size of all files in a directory tree.
-  Used by _estimate_export_size() via thread pool to avoid blocking.
-  """
-  total_size = 0
-  for root, dirs, files in os.walk(path):
-    for file_name in files:
-      file_path = Path(root) / file_name
-      try:
-        if file_path.is_file():
-          total_size += file_path.stat().st_size
-      except Exception:
-        pass
-  return total_size
-
-## Utility: Estimate Export Size
-async def _estimate_export_size(
-  db_data: Dict[str, Any],
-  db_collections: Dict[str, List[Dict[str, Any]]],
-  source_dir: Path,
-  slug_id: str
-) -> int:
-  """
-  Estimates the size of the export in bytes.
-  Used to determine if disk streaming is needed.
-  Offloads directory scanning to thread pool to avoid blocking event loop.
-  """
-  size = 0
-  
-  # Estimate size of JSON data
-  try:
-    size += len(json.dumps(db_data, indent=2).encode('utf-8'))
-    size += len(json.dumps(db_collections, indent=2).encode('utf-8'))
-  except Exception:
-    pass
-  
-  # Estimate size of experiment files (offloaded to thread pool)
-  experiment_path = source_dir / "experiments" / slug_id
-  if experiment_path.is_dir():
-    size += await asyncio.to_thread(_calculate_dir_size_sync, experiment_path)
-  
-  return size
-
-
-## Utility: Determine if Disk Streaming is Needed
-def _should_use_disk_streaming(estimated_size: int, max_size_mb: int = 100) -> bool:
-  """
-  Determines if disk streaming should be used based on estimated size.
-  Default threshold: 100 MB
-  """
-  max_size_bytes = max_size_mb * 1024 * 1024
-  return estimated_size > max_size_bytes
-
-
-## Utility: Calculate Export Checksum
-def _calculate_export_checksum(zip_source: io.BytesIO | Path) -> str:
-  """
-  Calculates SHA256 checksum of the export ZIP.
-  Accepts either BytesIO or Path.
-  Returns hex digest of the checksum.
-  """
-  try:
-    # Get ZIP data
-    if isinstance(zip_source, Path):
-      zip_data = zip_source.read_bytes()
-    else:
-      zip_source.seek(0)
-      zip_data = zip_source.getvalue()
-    
-    # Calculate SHA256 checksum
-    checksum = hashlib.sha256(zip_data).hexdigest()
-    logger.debug(f"Calculated export checksum: {checksum[:16]}...")
-    return checksum
-  except Exception as e:
-    logger.error(f"Failed to calculate export checksum: {e}", exc_info=True)
-    raise
-
-## Utility: Check for Existing Export by Checksum
-async def _find_existing_export_by_checksum(
-  db: AsyncIOMotorDatabase,
-  checksum: str,
-  slug_id: Optional[str] = None
-) -> Optional[Dict[str, Any]]:
-  """
-  Finds an existing export with the same checksum that is not invalidated.
-  Returns the export log if found, None otherwise.
-  """
-  try:
-    query = {
-      "checksum": checksum,
-      "invalidated": {"$ne": True}  # Not invalidated
-    }
-    if slug_id:
-      query["slug_id"] = slug_id
-    
-    existing_export = await db.export_logs.find_one(query, sort=[("created_at", -1)])
-    
-    if existing_export:
-      logger.info(f"Found existing export with matching checksum: {existing_export.get('_id')}")
-      return existing_export
-    
-    return None
-  except Exception as e:
-    logger.warning(f"Error checking for existing export by checksum: {e}", exc_info=True)
-    return None
-
-## Utility: Upload Export to B2
-async def _upload_export_to_b2(
-  b2_bucket,
-  zip_source: io.BytesIO | Path,
-  b2_filename: str
-) -> str:
-  """
-  Uploads export ZIP to B2 storage.
-  Accepts either BytesIO or Path.
-  Returns the B2 file key/name.
-  """
-  try:
-    # Get ZIP data
-    if isinstance(zip_source, Path):
-      zip_data = zip_source.read_bytes()
-    else:
-      zip_source.seek(0)
-      zip_data = zip_source.getvalue()
-    
-    # Upload to B2 (offload to thread pool to avoid blocking event loop)
-    await asyncio.to_thread(b2_bucket.upload_bytes, zip_data, b2_filename)
-    logger.info(f"Uploaded export to B2: {b2_filename}")
-    return b2_filename
-  except B2Error as e:
-    logger.error(f"B2 upload failed for '{b2_filename}': {e}", exc_info=True)
-    raise
-  except Exception as e:
-    logger.error(f"Failed to upload export to B2: {e}", exc_info=True)
-    raise
-
-## Utility: Save Export Locally
-async def _save_export_locally(zip_source: io.BytesIO | Path, filename: str) -> Path:
-  """
-  Saves export ZIP to local temp directory.
-  Accepts either BytesIO or Path (if already on disk).
-  Returns the file path for serving.
-  """
-  export_file = EXPORTS_TEMP_DIR / filename
-  try:
-    if isinstance(zip_source, Path):
-      # Already on disk, just copy/rename if needed
-      if zip_source != export_file:
-        shutil.copy2(zip_source, export_file)
-        zip_source.unlink()  # Remove temporary file
-      logger.debug(f"Export already on disk: {export_file}")
-    else:
-      # BytesIO - write to disk
-      zip_source.seek(0)
-      zip_data = zip_source.getvalue()
-      await _write_file_async(export_file, zip_data)
-      logger.debug(f"Saved export to local temp: {export_file}")
-    return export_file
-  except Exception as e:
-    logger.error(f"Failed to save export locally: {e}", exc_info=True)
-    raise
-
-## Utility: Cleanup Local Export File
-async def _cleanup_local_export_file(file_path: Path | None):
-  """
-  Removes a local export file after successful B2 upload.
-  Safe to call even if file doesn't exist or path is None.
-  """
-  if not file_path:
-    return
-  
-  try:
-    if file_path.exists() and file_path.is_file():
-      file_path.unlink()
-      logger.debug(f"Cleaned up local export file after B2 upload: {file_path.name}")
-  except Exception as e:
-    logger.warning(f"Failed to cleanup local export file {file_path.name}: {e}")
-
-## Utility: Cleanup Old Exports (Batch Operation)
-async def _cleanup_old_exports(max_age_hours: int = 24):
-  """
-  Removes export files older than max_age_hours from temp directory.
-  Uses batch operations: collects files to delete first, then deletes in batch.
-  This is more efficient than per-file cleanup operations.
-  """
-  try:
-    cutoff_time = datetime.datetime.now().timestamp() - (max_age_hours * 3600)
-    
-    # Batch operation: collect all files to delete first
-    files_to_delete = []
-    for export_file in EXPORTS_TEMP_DIR.glob("*.zip"):
-      try:
-        if export_file.stat().st_mtime < cutoff_time:
-          files_to_delete.append(export_file)
-      except Exception as e:
-        logger.warning(f"Failed to check export file {export_file.name}: {e}")
-    
-    # Parallel delete: delete all collected files concurrently for better performance
-    async def _delete_file_safe(file_path: Path) -> Tuple[Path, bool]:
-      """Delete a single file, returning (path, success)."""
-      try:
-        file_path.unlink()
-        logger.debug(f"Cleaned up old export: {file_path.name}")
-        return file_path, True
-      except Exception as e:
-        logger.warning(f"Failed to delete old export {file_path.name}: {e}")
-        return file_path, False
-    
-    if files_to_delete:
-      # Delete files in parallel using asyncio.gather
-      delete_tasks = [_delete_file_safe(f) for f in files_to_delete]
-      results = await asyncio.gather(*delete_tasks, return_exceptions=True)
-      
-      # Count successful deletions
-      deleted_count = sum(1 for r in results if not isinstance(r, Exception) and r[1])
-      
-      if deleted_count > 0:
-        logger.info(f"Cleaned up {deleted_count}/{len(files_to_delete)} old export file(s) in parallel operation")
-  except Exception as e:
-    logger.error(f"Error during export cleanup: {e}", exc_info=True)
-
-## Utility: Log Export to Database
-async def _log_export(
-  db: AsyncIOMotorDatabase,
-  slug_id: str,
-  export_type: str,
-  user_email: str,
-  local_file_path: Optional[str] = None,
-  file_size: Optional[int] = None,
-  b2_file_name: Optional[str] = None,
-  invalidated: bool = False,
-  checksum: Optional[str] = None
-):
-  """
-  Logs an export event to the database for tracking purposes.
-  export_type should be 'standalone' or 'docker' or 'intelligent'
-  """
-  try:
-    export_log = {
-      "slug_id": slug_id,
-      "export_type": export_type,
-      "user_email": user_email,
-      "local_file_path": local_file_path,
-      "file_size": file_size,
-      "b2_file_name": b2_file_name,
-      "invalidated": invalidated,
-      "checksum": checksum,
-      "created_at": datetime.datetime.utcnow(),
-    }
-    result = await db.export_logs.insert_one(export_log)
-    logger.debug(f"Logged export: {slug_id} ({export_type}) by {user_email}, ID: {result.inserted_id}")
-    return result.inserted_id
-  except Exception as e:
-    logger.error(f"Failed to log export to database: {e}", exc_info=True)
-    # Don't fail the export if logging fails
-    return None
+# Export helper functions are now imported from export_helpers.py
 
 
 ## Utility: Parse and Merge Requirements for Ray Isolation
@@ -718,255 +292,15 @@ def _merge_requirements(main_reqs: List[str], local_reqs: List[str]) -> List[str
   return final_list
 
 
-MASTER_REQUIREMENTS = _parse_requirements_file_sync(BASE_DIR / "requirements.txt")
-if MASTER_REQUIREMENTS:
-  logger.info(f"Master environment requirements loaded ({len(MASTER_REQUIREMENTS)} lines).")
-else:
-  logger.info("No top-level requirements.txt found or empty.")
+# Templates are initialized in lifespan module and stored in app.state.templates
+from lifespan import get_templates
+
+def get_templates_from_request(request: Request):
+    """Get templates from app.state, falling back to get_templates()."""
+    return getattr(request.app.state, "templates", None) or get_templates()
 
 
-## Jinja2 Template Engine Setup
-if not TEMPLATES_DIR.is_dir():
-  logger.critical(f" CRITICAL ERROR: Templates directory not found at '{TEMPLATES_DIR}'.")
-  templates: Optional[Jinja2Templates] = None
-else:
-  # Enable bytecode caching for better performance
-  try:
-    from jinja2 import FileSystemBytecodeCache
-    cache_dir = BASE_DIR / ".jinja_cache"
-    cache_dir.mkdir(exist_ok=True, mode=0o755)
-    bytecode_cache = FileSystemBytecodeCache(
-      directory=str(cache_dir),
-      pattern="%s.cache"
-    )
-    templates = Jinja2Templates(
-      directory=str(TEMPLATES_DIR),
-      bytecode_cache=bytecode_cache
-    )
-    logger.info(f" Jinja2 templates loaded from '{TEMPLATES_DIR}' with bytecode caching enabled.")
-  except Exception as e:
-    logger.warning(f" Failed to enable Jinja2 bytecode caching: {e}. Using default configuration.")
-    templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
-    logger.info(f" Jinja2 templates loaded from '{TEMPLATES_DIR}'")
-
-
-## FastAPI Application Lifespan (Startup & Shutdown)
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-  logger.info(" Application startup sequence initiated...")
-  app.state.experiments = {}
-  app.state.ray_is_available = False
-  app.state.environment_mode = os.getenv("G_NOME_ENV", "production").lower()
-  app.state.templates = templates
-
-  logger.info(f"G_NOME_ENV set to: '{app.state.environment_mode}'")
-
-  # --- NEW: Initialize B2 SDK Client ---
-  global b2_api, b2_bucket
-  if not B2_ENABLED:
-    app.state.b2_api = None
-    app.state.b2_bucket = None
-    logger.warning("B2 SDK not initialized (B2_ENABLED=False).")
-  else:
-    async with _b2_init_lock:
-      # Double-check pattern: check again after acquiring lock to prevent race condition
-      if not b2_api:
-        try:
-          # Initialize B2 API with account info
-          account_info = InMemoryAccountInfo()
-          b2_api = B2Api(account_info)
-          
-          # Authorize account (authenticates and caches credentials)
-          b2_api.authorize_account("production", B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY)
-          
-          # Get bucket by name
-          b2_bucket = b2_api.get_bucket_by_name(B2_BUCKET_NAME)
-          
-          # Store in app state
-          app.state.b2_api = b2_api
-          app.state.b2_bucket = b2_bucket
-          
-          logger.info(f"Backblaze B2 SDK initialized successfully for bucket '{B2_BUCKET_NAME}'.")
-        except B2Error as e:
-          logger.error(f"Failed to initialize B2 SDK during lifespan: {e}", exc_info=True)
-          app.state.b2_api = None
-          app.state.b2_bucket = None
-          b2_api = None
-          b2_bucket = None
-        except Exception as e:
-          logger.error(f"Unexpected error initializing B2 SDK: {e}", exc_info=True)
-          app.state.b2_api = None
-          app.state.b2_bucket = None
-          b2_api = None
-          b2_bucket = None
-
-  # Ray Cluster Connection
-  if RAY_AVAILABLE:
-      # Get the address without a default value
-      RAY_CONNECTION_ADDRESS = os.getenv("RAY_ADDRESS") 
-
-      job_runtime_env: Dict[str, Any] = {"working_dir": str(BASE_DIR)}
-
-      if B2_ENABLED:
-        # Pass B2 keys as environment variables for Ray to use in its actors/workers
-        # Note: Ray might still use S3-compatible interface, so we keep AWS-style env vars
-        job_runtime_env["env_vars"] = {
-            "AWS_ENDPOINT_URL": B2_ENDPOINT_URL or "",  # May be None with native SDK
-            "AWS_ACCESS_KEY_ID": B2_APPLICATION_KEY_ID,
-            "AWS_SECRET_ACCESS_KEY": B2_APPLICATION_KEY,
-            "B2_APPLICATION_KEY_ID": B2_APPLICATION_KEY_ID,
-            "B2_APPLICATION_KEY": B2_APPLICATION_KEY,
-            "B2_BUCKET_NAME": B2_BUCKET_NAME
-        }
-        logger.info("Passing B2 credentials to Ray job runtime environment.")
-
-      try:
-          if RAY_CONNECTION_ADDRESS:
-              # --- THIS BLOCK IS FOR DOCKER-COMPOSE ---
-              # We remove the lines here because we are connecting
-              # to an existing cluster that already has its own config.
-              logger.info(f"Connecting to Ray cluster (address='{RAY_CONNECTION_ADDRESS}', namespace='modular_labs')...")
-              ray.init(
-                  address=RAY_CONNECTION_ADDRESS,
-                  namespace="modular_labs",
-                  ignore_reinit_error=True,
-                  runtime_env=job_runtime_env,
-                  log_to_driver=False
-                  # num_cpus=2,  <--- REMOVE THIS
-                  # object_store_memory=2_000_000_000 <--- AND REMOVE THIS
-              )
-              connect_mode = f"EXTERNAL ({RAY_CONNECTION_ADDRESS})"
-          else:
-              # We LEAVE this block 100% UNCHANGED.
-              # These settings are correct for limiting a new local instance.
-              logger.info("Starting a new LOCAL Ray cluster instance inside the container...")
-              ray.init(
-                  namespace="modular_labs",
-                  ignore_reinit_error=True,
-                  runtime_env=job_runtime_env,
-                  log_to_driver=False,
-                  num_cpus=2, # <-- THIS STAYS (for Render)
-                  object_store_memory=2_000_000_000 # <-- THIS STAYS (for Render)
-              )
-              connect_mode = "LOCAL INSTANCE"
-              
-          app.state.ray_is_available = True
-      except Exception as e:
-          logger.error(f"Failed to initialize Ray: {e}", exc_info=True)
-          app.state.ray_is_available = False
-  else:
-      logger.warning("Ray library not found. Ray integration is disabled.")
-
-  # MongoDB Connection
-  logger.info(f"Connecting to MongoDB at '{MONGO_URI}'...")
-  try:
-    client = AsyncIOMotorClient(
-      MONGO_URI,
-      serverSelectionTimeoutMS=5000,
-      appname="ModularLabsAPI",
-      maxPoolSize=50,  # Increase pool size
-      minPoolSize=10,  # Keep connections warm
-      maxIdleTimeMS=45000,  # Close idle connections
-      retryWrites=True,  # Enable retry for writes
-      retryReads=True,   # Enable retry for reads
-    )
-    await client.admin.command("ping")
-    db = client[DB_NAME]
-    app.state.mongo_client = client
-    app.state.mongo_db = db
-    logger.info(f" MongoDB connection successful (Database: '{DB_NAME}').")
-  except Exception as e:
-    logger.critical(f" CRITICAL ERROR: Failed to connect to MongoDB: {e}", exc_info=True)
-    raise RuntimeError(f"MongoDB connection failed: {e}") from e
-
-  # Pluggable Authorization Provider Initialization
-  AUTHZ_PROVIDER = os.getenv("AUTHZ_PROVIDER", "casbin").lower()
-  logger.info(f"Initializing Authorization Provider: '{AUTHZ_PROVIDER}'...")
-  provider_settings = {"mongo_uri": MONGO_URI, "db_name": DB_NAME, "base_dir": BASE_DIR}
-  try:
-    authz_instance = await create_authz_provider(AUTHZ_PROVIDER, provider_settings)
-    app.state.authz_provider = authz_instance
-    logger.info(f" Authorization Provider '{authz_instance.__class__.__name__}' initialized.")
-  except Exception as e:
-    logger.critical(f" CRITICAL ERROR: Failed to initialize AuthZ provider '{AUTHZ_PROVIDER}': {e}", exc_info=True)
-    raise RuntimeError(f"Authorization provider initialization failed: {e}") from e
-
-  # Initial Database Setup
-  try:
-    await _ensure_db_indices(db)
-    await _seed_admin(app)
-    await _seed_db_from_local_files(db)
-    logger.info(" Essential database setup completed.")
-  except Exception as e:
-    logger.error(f" Error during initial database setup: {e}", exc_info=True)
-
-  # Load Initial Active Experiments
-  logger.info(" About to call reload_active_experiments...")
-  try:
-    await reload_active_experiments(app)
-    logger.info(" reload_active_experiments completed successfully.")
-  except Exception as e:
-    logger.error(f" ❌ Error during initial experiment load: {e}", exc_info=True)
-    import traceback
-    logger.error(f" ❌ Full traceback: {traceback.format_exc()}")
-
-  logger.info(" Application startup sequence complete. Ready to serve requests.")
-  
-  # Start scheduled export cleanup task (runs every 6 hours)
-  async def scheduled_cleanup_loop():
-    """Background task that runs export cleanup on a schedule (every 6 hours)."""
-    cleanup_interval_hours = 6
-    while True:
-      try:
-        await asyncio.sleep(cleanup_interval_hours * 3600)  # Sleep for 6 hours
-        logger.info(f"Running scheduled export cleanup (every {cleanup_interval_hours} hours)...")
-        await _cleanup_old_exports(max_age_hours=24)
-      except asyncio.CancelledError:
-        logger.info("Scheduled export cleanup task cancelled during shutdown.")
-        break
-      except Exception as e:
-        logger.error(f"Error in scheduled export cleanup loop: {e}", exc_info=True)
-        # Continue the loop even if cleanup fails
-        await asyncio.sleep(60)  # Wait 1 minute before retrying
-  
-  # Start the scheduled cleanup task
-  cleanup_task = asyncio.create_task(scheduled_cleanup_loop())
-  app.state.export_cleanup_task = cleanup_task  # Store for shutdown
-  logger.info(" Scheduled export cleanup task started (runs every 6 hours).")
-  
-  # Run initial cleanup after 5 minutes to avoid blocking startup
-  async def initial_cleanup_delayed():
-    await asyncio.sleep(300)  # Wait 5 minutes before first cleanup
-    logger.info("Running initial export cleanup after startup delay...")
-    await _cleanup_old_exports(max_age_hours=24)
-  
-  asyncio.create_task(initial_cleanup_delayed())
-  
-  try:
-    yield # The application runs here
-  finally:
-    logger.info(" Application shutdown sequence initiated...")
-    
-    # Cancel scheduled cleanup task
-    if hasattr(app.state, "export_cleanup_task"):
-      cleanup_task = app.state.export_cleanup_task
-      if not cleanup_task.done():
-        cleanup_task.cancel()
-        try:
-          await cleanup_task
-        except asyncio.CancelledError:
-          pass
-        logger.info(" Scheduled export cleanup task cancelled.")
-    
-    if hasattr(app.state, "mongo_client") and app.state.mongo_client:
-      logger.info("Closing MongoDB connection...")
-      app.state.mongo_client.close()
-
-    if hasattr(app.state, "ray_is_available") and app.state.ray_is_available:
-      logger.info("Shutting down Ray connection...")
-      ray.shutdown()
-
-    logger.info(" Application shutdown complete.")
+## FastAPI Application - Lifespan is now imported from lifespan.py
 
 
 app = FastAPI(
@@ -980,285 +314,10 @@ app = FastAPI(
 app.router.redirect_slashes = True
 
 
-class ExperimentScopeMiddleware(BaseHTTPMiddleware):
-  async def dispatch(self, request: Request, call_next: ASGIApp):
-    request.state.slug_id = None
-    request.state.read_scopes = None
-    path = request.url.path
-    if path.startswith("/experiments/"):
-      parts = path.strip("/").split("/")
-      if len(parts) >= 2:
-        slug = parts[1]
-        exp_cfg = getattr(request.app.state, "experiments", {}).get(slug)
-        if exp_cfg:
-          request.state.slug_id = slug
-          request.state.read_scopes = exp_cfg.get("resolved_read_scopes", [slug])
-    response = await call_next(request)
-    return response
-
-
-class ProxyAwareHTTPSMiddleware(BaseHTTPMiddleware):
-  """
-  Proxy-aware middleware: Detects proxy headers and rewrites request.url
-  to reflect the actual client scheme/host BEFORE route handlers execute.
-  This ensures FastAPI's url_for() generates correct HTTPS URLs when behind proxies.
-  
-  Handles multiple proxy header formats:
-  - X-Forwarded-Proto (Render.com, AWS ELB, etc.)
-  - X-Forwarded-Ssl (older proxies)
-  - Forwarded (RFC 7239)
-  - X-Forwarded-Host
-  """
-  async def dispatch(self, request: Request, call_next: ASGIApp):
-    # Store original values for debugging
-    original_scheme = request.url.scheme
-    original_host = request.url.hostname
-    
-    # Detect if we're in localhost/development (no proxy)
-    is_localhost = original_host in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")
-    has_proxy_headers = any((
-      request.headers.get("X-Forwarded-Proto"),
-      request.headers.get("X-Forwarded-Host"),
-      request.headers.get("Forwarded"),
-      request.headers.get("X-Forwarded-Ssl")
-    ))
-    
-    # Detect actual scheme from proxy headers (priority order)
-    # Only trust proxy headers if we're NOT on localhost OR we have explicit proxy headers
-    detected_scheme = original_scheme
-    detected_host = original_host
-    # Get port from original request URL or server scope
-    detected_port = request.url.port
-    if not detected_port:
-      # Try to get from server scope
-      server = request.scope.get("server")
-      if server and len(server) == 2:
-        detected_port = server[1]
-    
-    # On localhost without proxy headers, respect the original scheme
-    # If user accesses via https://localhost, keep HTTPS; if http://localhost, keep HTTP
-    # This allows local HTTPS development while defaulting to HTTP when appropriate
-    if is_localhost and not has_proxy_headers:
-      # Respect the original scheme - if user accessed via HTTPS, keep it as HTTPS
-      detected_scheme = original_scheme
-      logger.debug(f"Localhost request without proxy headers - respecting original scheme: {detected_scheme}")
-    else:
-      # We're behind a proxy or on a real server - check proxy headers
-      
-      # Check X-Forwarded-Proto (most common - Render.com, AWS ELB)
-      forwarded_proto = request.headers.get("X-Forwarded-Proto", "").lower()
-      if forwarded_proto in ("https", "http"):
-        detected_scheme = forwarded_proto
-        logger.debug(f"Detected scheme from X-Forwarded-Proto: {detected_scheme}")
-      
-      # Check X-Forwarded-Ssl (older proxies)
-      if request.headers.get("X-Forwarded-Ssl", "").lower() == "on":
-        detected_scheme = "https"
-        logger.debug(f"Detected HTTPS from X-Forwarded-Ssl header")
-      
-      # Check Forwarded header (RFC 7239 format: proto=https;host=example.com)
-      forwarded_header = request.headers.get("Forwarded", "")
-      if forwarded_header:
-        # Simple parsing for proto parameter
-        if "proto=https" in forwarded_header.lower():
-          detected_scheme = "https"
-          logger.debug(f"Detected HTTPS from Forwarded header")
-        # Parse host from Forwarded header if present
-        host_match = re.search(r'host=([^;,\s]+)', forwarded_header, re.IGNORECASE)
-        if host_match:
-          host_value = host_match.group(1).strip('"')
-          if ":" in host_value:
-            detected_host, port_str = host_value.rsplit(":", 1)
-            try:
-              detected_port = int(port_str)
-            except ValueError:
-              pass
-          else:
-            detected_host = host_value
-      
-      # Check X-Forwarded-Host
-      forwarded_host = request.headers.get("X-Forwarded-Host")
-      if forwarded_host:
-        # X-Forwarded-Host may include port
-        if ":" in forwarded_host:
-          detected_host, port_str = forwarded_host.rsplit(":", 1)
-          try:
-            detected_port = int(port_str)
-          except ValueError:
-            pass
-        else:
-          detected_host = forwarded_host
-        logger.debug(f"Detected host from X-Forwarded-Host: {detected_host}")
-    
-    # Force HTTPS in production when FORCE_HTTPS env var is set
-    # But NOT on localhost unless explicitly requested
-    force_https = os.getenv("FORCE_HTTPS", "").lower() == "true"
-    if force_https and not is_localhost:
-      detected_scheme = "https"
-      logger.debug("Forcing HTTPS due to FORCE_HTTPS environment variable")
-    
-    # Store corrected values in request.state for later use
-    request.state.original_scheme = original_scheme
-    request.state.original_host = original_host
-    request.state.detected_scheme = detected_scheme
-    request.state.detected_host = detected_host
-    request.state.detected_port = detected_port
-    
-    # Rewrite request.scope to reflect actual client scheme/host
-    # This ensures request.url and url_for() use correct values
-    # Always update if scheme changed, or if we need to preserve non-standard ports
-    if detected_scheme != original_scheme or detected_host != original_host or (
-      detected_port and detected_port != request.scope.get("server", (None, None))[1]
-    ):
-      # Modify the ASGI scope to change URL components
-      request.scope["scheme"] = detected_scheme
-      # Update server tuple (host, port)
-      # Preserve the original port if it's non-standard, or use detected_port
-      port_to_use = detected_port
-      if not port_to_use:
-        # Preserve original port if it's non-standard
-        original_server = request.scope.get("server")
-        if original_server and len(original_server) == 2:
-          original_port = original_server[1]
-          default_port = 443 if detected_scheme == "https" else 80
-          if original_port != default_port:
-            port_to_use = original_port
-        
-        # If still no port, use default based on scheme
-        if not port_to_use:
-          port_to_use = 443 if detected_scheme == "https" else 80
-      
-      request.scope["server"] = (detected_host, port_to_use)
-      
-      # Reconstruct the URL object
-      # Note: Starlette's Request.url is cached, so we need to clear it
-      if hasattr(request, "_url"):
-        delattr(request, "_url")
-      
-      logger.info(
-        f"Proxy-aware HTTPS: Rewrote request URL "
-        f"{original_scheme}://{original_host}:{request.scope.get('server', (None, None))[1]} -> "
-        f"{detected_scheme}://{detected_host}:{port_to_use}"
-      )
-    
-    response = await call_next(request)
-    return response
-
-
-class HTTPSEnforcementMiddleware(BaseHTTPMiddleware):
-  """
-  Proxy-aware security middleware: Only enforces HTTPS when the request actually
-  came via HTTPS (detected through proxy headers or direct connection).
-  
-  This is intelligent for deployments behind proxies like Render.com:
-  - If the proxy indicates HTTPS (X-Forwarded-Proto: https), enforces HTTPS
-  - If the proxy indicates HTTP, does NOT enforce HTTPS (allows proxy to handle it)
-  - Prevents HTTP downgrade attacks and mixed content issues only when HTTPS is active.
-  """
-  async def dispatch(self, request: Request, call_next: ASGIApp):
-    response = await call_next(request)
-    
-    # Check if this request is actually using HTTPS
-    # Use the detected scheme from ProxyAwareHTTPSMiddleware if available
-    # Otherwise check the request URL scheme directly
-    detected_scheme = getattr(request.state, "detected_scheme", None)
-    if detected_scheme is None:
-      # Fallback: check proxy headers directly
-      forwarded_proto = request.headers.get("X-Forwarded-Proto", "").lower()
-      if forwarded_proto in ("https", "http"):
-        detected_scheme = forwarded_proto
-      elif request.headers.get("X-Forwarded-Ssl", "").lower() == "on":
-        detected_scheme = "https"
-      elif "proto=https" in request.headers.get("Forwarded", "").lower():
-        detected_scheme = "https"
-      else:
-        detected_scheme = request.url.scheme
-    
-    # Only enforce HTTPS if the request actually came via HTTPS
-    # This allows the proxy (like Render.com) to handle HTTPS termination
-    # without our app trying to force it when it shouldn't
-    is_https = detected_scheme == "https"
-    
-    if not is_https:
-      # Request came via HTTP - don't enforce HTTPS
-      # This allows proper operation behind proxies that handle HTTPS at the edge
-      logger.debug(f"Skipping HTTPS enforcement - request came via {detected_scheme}")
-      return response
-    
-    # Request came via HTTPS - enforce it
-    logger.debug("Enforcing HTTPS - request came via HTTPS")
-    
-    # Add HSTS header - tells browsers to always use HTTPS for this domain
-    # Only add this when we're actually serving HTTPS
-    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
-    
-    # Force HTTPS on any Location redirect headers - catch ANY http:// redirect
-    if "Location" in response.headers:
-      location = response.headers["Location"]
-      # Replace http:// with https:// directly (simple string replacement)
-      if location.startswith("http://"):
-        https_location = location.replace("http://", "https://", 1)
-        response.headers["Location"] = https_location
-        logger.debug(f"Enforced HTTPS redirect: {location} -> {https_location}")
-    
-    # Sanitize mixed content in response bodies
-    content_type = response.headers.get("content-type", "").lower()
-    
-    # Only process text-based content types
-    text_content_types = [
-      "application/json",
-      "text/html",
-      "text/css",
-      "text/javascript",
-      "application/javascript",
-      "text/plain",
-      "text/xml",
-      "application/xml",
-    ]
-    
-    if any(ct in content_type for ct in text_content_types):
-      # Check if response has a body
-      if hasattr(response, "body") and response.body:
-        try:
-          # Decode response body
-          if isinstance(response.body, bytes):
-            body_text = response.body.decode("utf-8")
-          else:
-            body_text = str(response.body)
-          
-          original_body = body_text
-          
-          # Replace http:// URLs with https://
-          # Pattern 1: Quoted URLs in JSON/HTML attributes: "http://...
-          body_text = re.sub(r'"http://', '"https://', body_text)
-          
-          # Pattern 2: Unquoted URLs: http://...
-          body_text = re.sub(r'\bhttp://', 'https://', body_text)
-          
-          # Pattern 3: HTML/CSS attributes: src="http://, href="http://, url(http://
-          body_text = re.sub(r'(src|href)=["\']http://', r'\1="https://', body_text)
-          body_text = re.sub(r'url\(http://', 'url(https://', body_text)
-          
-          # Pattern 4: JSON string values (more specific)
-          body_text = re.sub(r'":\s*"http://', '": "https://', body_text)
-          
-          # Only update if changes were made
-          if body_text != original_body:
-            # Re-encode as bytes
-            response.body = body_text.encode("utf-8")
-            # Update content length if present
-            if "content-length" in response.headers:
-              response.headers["content-length"] = str(len(response.body))
-            
-            logger.debug("Sanitized mixed content in response body (HTTP -> HTTPS)")
-        
-        except (UnicodeDecodeError, AttributeError) as e:
-          # Skip if body isn't text or can't be decoded
-          logger.debug(f"Skipping mixed content sanitization: {e}")
-    
-    return response
-
-
+# ============================================================================
+# Middleware Setup
+# ============================================================================
+# Middleware classes are now imported from middleware.py
 # Middleware order matters: Proxy-aware middleware must run FIRST
 # so that request.url is corrected before route handlers execute
 app.add_middleware(ProxyAwareHTTPSMiddleware)
@@ -1277,342 +336,12 @@ else:
 app.add_middleware(GZipMiddleware, minimum_size=1000)  # Compress responses > 1KB
 
 
-async def _ensure_db_indices(db: AsyncIOMotorDatabase):
-  try:
-    await db.users.create_index("email", unique=True, background=True)
-    await db.experiments_config.create_index("slug", unique=True, background=True)
-    # Index for export logs - commonly queried by slug_id
-    await db.export_logs.create_index("slug_id", background=True)
-    await db.export_logs.create_index("created_at", background=True)
-    await db.export_logs.create_index("checksum", background=True)
-    await db.export_logs.create_index([("checksum", 1), ("invalidated", 1)], background=True)
-    logger.info(" Core MongoDB indexes ensured (users.email, experiments_config.slug, export_logs.slug_id, export_logs.checksum).")
-  except Exception as e:
-    logger.error(f" Failed to ensure core MongoDB indexes: {e}", exc_info=True)
-
-
-async def _seed_admin(app: FastAPI):
-    db: AsyncIOMotorDatabase = app.state.mongo_db
-    authz: Optional[AuthorizationProvider] = getattr(app.state, "authz_provider", None)
-    
-    # Define a reasonable timeout for DB operations
-    DB_TIMEOUT = 15.0 
-
-    # 1) Fetch all users who have is_admin=True
-    try:
-        logger.debug("Fetching admin users from DB...")
-        # Project only email field for admin users
-        # Limit to 1000 admin users to prevent accidental large result sets
-        admin_users: List[Dict[str, Any]] = await asyncio.wait_for(
-            db.users.find({"is_admin": True}, {"email": 1}).limit(1000).to_list(length=None),
-            timeout=DB_TIMEOUT
-        )
-        logger.debug(f"Found {len(admin_users)} admin user(s).")
-        
-    except asyncio.TimeoutError:
-        logger.critical(f"CRITICAL: Timed out after {DB_TIMEOUT}s while fetching admin users.")
-        logger.critical("This indicates a severe MongoDB connection issue. Aborting startup.")
-        raise # Stop the application lifespan
-    except Exception as e:
-        logger.critical(f"CRITICAL: Failed to fetch admin users: {e}", exc_info=True)
-        raise # Stop the application lifespan
-
-
-    # --------------------------------------------------
-    # Case 1: No admin users exist. Create the default one.
-    # --------------------------------------------------
-    if not admin_users:
-        logger.warning(" No admin user found. Seeding default administrator...")
-        email = ADMIN_EMAIL_DEFAULT
-        password = ADMIN_PASSWORD_DEFAULT
-
-        try:
-            pwd_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
-        except Exception as e:
-            logger.error(f" Failed to hash default admin password: {e}", exc_info=True)
-            return # Don't proceed if hashing fails
-
-        try:
-            # Insert the new user
-            await asyncio.wait_for(
-                db.users.insert_one({
-                    "email": email,
-                    "password_hash": pwd_hash,
-                    "is_admin": True,
-                    "created_at": datetime.datetime.utcnow(),
-                }),
-                timeout=DB_TIMEOUT
-            )
-            logger.warning(f" Default admin user '{email}' created.")
-            logger.warning(" IMPORTANT: Change the default admin password immediately!")
-            
-            # Now, seed the policies for this new user
-            if (
-                authz
-                and hasattr(authz, "add_role_for_user")
-                and hasattr(authz, "add_policy")
-                and hasattr(authz, "save_policy")
-            ):
-                logger.info(f"Seeding default Casbin policies for new admin '{email}'...")
-                await asyncio.wait_for(authz.add_role_for_user(email, "admin"), timeout=DB_TIMEOUT)
-                await asyncio.wait_for(authz.add_policy("admin", "admin_panel", "access"), timeout=DB_TIMEOUT)
-                
-                save_op = authz.save_policy()
-                if asyncio.iscoroutine(save_op):
-                    await asyncio.wait_for(save_op, timeout=DB_TIMEOUT)
-                
-                logger.info(f" Default policies seeded for admin user '{email}'.")
-            else:
-                logger.warning("AuthZ Provider not available or does not support auto policy seeding.")
-
-        except asyncio.TimeoutError:
-            logger.critical(f"CRITICAL: Timed out seeding default admin user '{email}'.")
-            raise
-        except Exception as e:
-            logger.error(f" Failed to insert/seed default admin user '{email}': {e}", exc_info=True)
-            # If seeding fails, we should probably stop.
-            raise
-
-    # --------------------------------------------------
-    # Case 2: Admin users already exist. Sync policies.
-    # --------------------------------------------------
-    else:
-        logger.info(
-            f"Found {len(admin_users)} admin user(s) already in DB. "
-            "Verifying Casbin roles + policies..."
-        )
-        if not (
-            authz
-            and hasattr(authz, "add_role_for_user")
-            and hasattr(authz, "add_policy")
-            and hasattr(authz, "save_policy")
-            and hasattr(authz, "has_policy")      # <-- Check for existence
-            and hasattr(authz, "has_role_for_user") # <-- Check for existence
-        ):
-            logger.warning(
-                "AuthZ Provider not available or does not support idempotent policy seeding. "
-                "Existing admin user(s) may not have Casbin roles!"
-            )
-            return # Continue startup, but warn
-
-        try:
-            made_changes = False
-            
-            # 1. Check if the "admin" role has "admin_panel:access" policy
-            logger.debug("Verifying 'admin_panel' policy...")
-            policy_exists = await asyncio.wait_for(
-                authz.has_policy("admin", "admin_panel", "access"),
-                timeout=DB_TIMEOUT
-            )
-            
-            if not policy_exists:
-                logger.info("Admin policy 'admin_panel:access' missing. Adding...")
-                await asyncio.wait_for(
-                    authz.add_policy("admin", "admin_panel", "access"),
-                    timeout=DB_TIMEOUT
-                )
-                made_changes = True
-            else:
-                logger.debug("Admin policy 'admin_panel:access' already exists.")
-
-            # 2. Check each admin user for the "admin" role (BATCHED for performance)
-            admin_emails = [user_doc.get("email") for user_doc in admin_users if user_doc.get("email")]
-            logger.debug(f"Verifying 'admin' roles for {len(admin_emails)} user(s) in batch...")
-            
-            # Batch check all admin roles at once (reduces N database calls to 1 batch operation)
-            role_check_tasks = [
-                asyncio.wait_for(
-                    authz.has_role_for_user(email, "admin"),
-                    timeout=DB_TIMEOUT
-                )
-                for email in admin_emails
-            ]
-            role_results = await asyncio.gather(*role_check_tasks, return_exceptions=True)
-            
-            # Process results and add missing roles
-            for email, has_role in zip(admin_emails, role_results):
-                # Handle exceptions from role checks
-                if isinstance(has_role, Exception):
-                    logger.error(f"Error checking role for '{email}': {has_role}", exc_info=True)
-                    continue
-                
-                if not has_role:
-                    logger.info(f"User '{email}' is admin but missing Casbin role. Adding...")
-                    try:
-                        await asyncio.wait_for(
-                            authz.add_role_for_user(email, "admin"),
-                            timeout=DB_TIMEOUT
-                        )
-                        made_changes = True
-                    except Exception as e:
-                        logger.error(f"Failed to add role for '{email}': {e}", exc_info=True)
-                else:
-                    logger.debug(f"User '{email}' already has admin role.")
-
-            # 3. Save policies ONLY if we made a change
-            if made_changes:
-                logger.info("Policy changes were made. Saving Casbin policies...")
-                save_op = authz.save_policy()
-                if asyncio.iscoroutine(save_op):
-                    await asyncio.wait_for(save_op, timeout=DB_TIMEOUT)
-                logger.info("Casbin policies saved successfully.")
-            else:
-                logger.info("All Casbin admin policies are already in sync. No changes needed.")
-
-        except asyncio.TimeoutError:
-            logger.critical(f"CRITICAL: Timed out after {DB_TIMEOUT}s during Casbin policy sync.")
-            logger.critical("This is likely a MongoDB connection/firewall issue. Aborting startup.")
-            raise
-        except Exception as e:
-            logger.critical(f"CRITICAL: Failed to sync admin roles/policies: {e}", exc_info=True)
-            raise
-
-async def _seed_db_from_local_files(db: AsyncIOMotorDatabase):
-  logger.info("Checking for local manifests to seed database...")
-  if not EXPERIMENTS_DIR.is_dir():
-    logger.warning(f"Experiments directory '{EXPERIMENTS_DIR}' not found, skipping local seed.")
-    return
-
-  seeded_count = 0
-  try:
-    for item in EXPERIMENTS_DIR.iterdir():
-      if item.is_dir() and not item.name.startswith(("_", ".")):
-        slug = item.name
-        manifest_path = item / "manifest.json"
-
-        if manifest_path.is_file():
-          exists = await db.experiments_config.find_one({"slug": slug}, {"_id": 1, "slug": 1})
-          if not exists:
-            logger.warning(f"[{slug}] No DB config found. Seeding from local 'manifest.json'...")
-            try:
-              manifest_data = await _read_json_async(manifest_path)
-              if not isinstance(manifest_data, dict):
-                logger.error(f"[{slug}] FAILED to seed: manifest.json is not valid JSON object.")
-                continue
-              manifest_data["slug"] = slug
-              # Preserve status from manifest, default to "active" if not specified (was "draft" before)
-              if "status" not in manifest_data:
-                manifest_data["status"] = "active"
-                logger.info(f"[{slug}] No 'status' in manifest, defaulting to 'active'.")
-              
-              status = manifest_data.get("status", "unknown")
-              logger.info(f"[{slug}] Seeding with status='{status}' from manifest.")
-
-              await db.experiments_config.insert_one(manifest_data)
-              logger.info(f"[{slug}] ✅ SUCCESS: Seeded DB from local manifest.json (status='{status}').")
-              seeded_count += 1
-            except json.JSONDecodeError:
-              logger.error(f"[{slug}] FAILED to seed: manifest.json is invalid JSON.")
-            except Exception as e:
-              logger.error(f"[{slug}] FAILED to seed: {e}", exc_info=True)
-          else:
-            # Update existing experiment if manifest says "active" but DB has "draft"
-            try:
-              manifest_data = await _read_json_async(manifest_path)
-              if isinstance(manifest_data, dict):
-                manifest_status = manifest_data.get("status", "active")
-                db_status = exists.get("status", "draft")
-                
-                # If manifest says "active" but DB has "draft", update it
-                if manifest_status == "active" and db_status == "draft":
-                  await db.experiments_config.update_one(
-                    {"slug": slug},
-                    {"$set": {"status": "active"}}
-                  )
-                  logger.info(f"[{slug}] 🔄 Updated status from 'draft' to 'active' to match manifest.")
-                  seeded_count += 1
-                elif manifest_status == "active" and db_status != "active":
-                  logger.debug(f"[{slug}] Manifest says 'active', DB has '{db_status}' - not updating (preserving DB status).")
-            except Exception as e:
-              logger.debug(f"[{slug}] Could not check manifest for status update: {e}")
-            logger.debug(f"[{slug}] Skipping seed: DB config already exists.")
-  except OSError as e:
-    logger.error(f"Error scanning experiments directory for seeding: {e}")
-
-  if seeded_count > 0:
-    logger.info(f"Successfully seeded {seeded_count} new experiment(s) from filesystem.")
-  else:
-    logger.info("No new local manifests found to seed. Database is up-to-date.")
+# Database functions (_ensure_db_indices, _seed_admin, _seed_db_from_local_files) are now imported from database.py
+# These functions are called in lifespan.py, not here
 
 
 # Directory scan cache with TTL (60 seconds)
-_dir_scan_cache: Dict[str, Tuple[List[Dict[str, Any]], datetime.datetime]] = {}
-_dir_scan_cache_lock = asyncio.Lock()
-DIR_SCAN_CACHE_TTL_SECONDS = 60  # 1 minute TTL
-
-
-async def _scan_directory(dir_path: Path, base_path: Path) -> List[Dict[str, Any]]:
-  """
-  Async wrapper for directory scanning that runs the synchronous operation in a thread.
-  Includes caching with TTL to reduce I/O for repeated admin panel views.
-  """
-  cache_key = str(dir_path)
-  
-  # Check cache (thread-safe)
-  async with _dir_scan_cache_lock:
-    if cache_key in _dir_scan_cache:
-      tree, timestamp = _dir_scan_cache[cache_key]
-      age = datetime.datetime.now() - timestamp
-      if age < datetime.timedelta(seconds=DIR_SCAN_CACHE_TTL_SECONDS):
-        # Cache hit - still valid
-        logger.debug(f"_scan_directory: Using cached result for '{dir_path}' (age: {age.total_seconds():.1f}s)")
-        return tree
-      else:
-        # Cache expired - remove it
-        logger.debug(f"_scan_directory: Cache expired for '{dir_path}' (age: {age.total_seconds():.1f}s)")
-        del _dir_scan_cache[cache_key]
-  
-  # Perform actual scan
-  tree = await asyncio.to_thread(_scan_directory_sync, dir_path, base_path)
-  
-  # Update cache (thread-safe)
-  async with _dir_scan_cache_lock:
-    _dir_scan_cache[cache_key] = (tree, datetime.datetime.now())
-  
-  return tree
-
-
-def _scan_directory_sync(dir_path: Path, base_path: Path) -> List[Dict[str, Any]]:
-  """Synchronous directory scanning implementation that runs in a thread pool."""
-  tree: List[Dict[str, Any]] = []
-  if not dir_path.is_dir():
-    return tree
-  try:
-    for item in sorted(dir_path.iterdir()):
-      if item.name in ("__pycache__", ".DS_Store", ".git", ".idea", ".vscode"):
-        continue
-      relative_path = item.relative_to(base_path)
-      if item.is_dir():
-        tree.append({
-          "name": item.name,
-          "type": "dir",
-          "path": str(relative_path),
-          "children": _scan_directory_sync(item, base_path)
-        })
-      else:
-        tree.append({"name": item.name, "type": "file", "path": str(relative_path)})
-  except OSError as e:
-    logger.error(f" Error scanning directory '{dir_path}': {e}")
-    tree.append({"name": f"[Error: {e.strerror}]", "type": "error", "path": str(dir_path.relative_to(base_path))})
-  return tree
-
-
-def _secure_path(base_dir: Path, relative_path_str: str) -> Path:
-  try:
-    normalized_relative = Path(os.path.normpath(relative_path_str))
-    if normalized_relative.is_absolute() or str(normalized_relative).startswith(".."):
-      raise ValueError("Invalid relative path.")
-    absolute_path = (base_dir.resolve() / normalized_relative).resolve()
-    if base_dir.resolve() not in absolute_path.parents and absolute_path != base_dir.resolve():
-      logger.warning(f"Directory traversal attempt blocked: base='{base_dir}', requested='{relative_path_str}'")
-      raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Directory traversal attempt blocked.")
-    return absolute_path
-  except ValueError:
-    logger.warning(f"Invalid path requested: base='{base_dir}', requested='{relative_path_str}'")
-    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid file path.")
-  except Exception as e:
-    logger.error(f"Unexpected error resolving path: {e}", exc_info=True)
-    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error processing file path.")
+# _scan_directory, _scan_directory_sync, and _secure_path are now imported from utils.py
 
 
 auth_router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -1620,6 +349,7 @@ auth_router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 @auth_router.get("/login", response_class=HTMLResponse, name="login_get")
 async def login_get(request: Request, next: Optional[str] = None, message: Optional[str] = None):
+  templates = getattr(request.app.state, "templates", None) or get_templates()
   if not templates:
     raise HTTPException(500, "Template engine not available.")
   safe_next = next if next and next.startswith("/") else "/"
@@ -1634,6 +364,7 @@ async def login_get(request: Request, next: Optional[str] = None, message: Optio
 
 @auth_router.post("/login")
 async def login_post(request: Request):
+  templates = get_templates_from_request(request)
   if not templates:
     raise HTTPException(500, "Template engine not available.")
   db: AsyncIOMotorDatabase = request.app.state.mongo_db
@@ -1682,6 +413,7 @@ async def login_post(request: Request):
     return response
   else:
     logger.warning(f"Failed login attempt for email: {email}")
+    templates = get_templates_from_request(request)
     return templates.TemplateResponse("login.html", {
       "request": request,
       "error": "Invalid email or password.",
@@ -1705,6 +437,7 @@ if ENABLE_REGISTRATION:
 
   @auth_router.get("/register", response_class=HTMLResponse, name="register_get")
   async def register_get(request: Request, next: Optional[str] = None, message: Optional[str] = None):
+    templates = get_templates_from_request(request)
     if not templates:
       raise HTTPException(500, "Template engine not available.")
     safe_next = next if next and next.startswith("/") else "/"
@@ -1717,6 +450,7 @@ if ENABLE_REGISTRATION:
 
   @auth_router.post("/register", name="register_post")
   async def register_post(request: Request):
+    templates = get_templates_from_request(request)
     if not templates:
       raise HTTPException(500, "Template engine not available.")
     db: AsyncIOMotorDatabase = request.app.state.mongo_db
@@ -1797,25 +531,7 @@ admin_router = APIRouter(
 )
 
 
-def _make_json_serializable(obj: Any) -> Any:
-  """
-  Recursively converts MongoDB objects (datetime, ObjectId, etc.) to JSON-serializable types.
-  """
-  if isinstance(obj, datetime.datetime):
-    return obj.isoformat()
-  elif isinstance(obj, dict):
-    return {key: _make_json_serializable(value) for key, value in obj.items()}
-  elif isinstance(obj, list):
-    return [_make_json_serializable(item) for item in obj]
-  elif isinstance(obj, (datetime.date, datetime.time)):
-    return obj.isoformat()
-  elif hasattr(obj, '__str__') and not isinstance(obj, (str, int, float, bool, type(None))):
-    # Handle ObjectId and other MongoDB types that have __str__
-    try:
-      return str(obj)
-    except Exception:
-      return repr(obj)
-  return obj
+# _make_json_serializable is now imported from utils.py
 
 
 async def _dump_db_to_json(db: AsyncIOMotorDatabase, slug_id: str) -> Tuple[Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
@@ -1871,23 +587,8 @@ async def _dump_db_to_json(db: AsyncIOMotorDatabase, slug_id: str) -> Tuple[Dict
   return config_data, collections_data
 
 
-def _make_standalone_main_py(slug_id: str) -> str:
-  global templates
-  if not templates:
-    raise RuntimeError("Jinja2 templates object is not initialized.")
-  template = templates.get_template("standalone_main.py.jinja2")
-  standalone_main_source = template.render(slug_id=slug_id)
-  return standalone_main_source
-
-
-def _make_intelligent_standalone_main_py(slug_id: str) -> str:
-  """Generate intelligent standalone main.py using real MongoDB."""
-  global templates
-  if not templates:
-    raise RuntimeError("Jinja2 templates object is not initialized.")
-  template = templates.get_template("standalone_main_intelligent.py.jinja2")
-  standalone_main_source = template.render(slug_id=slug_id)
-  return standalone_main_source
+# Template generation functions are now imported from export_helpers.py
+# They accept templates as a parameter, so routes need to pass app.state.templates
 
 
 ########################################################
@@ -2019,7 +720,8 @@ async def _create_standalone_zip(
   slug_id: str,
   source_dir: Path,
   db_data: Dict[str, Any],
-  db_collections: Dict[str, List[Dict[str, Any]]]
+  db_collections: Dict[str, List[Dict[str, Any]]],
+  templates
 ) -> io.BytesIO | Path:
   """
   Creates a standalone ZIP package.
@@ -2042,7 +744,7 @@ async def _create_standalone_zip(
     zip_path = None
 
   # --- 2. Generate core files ---
-  standalone_main_source = _make_standalone_main_py(slug_id)
+  standalone_main_source = _make_standalone_main_py(slug_id, templates)
   # Note: No root template needed - standalone app serves experiment's own index.html
 
   # --- 3. Determine local requirements to include ---
@@ -2485,7 +1187,8 @@ def _create_docker_zip(
   slug_id: str,
   source_dir: Path,
   db_data: Dict[str, Any],
-  db_collections: Dict[str, List[Dict[str, Any]]]
+  db_collections: Dict[str, List[Dict[str, Any]]],
+  templates
 ) -> io.BytesIO:
   """
   Creates a Docker export package for data_imaging with Dockerfile and docker-compose.yml.
@@ -2496,7 +1199,7 @@ def _create_docker_zip(
   templates_dir = source_dir / "templates"
 
   # --- 1. Generate core files ---
-  standalone_main_source = _make_standalone_main_py(slug_id)
+  standalone_main_source = _make_standalone_main_py(slug_id, templates)
   # Note: No root template needed - standalone app serves experiment's own index.html
 
   # --- 2. Get all requirements ---
@@ -2876,7 +1579,8 @@ def _create_intelligent_export_zip(
   slug_id: str,
   source_dir: Path,
   db_data: Dict[str, Any],
-  db_collections: Dict[str, List[Dict[str, Any]]]
+  db_collections: Dict[str, List[Dict[str, Any]]],
+  templates
 ) -> io.BytesIO:
   """
   Creates an intelligent export package:
@@ -2891,7 +1595,7 @@ def _create_intelligent_export_zip(
   experiment_path = source_dir / "experiments" / slug_id
   
   # --- 1. Generate intelligent standalone main.py (with real MongoDB) ---
-  standalone_main_source = _make_intelligent_standalone_main_py(slug_id)
+  standalone_main_source = _make_intelligent_standalone_main_py(slug_id, templates)
   
   # --- 2. Generate requirements WITH Ray (Ray is required) ---
   local_reqs_path = experiment_path / "requirements.txt"
@@ -2996,94 +1700,7 @@ def _create_intelligent_export_zip(
 public_api_router = APIRouter(prefix="/api", tags=["Public API"])
 
 
-def _build_absolute_https_url(request: Request, relative_url: str) -> str:
-  """
-  Build an absolute URL from a relative URL, handling proxy headers intelligently.
-  
-  Uses request.state values from ProxyAwareHTTPSMiddleware if available,
-  falls back to checking proxy headers directly.
-  
-  Args:
-    request: FastAPI Request object
-    relative_url: Relative URL path (e.g., "/exports/file.zip") or absolute URL
-    
-  Returns:
-    Absolute URL (HTTPS in production when behind proxy, respects actual scheme in dev)
-  """
-  # Handle absolute URLs
-  if not relative_url.startswith("/"):
-    # Already absolute, but ensure HTTPS in production (but not on localhost)
-    if relative_url.startswith("http://"):
-      G_NOME_ENV = os.getenv("G_NOME_ENV", "production").lower()
-      host = request.url.hostname
-      is_localhost = host in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")
-      
-      if G_NOME_ENV == "production" and not is_localhost:
-        https_url = relative_url.replace("http://", "https://", 1)
-        logger.warning(f"Forced HTTPS on absolute URL: {relative_url} -> {https_url}")
-        return https_url
-    return relative_url
-  
-  # Use detected scheme/host from proxy middleware if available
-  if hasattr(request.state, "detected_scheme") and hasattr(request.state, "detected_host"):
-    scheme = request.state.detected_scheme
-    host = request.state.detected_host
-    # Include port if it's non-standard (not 80 for HTTP, not 443 for HTTPS)
-    detected_port = getattr(request.state, "detected_port", None)
-    if detected_port:
-      default_port = 443 if scheme == "https" else 80
-      if detected_port != default_port:
-        host = f"{host}:{detected_port}"
-  else:
-    # Fallback: check proxy headers directly
-    is_localhost = request.url.hostname in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")
-    has_proxy_headers = any((
-      request.headers.get("X-Forwarded-Proto"),
-      request.headers.get("X-Forwarded-Host"),
-      request.headers.get("Forwarded"),
-      request.headers.get("X-Forwarded-Ssl")
-    ))
-    
-    # On localhost without proxy headers, respect the original scheme
-    # If the request came in as HTTPS, use HTTPS; if HTTP, use HTTP
-    if is_localhost and not has_proxy_headers:
-      # Check the original scheme from request.state if available, otherwise use request.url.scheme
-      if hasattr(request.state, "original_scheme"):
-        scheme = request.state.original_scheme
-      else:
-        scheme = request.url.scheme
-    else:
-      # Behind proxy or real server - trust proxy headers
-      scheme = "https" if (
-        request.url.scheme == "https" or 
-        request.headers.get("X-Forwarded-Proto", "").lower() == "https" or
-        request.headers.get("X-Forwarded-Ssl", "").lower() == "on"
-      ) else request.url.scheme
-    
-    host = (
-      request.headers.get("X-Forwarded-Host") or 
-      request.headers.get("Host") or 
-      request.url.hostname
-    )
-    # Include port if it's non-standard for localhost requests
-    if request.url.port:
-      default_port = 443 if scheme == "https" else 80
-      if request.url.port != default_port:
-        # Remove port from host if it's already there, then add correct port
-        host = host.split(":")[0] if ":" in host else host
-        host = f"{host}:{request.url.port}"
-  
-  # Force HTTPS in production, but NOT on localhost (server may not have SSL)
-  G_NOME_ENV = os.getenv("G_NOME_ENV", "production").lower()
-  is_localhost = host.split(":")[0] in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]") or (host and "localhost" in host.lower())
-  
-  if G_NOME_ENV == "production" and scheme != "https" and not is_localhost:
-    scheme = "https"
-    logger.debug(f"Forcing HTTPS URL in production environment (non-localhost)")
-  
-  # Build absolute URL
-  absolute_url = f"{scheme}://{host}{relative_url}"
-  return absolute_url
+# _build_absolute_https_url is now imported from utils.py
 
 
 @public_api_router.get("/package-standalone/{slug_id}", name="package_standalone")
@@ -3113,12 +1730,14 @@ async def package_standalone_experiment(
 
   # 3. Perform Intelligent Packaging
   try:
+    templates = get_templates_from_request(request)
     config_data, collections_data = await _dump_db_to_json(db, slug_id)
     zip_buffer = _create_intelligent_export_zip(
       slug_id=slug_id,
       source_dir=BASE_DIR,
       db_data=config_data,
-      db_collections=collections_data
+      db_collections=collections_data,
+      templates=templates
     )
 
     user_email = user.get('email', 'Guest') if user else 'Guest'
@@ -3621,6 +2240,7 @@ async def invalidate_export(
 
 @admin_router.get("/", response_class=HTMLResponse, name="admin_dashboard")
 async def admin_dashboard(request: Request, user: Dict[str, Any] = Depends(require_admin), message: Optional[str] = None):
+  templates = get_templates_from_request(request)
   if not templates:
     raise HTTPException(500, "Template engine not available.")
   db: AsyncIOMotorDatabase = request.app.state.mongo_db
@@ -3718,6 +2338,7 @@ def _get_default_manifest(slug_id: str) -> Dict[str, Any]:
 
 @admin_router.get("/configure/{slug_id}", response_class=HTMLResponse, name="configure_experiment_get")
 async def configure_experiment_get(request: Request, slug_id: str, user: Dict[str, Any] = Depends(require_admin)):
+  templates = get_templates_from_request(request)
   if not templates:
     raise HTTPException(500, "Template engine not available.")
   experiment_path = EXPERIMENTS_DIR / slug_id
@@ -4467,7 +3088,8 @@ async def _run_index_creation_for_collection(
 async def root(request: Request, user: Optional[Mapping[str, Any]] = Depends(get_current_user)):
   """Root route - serves the home page with list of experiments."""
   try:
-    if not templates:
+    templates_obj = get_templates_from_request(request)
+    if not templates_obj:
       logger.error("Template engine not available for root route")
       raise HTTPException(500, "Template engine not available.")
     
@@ -4483,7 +3105,7 @@ async def root(request: Request, user: Optional[Mapping[str, Any]] = Depends(get
         meta_copy["url"] = _build_absolute_https_url(request, meta_copy["url"])
       experiments_with_https_urls[slug] = meta_copy
     
-    return templates.TemplateResponse("index.html", {
+    return templates_obj.TemplateResponse("index.html", {
       "request": request,
       "experiments": experiments_with_https_urls,
       "current_user": user,

@@ -1,0 +1,233 @@
+"""Utility functions for file I/O, path handling, and directory operations."""
+import os
+import json
+import asyncio
+import logging
+import datetime
+from pathlib import Path
+from typing import Any, List, Dict
+from fastapi import HTTPException, status
+from config import AIOFILES_AVAILABLE
+
+logger = logging.getLogger(__name__)
+
+# Directory scan cache
+_dir_scan_cache: Dict[str, tuple] = {}
+_dir_scan_cache_lock = asyncio.Lock()
+DIR_SCAN_CACHE_TTL_SECONDS = 60
+
+
+async def read_file_async(file_path: Path, encoding: str = "utf-8") -> str:
+    """Asynchronously read a text file."""
+    if AIOFILES_AVAILABLE:
+        import aiofiles
+        async with aiofiles.open(file_path, "r", encoding=encoding) as f:
+            return await f.read()
+    else:
+        return await asyncio.to_thread(file_path.read_text, encoding=encoding)
+
+
+async def read_json_async(file_path: Path, encoding: str = "utf-8") -> Any:
+    """Asynchronously read and parse a JSON file."""
+    content = await read_file_async(file_path, encoding)
+    return await asyncio.to_thread(json.loads, content)
+
+
+async def write_file_async(file_path: Path, content: bytes | str) -> None:
+    """Asynchronously write to a file."""
+    if AIOFILES_AVAILABLE:
+        import aiofiles
+        if isinstance(content, str):
+            async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
+                await f.write(content)
+        else:
+            async with aiofiles.open(file_path, "wb") as f:
+                await f.write(content)
+    else:
+        if isinstance(content, str):
+            await asyncio.to_thread(file_path.write_text, content, encoding="utf-8")
+        else:
+            await asyncio.to_thread(file_path.write_bytes, content)
+
+
+def calculate_dir_size_sync(path: Path) -> int:
+    """Synchronously calculate total size of all files in a directory tree."""
+    total_size = 0
+    for root, dirs, files in os.walk(path):
+        for file_name in files:
+            file_path = Path(root) / file_name
+            try:
+                if file_path.is_file():
+                    total_size += file_path.stat().st_size
+            except Exception:
+                pass
+    return total_size
+
+
+def scan_directory_sync(dir_path: Path, base_path: Path) -> List[Dict[str, Any]]:
+    """Synchronous directory scanning implementation that runs in a thread pool."""
+    tree: List[Dict[str, Any]] = []
+    if not dir_path.is_dir():
+        return tree
+    try:
+        for item in sorted(dir_path.iterdir()):
+            if item.name in ("__pycache__", ".DS_Store", ".git", ".idea", ".vscode"):
+                continue
+            relative_path = item.relative_to(base_path)
+            if item.is_dir():
+                tree.append({
+                    "name": item.name,
+                    "type": "dir",
+                    "path": str(relative_path),
+                    "children": scan_directory_sync(item, base_path)
+                })
+            else:
+                tree.append({"name": item.name, "type": "file", "path": str(relative_path)})
+    except OSError as e:
+        logger.error(f"⚠️ Error scanning directory '{dir_path}': {e}")
+        tree.append({"name": f"[Error: {e.strerror}]", "type": "error", "path": str(dir_path.relative_to(base_path))})
+    return tree
+
+
+async def scan_directory(dir_path: Path, base_path: Path) -> List[Dict[str, Any]]:
+    """Async wrapper for directory scanning with caching."""
+    cache_key = str(dir_path)
+    
+    # Check cache (thread-safe)
+    async with _dir_scan_cache_lock:
+        if cache_key in _dir_scan_cache:
+            tree, timestamp = _dir_scan_cache[cache_key]
+            age = datetime.datetime.now() - timestamp
+            if age < datetime.timedelta(seconds=DIR_SCAN_CACHE_TTL_SECONDS):
+                logger.debug(f"_scan_directory: Using cached result for '{dir_path}' (age: {age.total_seconds():.1f}s)")
+                return tree
+            else:
+                logger.debug(f"_scan_directory: Cache expired for '{dir_path}' (age: {age.total_seconds():.1f}s)")
+                del _dir_scan_cache[cache_key]
+    
+    # Perform actual scan
+    tree = await asyncio.to_thread(scan_directory_sync, dir_path, base_path)
+    
+    # Update cache (thread-safe)
+    async with _dir_scan_cache_lock:
+        _dir_scan_cache[cache_key] = (tree, datetime.datetime.now())
+    
+    return tree
+
+
+def secure_path(base_dir: Path, relative_path_str: str) -> Path:
+    """Securely resolve a relative path, preventing directory traversal."""
+    try:
+        normalized_relative = Path(os.path.normpath(relative_path_str))
+        if normalized_relative.is_absolute() or str(normalized_relative).startswith(".."):
+            raise ValueError("Invalid relative path.")
+        absolute_path = (base_dir.resolve() / normalized_relative).resolve()
+        if base_dir.resolve() not in absolute_path.parents and absolute_path != base_dir.resolve():
+            logger.warning(f"Directory traversal attempt blocked: base='{base_dir}', requested='{relative_path_str}'")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Directory traversal attempt blocked.")
+        return absolute_path
+    except ValueError:
+        logger.warning(f"Invalid path requested: base='{base_dir}', requested='{relative_path_str}'")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid file path.")
+    except Exception as e:
+        logger.error(f"Unexpected error resolving path: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error processing file path.")
+
+
+def build_absolute_https_url(request, relative_url: str) -> str:
+    """
+    Build an absolute URL from a relative URL, handling proxy headers intelligently.
+    
+    Uses request.state values from ProxyAwareHTTPSMiddleware if available,
+    falls back to checking proxy headers directly.
+    """
+    import re
+    from config import BASE_DIR
+    
+    # Handle absolute URLs
+    if not relative_url.startswith("/"):
+        # Already absolute, but ensure HTTPS in production (but not on localhost)
+        if relative_url.startswith("http://"):
+            G_NOME_ENV = os.getenv("G_NOME_ENV", "production").lower()
+            host = request.url.hostname
+            is_localhost = host in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")
+            
+            if G_NOME_ENV == "production" and not is_localhost:
+                https_url = relative_url.replace("http://", "https://", 1)
+                logger.warning(f"Forced HTTPS on absolute URL: {relative_url} -> {https_url}")
+                return https_url
+        return relative_url
+    
+    # Use detected scheme/host from proxy middleware if available
+    if hasattr(request.state, "detected_scheme") and hasattr(request.state, "detected_host"):
+        scheme = request.state.detected_scheme
+        host = request.state.detected_host
+        detected_port = getattr(request.state, "detected_port", None)
+        if detected_port:
+            default_port = 443 if scheme == "https" else 80
+            if detected_port != default_port:
+                host = f"{host}:{detected_port}"
+    else:
+        # Fallback: check proxy headers directly
+        is_localhost = request.url.hostname in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")
+        has_proxy_headers = any((
+            request.headers.get("X-Forwarded-Proto"),
+            request.headers.get("X-Forwarded-Host"),
+            request.headers.get("Forwarded"),
+            request.headers.get("X-Forwarded-Ssl")
+        ))
+        
+        if is_localhost and not has_proxy_headers:
+            if hasattr(request.state, "original_scheme"):
+                scheme = request.state.original_scheme
+            else:
+                scheme = request.url.scheme
+        else:
+            scheme = "https" if (
+                request.url.scheme == "https" or 
+                request.headers.get("X-Forwarded-Proto", "").lower() == "https" or
+                request.headers.get("X-Forwarded-Ssl", "").lower() == "on"
+            ) else request.url.scheme
+        
+        host = (
+            request.headers.get("X-Forwarded-Host") or 
+            request.headers.get("Host") or 
+            request.url.hostname
+        )
+        if request.url.port:
+            default_port = 443 if scheme == "https" else 80
+            if request.url.port != default_port:
+                host = host.split(":")[0] if ":" in host else host
+                host = f"{host}:{request.url.port}"
+    
+    # Force HTTPS in production, but NOT on localhost
+    G_NOME_ENV = os.getenv("G_NOME_ENV", "production").lower()
+    is_localhost = host.split(":")[0] in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]") or (host and "localhost" in host.lower())
+    
+    if G_NOME_ENV == "production" and scheme != "https" and not is_localhost:
+        scheme = "https"
+        logger.debug(f"Forcing HTTPS URL in production environment (non-localhost)")
+    
+    # Build absolute URL
+    absolute_url = f"{scheme}://{host}{relative_url}"
+    return absolute_url
+
+
+def make_json_serializable(obj: Any) -> Any:
+    """Recursively converts MongoDB objects (datetime, ObjectId, etc.) to JSON-serializable types."""
+    import datetime
+    if isinstance(obj, datetime.datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {key: make_json_serializable(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [make_json_serializable(item) for item in obj]
+    elif isinstance(obj, (datetime.date, datetime.time)):
+        return obj.isoformat()
+    elif hasattr(obj, '__str__') and not isinstance(obj, (str, int, float, bool, type(None))):
+        try:
+            return str(obj)
+        except Exception:
+            return repr(obj)
+    return obj
+
