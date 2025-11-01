@@ -1409,21 +1409,13 @@ async def package_standalone_experiment(
   # 2. Enforce Authentication if required
   if auth_required:
     if not user:
-      # Smart redirect: Build HTTPS URL from current request, respecting proxy headers
+      # Always use HTTPS for security - HTTP is vulnerable to attacks
       current_path = quote(request.url.path)
-      # Determine scheme: prefer X-Forwarded-Proto header, fallback to request scheme, force HTTPS in production
-      forwarded_proto = request.headers.get("X-Forwarded-Proto")
-      scheme = forwarded_proto or request.url.scheme
-      # Force HTTPS if proxy says HTTPS or if in production environment
-      if scheme != "https" and (forwarded_proto == "https" or os.getenv("ENVIRONMENT", "production").lower() == "production"):
-        scheme = "https"
-      
-      # Get host from X-Forwarded-Host or Host header or request hostname
+      # Get host from X-Forwarded-Host or Host header or request hostname (respect proxy headers)
       host = request.headers.get("X-Forwarded-Host") or request.headers.get("Host") or request.url.hostname
-      
-      # Build absolute HTTPS URL using request.url_for() path
+      # Build absolute HTTPS URL (always HTTPS, never HTTP)
       login_path = request.url_for("login_get").path
-      login_url = f"{scheme}://{host}{login_path}?next={current_path}"
+      login_url = f"https://{host}{login_path}?next={current_path}"
       
       response = RedirectResponse(url=login_url, status_code=status.HTTP_302_FOUND)
       return response
