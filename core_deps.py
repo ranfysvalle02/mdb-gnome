@@ -34,6 +34,16 @@ except ImportError:
         "❌ CRITICAL: Failed to import ScopedMongoWrapper. Database scoping will not function."
     )
 
+# Attempt to import ExperimentDB for easy database access.
+try:
+    from experiment_db import ExperimentDB, get_experiment_db
+except ImportError:
+    ExperimentDB = None
+    get_experiment_db = None
+    logging.warning(
+        "Failed to import ExperimentDB. Easy database access will not function."
+    )
+
 logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 

@@ -207,6 +207,7 @@ B2_ENDPOINT_URL = os.getenv("B2_ENDPOINT_URL")  # Kept for Ray compatibility
 B2_ENABLED = all([B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET_NAME, B2SDK_AVAILABLE])
 b2_api = None  # Will be initialized in lifespan
 b2_bucket = None  # Will be initialized in lifespan
+_b2_init_lock = asyncio.Lock()  # Lock to prevent race condition during B2 initialization
 
 if not B2SDK_AVAILABLE:
   logger.critical("b2sdk library not installed. B2 features are impossible. pip install b2sdk")
@@ -405,39 +406,42 @@ async def lifespan(app: FastAPI):
 
   # --- NEW: Initialize B2 SDK Client ---
   global b2_api, b2_bucket
-  if B2_ENABLED and not b2_api:
-    try:
-      # Initialize B2 API with account info
-      account_info = InMemoryAccountInfo()
-      b2_api = B2Api(account_info)
-      
-      # Authorize account (authenticates and caches credentials)
-      b2_api.authorize_account("production", B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY)
-      
-      # Get bucket by name
-      b2_bucket = b2_api.get_bucket_by_name(B2_BUCKET_NAME)
-      
-      # Store in app state
-      app.state.b2_api = b2_api
-      app.state.b2_bucket = b2_bucket
-      
-      logger.info(f"Backblaze B2 SDK initialized successfully for bucket '{B2_BUCKET_NAME}'.")
-    except B2Error as e:
-      logger.error(f"Failed to initialize B2 SDK during lifespan: {e}", exc_info=True)
-      app.state.b2_api = None
-      app.state.b2_bucket = None
-      b2_api = None
-      b2_bucket = None
-    except Exception as e:
-      logger.error(f"Unexpected error initializing B2 SDK: {e}", exc_info=True)
-      app.state.b2_api = None
-      app.state.b2_bucket = None
-      b2_api = None
-      b2_bucket = None
-  elif not B2_ENABLED:
+  if not B2_ENABLED:
     app.state.b2_api = None
     app.state.b2_bucket = None
     logger.warning("B2 SDK not initialized (B2_ENABLED=False).")
+  else:
+    async with _b2_init_lock:
+      # Double-check pattern: check again after acquiring lock to prevent race condition
+      if not b2_api:
+        try:
+          # Initialize B2 API with account info
+          account_info = InMemoryAccountInfo()
+          b2_api = B2Api(account_info)
+          
+          # Authorize account (authenticates and caches credentials)
+          b2_api.authorize_account("production", B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY)
+          
+          # Get bucket by name
+          b2_bucket = b2_api.get_bucket_by_name(B2_BUCKET_NAME)
+          
+          # Store in app state
+          app.state.b2_api = b2_api
+          app.state.b2_bucket = b2_bucket
+          
+          logger.info(f"Backblaze B2 SDK initialized successfully for bucket '{B2_BUCKET_NAME}'.")
+        except B2Error as e:
+          logger.error(f"Failed to initialize B2 SDK during lifespan: {e}", exc_info=True)
+          app.state.b2_api = None
+          app.state.b2_bucket = None
+          b2_api = None
+          b2_bucket = None
+        except Exception as e:
+          logger.error(f"Unexpected error initializing B2 SDK: {e}", exc_info=True)
+          app.state.b2_api = None
+          app.state.b2_bucket = None
+          b2_api = None
+          b2_bucket = None
 
   # Ray Cluster Connection
   if RAY_AVAILABLE:
@@ -535,10 +539,14 @@ async def lifespan(app: FastAPI):
     logger.error(f" Error during initial database setup: {e}", exc_info=True)
 
   # Load Initial Active Experiments
+  logger.info(" About to call reload_active_experiments...")
   try:
     await reload_active_experiments(app)
+    logger.info(" reload_active_experiments completed successfully.")
   except Exception as e:
-    logger.error(f" Error during initial experiment load: {e}", exc_info=True)
+    logger.error(f" ❌ Error during initial experiment load: {e}", exc_info=True)
+    import traceback
+    logger.error(f" ❌ Full traceback: {traceback.format_exc()}")
 
   logger.info(" Application startup sequence complete. Ready to serve requests.")
   try:
@@ -1037,16 +1045,42 @@ async def _seed_db_from_local_files(db: AsyncIOMotorDatabase):
                 logger.error(f"[{slug}] FAILED to seed: manifest.json is not valid JSON object.")
                 continue
               manifest_data["slug"] = slug
-              manifest_data.setdefault("status", "draft")
+              # Preserve status from manifest, default to "active" if not specified (was "draft" before)
+              if "status" not in manifest_data:
+                manifest_data["status"] = "active"
+                logger.info(f"[{slug}] No 'status' in manifest, defaulting to 'active'.")
+              
+              status = manifest_data.get("status", "unknown")
+              logger.info(f"[{slug}] Seeding with status='{status}' from manifest.")
 
               await db.experiments_config.insert_one(manifest_data)
-              logger.info(f"[{slug}] SUCCESS: Seeded DB from local manifest.json.")
+              logger.info(f"[{slug}] ✅ SUCCESS: Seeded DB from local manifest.json (status='{status}').")
               seeded_count += 1
             except json.JSONDecodeError:
               logger.error(f"[{slug}] FAILED to seed: manifest.json is invalid JSON.")
             except Exception as e:
               logger.error(f"[{slug}] FAILED to seed: {e}", exc_info=True)
           else:
+            # Update existing experiment if manifest says "active" but DB has "draft"
+            try:
+              with manifest_path.open("r", encoding="utf-8") as f:
+                manifest_data = json.load(f)
+              if isinstance(manifest_data, dict):
+                manifest_status = manifest_data.get("status", "active")
+                db_status = exists.get("status", "draft")
+                
+                # If manifest says "active" but DB has "draft", update it
+                if manifest_status == "active" and db_status == "draft":
+                  await db.experiments_config.update_one(
+                    {"slug": slug},
+                    {"$set": {"status": "active"}}
+                  )
+                  logger.info(f"[{slug}] 🔄 Updated status from 'draft' to 'active' to match manifest.")
+                  seeded_count += 1
+                elif manifest_status == "active" and db_status != "active":
+                  logger.debug(f"[{slug}] Manifest says 'active', DB has '{db_status}' - not updating (preserving DB status).")
+            except Exception as e:
+              logger.debug(f"[{slug}] Could not check manifest for status update: {e}")
             logger.debug(f"[{slug}] Skipping seed: DB config already exists.")
   except OSError as e:
     logger.error(f"Error scanning experiments directory for seeding: {e}")
@@ -3106,8 +3140,20 @@ async def reload_active_experiments(app: FastAPI):
   try:
     active_cfgs = await db.experiments_config.find({"status": "active"}).to_list(None)
     logger.info(f"Found {len(active_cfgs)} active experiment(s).")
+    if len(active_cfgs) == 0:
+      logger.warning(" ⚠️  No active experiments found! Check experiment status in database.")
+      # Try to list all experiments to help debug
+      all_cfgs = await db.experiments_config.find({}).to_list(None)
+      logger.info(f"Total experiments in DB: {len(all_cfgs)}")
+      for cfg in all_cfgs:
+        slug = cfg.get("slug", "unknown")
+        status = cfg.get("status", "no-status")
+        logger.info(f"  - {slug}: status='{status}'")
     await _register_experiments(app, active_cfgs, is_reload=True)
-    logger.info(" Experiment reload complete.")
+    registered_count = len(app.state.experiments)
+    logger.info(f" Experiment reload complete. {registered_count} experiment(s) registered.")
+    if registered_count == 0:
+      logger.warning(" ⚠️  No experiments were registered! Check logs above for errors.")
   except Exception as e:
     logger.error(f" Reload error: {e}", exc_info=True)
     app.state.experiments.clear()
@@ -3239,10 +3285,14 @@ async def _register_experiments(app: FastAPI, active_cfgs: List[Dict[str, Any]],
       deps = [Depends(get_current_user)]
 
     prefix = f"/experiments/{slug}"
-    app.include_router(proxy_router, prefix=prefix, tags=[f"Experiment: {slug}"], dependencies=deps)
-    cfg["url"] = prefix
-    app.state.experiments[slug] = cfg
-    logger.info(f"[{slug}] Experiment mounted at '{prefix}'")
+    try:
+      app.include_router(proxy_router, prefix=prefix, tags=[f"Experiment: {slug}"], dependencies=deps)
+      cfg["url"] = prefix
+      app.state.experiments[slug] = cfg
+      logger.info(f"[{slug}] ✅ Experiment mounted at '{prefix}'")
+    except Exception as e:
+      logger.error(f"[{slug}] ❌ Failed to mount experiment at '{prefix}': {e}", exc_info=True)
+      continue
 
     # If Ray is not available, skip actor logic
     if not getattr(app.state, "ray_is_available", False):
@@ -3428,14 +3478,26 @@ async def _run_index_creation_for_collection(
 
 @app.get("/", response_class=HTMLResponse, name="home")
 async def root(request: Request, user: Optional[Mapping[str, Any]] = Depends(get_current_user)):
-  if not templates:
-    raise HTTPException(500, "Template engine not available.")
-  return templates.TemplateResponse("index.html", {
-    "request": request,
-    "experiments": getattr(request.app.state, "experiments", {}),
-    "current_user": user,
-    "ENABLE_REGISTRATION": ENABLE_REGISTRATION,
-  })
+  """Root route - serves the home page with list of experiments."""
+  try:
+    if not templates:
+      logger.error("Template engine not available for root route")
+      raise HTTPException(500, "Template engine not available.")
+    
+    experiments = getattr(request.app.state, "experiments", {})
+    logger.debug(f"Root route accessed. Found {len(experiments)} registered experiment(s).")
+    
+    return templates.TemplateResponse("index.html", {
+      "request": request,
+      "experiments": experiments,
+      "current_user": user,
+      "ENABLE_REGISTRATION": ENABLE_REGISTRATION,
+    })
+  except HTTPException:
+    raise
+  except Exception as e:
+    logger.error(f"Error in root route: {e}", exc_info=True)
+    raise HTTPException(500, f"Server error: {e}")
 
 
 if __name__ == "__main__":

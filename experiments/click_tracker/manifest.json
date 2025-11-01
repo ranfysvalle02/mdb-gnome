@@ -18,6 +18,10 @@
               "path": "user_embedding",
               "numDimensions": 1536,
               "similarity": "cosine"
+            },
+            {
+              "type": "filter",
+              "path": "experiment_id"
             }
           ]
         }

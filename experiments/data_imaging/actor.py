@@ -71,17 +71,28 @@ class ExperimentActor:
                 
             self.client = self.motor_asyncio.AsyncIOMotorClient(mongo_uri, serverSelectionTimeoutMS=5000)
             self.real_db = self.client[db_name]
-            self.db = self.ScopedMongoWrapper(
+            
+            # Create ScopedMongoWrapper for isolation
+            scoped_wrapper = self.ScopedMongoWrapper(
                 real_db=self.real_db,
                 read_scopes=read_scopes,
                 write_scope=write_scope
             )
-            logger.info(f"[{write_scope}-Actor] DB connection and scope wrapper created.")
+            
+            # Create ExperimentDB for easy access to simple operations
+            from experiment_db import ExperimentDB
+            self.db = ExperimentDB(scoped_wrapper)
+            
+            # Keep raw access for advanced operations (vector search, aggregations)
+            self.db_raw = scoped_wrapper
+            
+            logger.info(f"[{write_scope}-Actor] DB connection and ExperimentDB created.")
         except Exception as e:
             logger.critical(f"[{write_scope}-Actor] ❌ CRITICAL: Failed to init DB: {e}")
             self.client = None
             self.real_db = None
             self.db = None
+            self.db_raw = None
 
     async def initialize(self):
         """
@@ -91,7 +102,7 @@ class ExperimentActor:
         # ---
         # --- THIS IS THE FIX ---
         # ---
-        if self.db is None or self.real_db is None:
+        if self.db is None or self.db_raw is None or self.real_db is None:
         # ---
         # --- END FIX ---
         # ---
@@ -239,7 +250,7 @@ class ExperimentActor:
     async def render_gallery_page(self, request_context: dict) -> str:
         self._check_ready()
         try:
-            docs = await self.db.workouts.find({}).sort("_id", 1).to_list(200)
+            docs = await self.db.workouts.find({}).sort("_id", 1).limit(200).to_list(length=None)
         except Exception as e:
             logger.error(f"[{self.write_scope}-Actor] DB error in render_gallery_page: {e}")
             docs = []
@@ -310,7 +321,8 @@ class ExperimentActor:
                 {"$project": {"_id": 1, "score": {"$meta": "vectorSearchScore"}, "workout_type": 1, "session_tag": 1, "ai_classification": 1}}
             ]
             try:
-                cur = self.db.workouts.aggregate(pipeline)
+                # Use raw access for vector search aggregation
+                cur = self.db_raw.workouts.aggregate(pipeline)
                 neighbors = await cur.to_list(None)
                 if neighbors:
                     items = []
@@ -456,7 +468,8 @@ class ExperimentActor:
                 {"$project": {"_id":1, "score":{"$meta":"vectorSearchScore"}, "workout_type":1, "session_tag":1, "ai_classification":1}}
             ]
             try:
-                cur = self.db.workouts.aggregate(pipeline)
+                # Use raw access for vector search aggregation
+                cur = self.db_raw.workouts.aggregate(pipeline)
                 neighbors = await cur.to_list(None)
             except Exception as e:
                 logger.error(f"[{self.write_scope}-Actor] Vector search error during final analysis: {e}")
@@ -464,6 +477,7 @@ class ExperimentActor:
         final_class, final_prompt = self.engine.analyze_time_series_features(doc, neighbors)
         summary = await self.engine.call_openai_api(final_prompt)
 
+        # Use MongoDB-style API for updates
         await self.db.workouts.update_one(
             {"_id": doc_id},
             {"$set": {"ai_classification": final_class, "ai_summary": summary, "llm_analysis_prompt": final_prompt}}
@@ -476,12 +490,13 @@ class ExperimentActor:
         self._check_ready()
 
         # This aggregation is more robust for finding the max ID in a sharded or busy cluster
+        # Use raw access for complex aggregation
         pipeline = [
             {"$match": {"_id": {"$regex": "^workout_rad_\\d+$"}}},
             {"$project": {"num": {"$toInt": {"$arrayElemAt": [{"$split": ["$_id","_"]}, -1]}}}},
             {"$group": {"_id": None, "max_id": {"$max":"$num"}}},
         ]
-        result_list = await self.db.workouts.aggregate(pipeline).to_list(1)
+        result_list = await self.db_raw.workouts.aggregate(pipeline).to_list(1)
         max_id = result_list[0]["max_id"] if result_list and 'max_id' in result_list[0] else -1
         new_suffix = max_id + 1
 
@@ -490,13 +505,17 @@ class ExperimentActor:
             feature_vec = self.engine.get_feature_vector(doc)
             doc["workout_vector"] = feature_vec.tolist()
             try:
-                # insert_one is now scoped automatically by self.db
+                # Use MongoDB-style API for inserts
                 await self.db.workouts.insert_one(doc)
                 logger.info(f"[{self.write_scope}-Actor] Inserted new doc {doc['_id']}")
                 return new_suffix
-            except self.DuplicateKeyError:
-                logger.warning(f"[{self.write_scope}-Actor] Collision on doc {doc['_id']}. Retrying...")
-                new_suffix += 1
+            except Exception as e:
+                # Check if it's a duplicate key error
+                if "duplicate" in str(e).lower() or "E11000" in str(e):
+                    logger.warning(f"[{self.write_scope}-Actor] Collision on doc {doc['_id']}. Retrying...")
+                    new_suffix += 1
+                else:
+                    raise
         
         logger.error(f"[{self.write_scope}-Actor] Could not generate new doc after 5 collisions.")
         raise Exception("Actor could not generate new doc after multiple collisions.")
@@ -504,7 +523,8 @@ class ExperimentActor:
     # --- Method 5: Replaces clear_all ---
     async def clear_all(self) -> dict:
         self._check_ready()
-        # delete_many is now scoped automatically by self.db
+        # Use MongoDB-style API for deletes
         result = await self.db.workouts.delete_many({})
-        logger.info(f"[{self.write_scope}-Actor] Cleared {result.deleted_count} documents.")
-        return {"deleted_count": result.deleted_count}
+        deleted_count = result.deleted_count
+        logger.info(f"[{self.write_scope}-Actor] Cleared {deleted_count} documents.")
+        return {"deleted_count": deleted_count}

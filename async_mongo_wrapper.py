@@ -15,9 +15,12 @@ Core Features:
   both standard MongoDB indexes and Atlas Search/Vector indexes. This
   manager is available via `collection_wrapper.index_manager` and
   operates on the *unscoped* collection for administrative purposes.
+- `AutoIndexManager`: ✨ Magical automatic index management! Automatically
+  creates indexes based on query patterns, making it easy to use collections
+  without manual index configuration. Enabled by default for all experiments.
 
 This design ensures data isolation between experiments while providing
-a familiar (Motor-like) developer experience.
+a familiar (Motor-like) developer experience with automatic index optimization.
 """
 import time
 import logging
@@ -462,6 +465,184 @@ class AsyncAtlasIndexManager:
 
 
 # ##########################################################################
+# AUTOMATIC INDEX MANAGEMENT
+# ##########################################################################
+
+class AutoIndexManager:
+    """
+    Magical index manager that automatically creates indexes based on query patterns.
+    
+    This class analyzes query filters and automatically creates appropriate indexes
+    for frequently used fields, making it easy for experiments to use collections
+    without manually defining indexes.
+    
+    Features:
+    - Automatically detects query patterns (equality, range, sorting)
+    - Creates indexes on-demand based on usage
+    - Uses intelligent heuristics to avoid over-indexing
+    - Thread-safe with async locks
+    """
+    
+    __slots__ = ('_collection', '_index_manager', '_creation_cache', '_lock', '_query_counts')
+    
+    def __init__(self, collection: AsyncIOMotorCollection, index_manager: AsyncAtlasIndexManager):
+        self._collection = collection
+        self._index_manager = index_manager
+        # Cache of index creation decisions (index_name -> bool)
+        self._creation_cache: Dict[str, bool] = {}
+        # Async lock to prevent race conditions during index creation
+        self._lock = asyncio.Lock()
+        # Track query patterns to determine which indexes to create
+        self._query_counts: Dict[str, int] = {}
+    
+    def _extract_index_fields_from_filter(self, filter: Optional[Mapping[str, Any]]) -> List[Tuple[str, int]]:
+        """
+        Extracts potential index fields from a MongoDB query filter.
+        
+        Returns a list of (field_name, direction) tuples where:
+        - direction is 1 for ASCENDING, -1 for DESCENDING
+        - Only includes fields that would benefit from indexing
+        """
+        if not filter:
+            return []
+        
+        index_fields = []
+        
+        def analyze_value(value: Any, field_name: str):
+            """Recursively analyze filter values to extract index candidates."""
+            if isinstance(value, dict):
+                # Handle operators like $gt, $gte, $lt, $lte, $ne, $in, $exists
+                if any(op in value for op in ['$gt', '$gte', '$lt', '$lte', '$ne', '$in', '$exists']):
+                    # These operators benefit from indexes
+                    index_fields.append((field_name, ASCENDING))
+                # Handle $and and $or - recursively analyze
+                if '$and' in value:
+                    for sub_filter in value['$and']:
+                        if isinstance(sub_filter, dict):
+                            for k, v in sub_filter.items():
+                                analyze_value(v, k)
+                if '$or' in value:
+                    # For $or, we can't easily determine index fields, skip for now
+                    pass
+            elif value is not None:
+                # Direct equality match - very common and benefits from index
+                index_fields.append((field_name, ASCENDING))
+        
+        # Analyze top-level fields
+        for key, value in filter.items():
+            if not key.startswith('$'):  # Skip operators at top level
+                analyze_value(value, key)
+        
+        return list(set(index_fields))  # Remove duplicates
+    
+    def _extract_sort_fields(self, sort: Optional[Union[List[Tuple[str, int]], Dict[str, int]]]) -> List[Tuple[str, int]]:
+        """
+        Extracts index fields from sort specification.
+        
+        Returns a list of (field_name, direction) tuples.
+        """
+        if not sort:
+            return []
+        
+        if isinstance(sort, dict):
+            return [(field, direction) for field, direction in sort.items()]
+        elif isinstance(sort, list):
+            return sort
+        else:
+            return []
+    
+    def _generate_index_name(self, fields: List[Tuple[str, int]]) -> str:
+        """Generate a human-readable index name from field list."""
+        if not fields:
+            return "auto_idx_empty"
+        
+        parts = []
+        for field, direction in fields:
+            dir_str = "asc" if direction == ASCENDING else "desc"
+            parts.append(f"{field}_{dir_str}")
+        
+        return f"auto_{'_'.join(parts)}"
+    
+    async def ensure_index_for_query(
+        self,
+        filter: Optional[Mapping[str, Any]] = None,
+        sort: Optional[Union[List[Tuple[str, int]], Dict[str, int]]] = None,
+        hint_threshold: int = 3
+    ):
+        """
+        Automatically ensure appropriate indexes exist for a given query.
+        
+        Args:
+            filter: The query filter to analyze
+            sort: The sort specification to analyze
+            hint_threshold: Number of times a query pattern must be seen before creating index
+        
+        This method:
+        1. Extracts potential index fields from filter and sort
+        2. Combines them into a composite index if needed
+        3. Creates the index if it doesn't exist and usage threshold is met
+        4. Uses async lock to prevent race conditions
+        """
+        # Extract fields from filter and sort
+        filter_fields = self._extract_index_fields_from_filter(filter)
+        sort_fields = self._extract_sort_fields(sort)
+        
+        # Combine fields intelligently: filter fields first, then sort fields
+        all_fields = []
+        filter_field_names = {f[0] for f in filter_fields}
+        
+        # Add filter fields first
+        for field, direction in filter_fields:
+            all_fields.append((field, direction))
+        
+        # Add sort fields that aren't already in filter
+        for field, direction in sort_fields:
+            if field not in filter_field_names:
+                all_fields.append((field, direction))
+        
+        if not all_fields:
+            return  # No index needed
+        
+        # Limit to first 4 fields (MongoDB compound index best practice)
+        all_fields = all_fields[:4]
+        
+        # Generate index name
+        index_name = self._generate_index_name(all_fields)
+        
+        # Track query pattern usage
+        pattern_key = index_name
+        self._query_counts[pattern_key] = self._query_counts.get(pattern_key, 0) + 1
+        
+        # Only create index if usage threshold is met
+        if self._query_counts[pattern_key] < hint_threshold:
+            return
+        
+        # Check cache to avoid redundant creation attempts
+        async with self._lock:
+            if index_name in self._creation_cache:
+                return  # Already attempted or created
+            
+            try:
+                # Check if index already exists
+                existing_indexes = await self._index_manager.list_indexes()
+                for idx in existing_indexes:
+                    if idx.get("name") == index_name:
+                        self._creation_cache[index_name] = True
+                        return  # Index already exists
+                
+                # Create the index
+                keys = all_fields
+                await self._index_manager.create_index(keys, name=index_name, background=True)
+                self._creation_cache[index_name] = True
+                logger.info(f"✨ Auto-created index '{index_name}' on {self._collection.name} for fields: {[f[0] for f in all_fields]}")
+            
+            except Exception as e:
+                # Don't fail the query if index creation fails
+                logger.warning(f"Failed to auto-create index '{index_name}': {e}")
+                self._creation_cache[index_name] = False
+
+
+# ##########################################################################
 # SCOPED WRAPPER CLASSES
 # ##########################################################################
 
@@ -479,22 +660,32 @@ class ScopedCollectionWrapper:
     
     Administrative methods (e.g., `drop_index`) are not proxied directly
     but are available via the `.index_manager` property.
+    
+    Magical Auto-Indexing:
+    - Automatically creates indexes based on query patterns
+    - Analyzes filter and sort specifications to determine needed indexes
+    - Creates indexes in the background without blocking queries
+    - Enables experiments to use collections without manual index configuration
+    - Can be disabled by setting `auto_index=False` in constructor
     """
     
     # Use __slots__ for memory and speed optimization
-    __slots__ = ('_collection', '_read_scopes', '_write_scope', '_index_manager')
+    __slots__ = ('_collection', '_read_scopes', '_write_scope', '_index_manager', '_auto_index_manager', '_auto_index_enabled')
 
     def __init__(
         self,
         real_collection: AsyncIOMotorCollection,
         read_scopes: List[str],
-        write_scope: str
+        write_scope: str,
+        auto_index: bool = True
     ):
         self._collection = real_collection
         self._read_scopes = read_scopes
         self._write_scope = write_scope
+        self._auto_index_enabled = auto_index
         # Lazily instantiated and cached
         self._index_manager: Optional[AsyncAtlasIndexManager] = None
+        self._auto_index_manager: Optional[AutoIndexManager] = None
 
     @property
     def index_manager(self) -> AsyncAtlasIndexManager:
@@ -513,6 +704,24 @@ class ScopedCollectionWrapper:
             # are not scoped by experiment_id.
             self._index_manager = AsyncAtlasIndexManager(self._collection)
         return self._index_manager
+
+    @property
+    def auto_index_manager(self) -> Optional[AutoIndexManager]:
+        """
+        Gets the AutoIndexManager for magical automatic index creation.
+        
+        Returns None if auto-indexing is disabled.
+        """
+        if not self._auto_index_enabled:
+            return None
+        
+        if self._auto_index_manager is None:
+            # Lazily instantiate auto-index manager
+            self._auto_index_manager = AutoIndexManager(
+                self._collection,
+                self.index_manager  # This will create index_manager if needed
+            )
+        return self._auto_index_manager
 
     def _inject_read_filter(self, filter: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
         """
@@ -568,7 +777,17 @@ class ScopedCollectionWrapper:
         *args,
         **kwargs
     ) -> Optional[Dict[str, Any]]:
-        """Applies the read scope to the filter."""
+        """
+        Applies the read scope to the filter.
+        Automatically ensures appropriate indexes exist for the query.
+        """
+        # Magical auto-indexing: ensure indexes exist before querying
+        # Note: We analyze the user's filter, not the scoped filter, since
+        # experiment_id index is always ensured separately
+        if self.auto_index_manager:
+            sort = kwargs.get('sort')
+            await self.auto_index_manager.ensure_index_for_query(filter=filter, sort=sort)
+        
         scoped_filter = self._inject_read_filter(filter)
         return await self._collection.find_one(scoped_filter, *args, **kwargs)
 
@@ -581,7 +800,17 @@ class ScopedCollectionWrapper:
         """
         Applies the read scope to the filter.
         Returns an async cursor, just like motor.
+        Automatically ensures appropriate indexes exist for the query.
         """
+        # Magical auto-indexing: ensure indexes exist before querying
+        # Note: This is fire-and-forget, doesn't block cursor creation
+        if self.auto_index_manager:
+            sort = kwargs.get('sort')
+            # Create a task to ensure index (fire and forget)
+            asyncio.create_task(
+                self.auto_index_manager.ensure_index_for_query(filter=filter, sort=sort)
+            )
+        
         scoped_filter = self._inject_read_filter(filter)
         return self._collection.find(scoped_filter, *args, **kwargs)
 
@@ -639,7 +868,14 @@ class ScopedCollectionWrapper:
         *args,
         **kwargs
     ) -> int:
-        """Applies the read scope to the filter for counting."""
+        """
+        Applies the read scope to the filter for counting.
+        Automatically ensures appropriate indexes exist for the query.
+        """
+        # Magical auto-indexing: ensure indexes exist before querying
+        if self.auto_index_manager:
+            await self.auto_index_manager.ensure_index_for_query(filter=filter)
+        
         scoped_filter = self._inject_read_filter(filter)
         return await self._collection.count_documents(scoped_filter, *args, **kwargs)
 
@@ -702,19 +938,26 @@ class ScopedMongoWrapper:
 
     It caches these `ScopedCollectionWrapper` instances to avoid
     re-creating them on every access within the same request context.
+    
+    Features:
+    - Automatic index management: indexes are created automatically based
+      on query patterns, making it easy to use collections without manual
+      index configuration. This "magical" feature is enabled by default.
     """
     
-    __slots__ = ('_db', '_read_scopes', '_write_scope', '_wrapper_cache')
+    __slots__ = ('_db', '_read_scopes', '_write_scope', '_wrapper_cache', '_auto_index')
 
     def __init__(
         self,
         real_db: AsyncIOMotorDatabase,
         read_scopes: List[str],
-        write_scope: str
+        write_scope: str,
+        auto_index: bool = True
     ):
         self._db = real_db
         self._read_scopes = read_scopes
         self._write_scope = write_scope
+        self._auto_index = auto_index
         
         # Cache for created collection wrappers.
         self._wrapper_cache: Dict[str, ScopedCollectionWrapper] = {}
@@ -753,13 +996,49 @@ class ScopedMongoWrapper:
                 f"ScopedMongoWrapper can only proxy collections (found {type(real_collection)})."
             )
 
-        # Create the new wrapper
+        # Create the new wrapper with auto-indexing enabled by default
         wrapper = ScopedCollectionWrapper(
             real_collection=real_collection,
             read_scopes=self._read_scopes,
-            write_scope=self._write_scope
+            write_scope=self._write_scope,
+            auto_index=self._auto_index
         )
+        
+        # Magically ensure experiment_id index exists (it's always used in queries)
+        # This is fire-and-forget, runs in background
+        if self._auto_index:
+            asyncio.create_task(self._ensure_experiment_id_index(real_collection))
         
         # Store it in the cache for this instance using the *prefixed_name*
         self._wrapper_cache[prefixed_name] = wrapper
         return wrapper
+    
+    async def _ensure_experiment_id_index(self, collection: AsyncIOMotorCollection):
+        """
+        Ensures experiment_id index exists on collection.
+        This index is always needed since all queries filter by experiment_id.
+        """
+        try:
+            index_manager = AsyncAtlasIndexManager(collection)
+            existing_indexes = await index_manager.list_indexes()
+            
+            # Check if experiment_id index already exists
+            experiment_id_index_exists = False
+            for idx in existing_indexes:
+                keys = idx.get("key", {})
+                # Check if experiment_id is indexed (could be single field or part of compound)
+                if "experiment_id" in keys:
+                    experiment_id_index_exists = True
+                    break
+            
+            if not experiment_id_index_exists:
+                # Create experiment_id index
+                await index_manager.create_index(
+                    [("experiment_id", ASCENDING)],
+                    name="auto_experiment_id_asc",
+                    background=True
+                )
+                logger.info(f"✨ Auto-created experiment_id index on {collection.name}")
+        except Exception as e:
+            # Don't fail if index creation fails, just log
+            logger.debug(f"Could not ensure experiment_id index on {collection.name}: {e}")

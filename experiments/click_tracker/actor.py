@@ -5,36 +5,47 @@ import datetime
 from typing import List
 import ray
 
-# Use the ASYNC motor client
-import motor.motor_asyncio
-
 logger = logging.getLogger(__name__)
 
 @ray.remote
 class ExperimentActor:
     """
     Ray Actor for handling clicks.
-    This version is fully asynchronous using 'motor'.
+    Now uses ExperimentDB for easy database access - no MongoDB knowledge needed!
     """
 
     def __init__(self, mongo_uri: str, db_name: str, write_scope: str, read_scopes: List[str]):
-        # Use the Async client
-        self.client = motor.motor_asyncio.AsyncIOMotorClient(mongo_uri)
-        self.db = self.client[db_name]
-        
-        collection_name = f"{write_scope}_clicks"
-        self.collection = self.db[collection_name]
+        try:
+            # Import ExperimentDB and dependencies
+            import motor.motor_asyncio
+            from async_mongo_wrapper import ScopedMongoWrapper
+            from experiment_db import ExperimentDB
+            
+            # Setup database connection
+            self.client = motor.motor_asyncio.AsyncIOMotorClient(mongo_uri)
+            real_db = self.client[db_name]
+            
+            # Create ScopedMongoWrapper for isolation
+            scoped_wrapper = ScopedMongoWrapper(
+                real_db=real_db,
+                read_scopes=read_scopes,
+                write_scope=write_scope
+            )
+            
+            # Create ExperimentDB for easy access
+            self.db = ExperimentDB(scoped_wrapper)
+            
+            self.write_scope = write_scope
+            self.read_scopes = read_scopes
 
-        self.write_scope = write_scope
-        self.read_scopes = read_scopes
-
-        logger.info(
-            f"[ClickTrackerActor] started with write_scope='{self.write_scope}' "
-            f"(DB='{db_name}', Collection='{collection_name}')"
-        )
-
-    def _get_scoped_filter(self) -> dict:
-        return {} # No filter needed since we're in our own collection
+            logger.info(
+                f"[ClickTrackerActor] started with write_scope='{self.write_scope}' "
+                f"(DB='{db_name}') using ExperimentDB"
+            )
+        except Exception as e:
+            logger.critical(f"[ClickTrackerActor] ❌ CRITICAL: Failed to init DB: {e}")
+            self.client = None
+            self.db = None
 
     # Methods must be async
     async def record_click(self) -> int:
@@ -42,12 +53,17 @@ class ExperimentActor:
         Inserts a new click doc and returns the updated count.
         """
         try:
-            # All DB calls must be awaited
-            await self.collection.insert_one({
+            if not self.db:
+                return -1
+                
+            # Use MongoDB-style API - familiar API!
+            await self.db.clicks.insert_one({
                 "event": "button_click",
                 "timestamp": datetime.datetime.now(datetime.timezone.utc),
             })
-            return await self.collection.count_documents(self._get_scoped_filter())
+            
+            # Get count using MongoDB API
+            return await self.db.clicks.count_documents({})
         except Exception as e:
             logger.error(f"[ClickTrackerActor] error in record_click: {e}", exc_info=True)
             return -1
@@ -58,8 +74,11 @@ class ExperimentActor:
         Returns how many click docs exist for this experiment (by scope).
         """
         try:
-            # All DB calls must be awaited
-            return await self.collection.count_documents(self._get_scoped_filter())
+            if not self.db:
+                return -1
+                
+            # MongoDB-style count - scoping is automatic!
+            return await self.db.clicks.count_documents({})
         except Exception as e:
             logger.error(f"[ClickTrackerActor] error in get_count: {e}", exc_info=True)
             return -1
