@@ -1176,7 +1176,13 @@ async def _seed_db_from_local_files(db: AsyncIOMotorDatabase):
     logger.info("No new local manifests found to seed. Database is up-to-date.")
 
 
-def _scan_directory(dir_path: Path, base_path: Path) -> List[Dict[str, Any]]:
+async def _scan_directory(dir_path: Path, base_path: Path) -> List[Dict[str, Any]]:
+  """Async wrapper for directory scanning that runs the synchronous operation in a thread."""
+  return await asyncio.to_thread(_scan_directory_sync, dir_path, base_path)
+
+
+def _scan_directory_sync(dir_path: Path, base_path: Path) -> List[Dict[str, Any]]:
+  """Synchronous directory scanning implementation that runs in a thread pool."""
   tree: List[Dict[str, Any]] = []
   if not dir_path.is_dir():
     return tree
@@ -1190,7 +1196,7 @@ def _scan_directory(dir_path: Path, base_path: Path) -> List[Dict[str, Any]]:
           "name": item.name,
           "type": "dir",
           "path": str(relative_path),
-          "children": _scan_directory(item, base_path)
+          "children": _scan_directory_sync(item, base_path)
         })
       else:
         tree.append({"name": item.name, "type": "file", "path": str(relative_path)})
@@ -2906,7 +2912,7 @@ async def configure_experiment_get(request: Request, slug_id: str, user: Dict[st
     manifest_data = {"error": f"DB load failed: {e}"}
     manifest_content = json.dumps(manifest_data, indent=2)
 
-  file_tree = await asyncio.to_thread(_scan_directory, experiment_path, experiment_path)
+  file_tree = await _scan_directory(experiment_path, experiment_path)
 
   discovery_info = {
     "has_actor_file": False,
