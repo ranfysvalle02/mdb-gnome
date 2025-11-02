@@ -27,8 +27,18 @@
                 Welcome to <span class="bg-gradient-to-r from-yellow-300 via-orange-300 to-yellow-300 bg-clip-text text-transparent">StoreFactory</span>
             </h1>
             <p class="text-xl md:text-2xl text-gray-300 max-w-3xl mx-auto mb-10">
-                Create your store in minutes. No coding required.
+                Create your store in minutes. No coding required. Completely open source.
             </p>
+            <div class="flex flex-wrap justify-center items-center gap-4 md:gap-6 mb-10">
+                <a href="https://github.com/ranfysvalle02/mdb-stores" 
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   class="inline-flex items-center gap-2 bg-gray-800/50 hover:bg-gray-700/70 border border-gray-600 hover:border-indigo-400 text-white font-semibold py-3 px-6 rounded-xl transition-all duration-300 group backdrop-blur-sm">
+                    <i class="fab fa-github text-xl group-hover:scale-110 transition-transform"></i>
+                    <span>View on GitHub</span>
+                    <i class="fas fa-external-link-alt text-sm opacity-70 group-hover:opacity-100 group-hover:translate-x-1 transition-all"></i>
+                </a>
+            </div>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8 max-w-7xl mx-auto">
             {% for business_key, business_config in BUSINESS_TYPES.items() %}
