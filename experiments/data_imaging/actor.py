@@ -51,6 +51,14 @@ class ExperimentActor:
     def __init__(self, mongo_uri: str, db_name: str, write_scope: str, read_scopes: list[str]):
         self.write_scope = write_scope
         self.read_scopes = read_scopes
+        
+        # Critical fix: Ensure write_scope is in read_scopes so we can read what we write!
+        # Without this, count_documents({}) will return 0 even if documents exist!
+        if write_scope not in read_scopes:
+            logger.warning(f"[{write_scope}-Actor] ⚠️ WARNING: write_scope '{write_scope}' not in read_scopes {read_scopes}! "
+                         f"Adding it to prevent data visibility issues.")
+            self.read_scopes = list(read_scopes) + [write_scope]
+        
         self.vector_index_name = f"{write_scope}_workout_vector_index"
         
         # Lazy-load heavy dependencies (experiment-specific)
@@ -89,11 +97,12 @@ class ExperimentActor:
         # Database initialization (follows pattern from other experiments)
         try:
             from experiment_db import create_actor_database
+            # Use self.read_scopes which may have been updated to include write_scope
             self.db = create_actor_database(
                 mongo_uri,
                 db_name,
                 write_scope,
-                read_scopes
+                self.read_scopes  # Use updated read_scopes that includes write_scope
             )
             logger.info(
                 f"[{write_scope}-Actor] initialized with write_scope='{self.write_scope}' "
@@ -449,11 +458,34 @@ class ExperimentActor:
             logger.warning(f"[{self.write_scope}-Actor] Timeout waiting for index, but continuing...")
         
         try:
+            # Verify database connection and collection access before counting
+            logger.info(f"[{self.write_scope}-Actor] Verifying database connection and collection access...")
+            logger.info(f"[{self.write_scope}-Actor] write_scope='{self.write_scope}', read_scopes={self.read_scopes}")
+            
+            # First, try to verify we can access the collection by checking for at least one document
+            # Use a simple query to test connectivity
+            try:
+                test_query = await self.db.workouts.find_one({}, {"_id": 1})
+                logger.info(f"[{self.write_scope}-Actor] Database connection verified. Test query returned: {test_query is not None}")
+            except Exception as test_e:
+                logger.error(f"[{self.write_scope}-Actor] Database connection test failed: {test_e}", exc_info=True)
+                raise
+            
+            # Now count documents with explicit logging
+            logger.info(f"[{self.write_scope}-Actor] Counting existing workout records (scoped to experiment_id in {self.read_scopes})...")
             count = await self.db.workouts.count_documents({})
             logger.info(f"[{self.write_scope}-Actor] Found {count} existing workout records.")
             
+            # Double-check by trying to find at least one document to verify the count is accurate
             if count == 0:
-                logger.info(f"[{self.write_scope}-Actor] No records found. Generating ~10 sample workout records...")
+                # Double-check with a find() to make absolutely sure there are no documents
+                sample_docs = await self.db.workouts.find({}, {"_id": 1}).limit(1).to_list(length=1)
+                if sample_docs:
+                    logger.warning(f"[{self.write_scope}-Actor] ⚠️ WARNING: count_documents returned 0, but find() found documents! Count={count}, Found docs: {len(sample_docs)}")
+                    logger.warning(f"[{self.write_scope}-Actor] This indicates a potential scoping or counting bug. NOT generating new data.")
+                    return
+                
+                logger.info(f"[{self.write_scope}-Actor] Verified: No records found (count={count}, sample check passed). Generating ~10 sample workout records...")
                 NUM_TO_GENERATE = 10
                 generated_ids = []
                 
@@ -468,7 +500,7 @@ class ExperimentActor:
                 
                 logger.info(f"[{self.write_scope}-Actor] Successfully generated {len(generated_ids)} workout records: {generated_ids}")
             else:
-                logger.info(f"[{self.write_scope}-Actor] Records already exist. Skipping auto-generation.")
+                logger.info(f"[{self.write_scope}-Actor] Records already exist (count={count}). Skipping auto-generation.")
                 
         except Exception as e:
             logger.error(f"[{self.write_scope}-Actor] Error during initialization: {e}", exc_info=True)
