@@ -266,9 +266,9 @@
             <!-- Admin Link Button -->
             {% if current_user.is_admin %}
                 <div class="mt-10">
-                    <a href="{{ request.url_for('configure_experiment_get', slug_id=experiment.slug) }}" 
+                    <a href="{{ request.url_for('admin_dashboard') }}" 
                        class="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-lg shadow-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition duration-150 ease-in-out">
-                        Go to Admin Configuration
+                        Go to Admin Dashboard
                         <svg class="ml-2 -mr-1 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v1.5a1 1 0 01-1 1H9a1 1 0 01-1-1V2a1 1 0 01.69-.954l.738-.246a1 1 0 01.372 0l.738.246zm-6.684 5.378a1 1 0 10-1.42 1.42L5 8.42l-1.894 1.894a1 1 0 101.42 1.42L6.42 9.84l1.894 1.894a1 1 0 001.42-1.42L7.84 8.42l1.894-1.894a1 1 0 00-1.42-1.42L6.42 7.04l-1.894-1.894z" clip-rule="evenodd" />
                         </svg>

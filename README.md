@@ -378,7 +378,7 @@ That's it. You now have a fully self-contained experiment. On the next server st
 If your `manifest.json` specifies `"status": "active"`, g.nome will automatically activate the experiment on startup. No admin panel action needed.
 
 **Option 2: Manual Activation (via Admin Panel)**  
-Alternatively, you can log into the `/admin` panel, find `"click_tracker"` in the list of discovered experiments, click **"Configure"**, set the status to `"active"`, and hit **"Save"**.
+Alternatively, you can log into the `/admin` panel, find `"click_tracker"` in the list of configured experiments, click **"Configure"**, set the status to `"active"`, and hit **"Save"**.
 
 Once active, your experiment is live at `/experiments/click_tracker/`, secure, and sandboxed, all without writing a single line of boilerplate.
   

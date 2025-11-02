@@ -221,6 +221,224 @@
             box-shadow: none;
         }
 
+        .delete-btn {
+            background: #dc3545;
+            color: white;
+            padding: 10px 16px;
+            border-radius: 6px;
+            border: none;
+            font-weight: 600;
+            display: inline-block;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(220, 53, 69, 0.3);
+        }
+
+        .delete-btn:hover {
+            background: #c82333;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(220, 53, 69, 0.4);
+        }
+
+        .delete-btn:disabled {
+            background: #444;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        /* Delete Modal Specific Styles */
+        .modal-content.danger {
+            border: 2px solid #dc3545;
+            box-shadow: 0 8px 40px rgba(220, 53, 69, 0.5);
+        }
+
+        .modal-header.danger {
+            border-bottom: 2px solid #dc3545;
+        }
+
+        .modal-header.danger h2 {
+            color: #dc3545;
+        }
+
+        .delete-confirmation-input {
+            width: 100%;
+            padding: 12px;
+            margin: 20px 0;
+            background: var(--mongodb-dark-blue);
+            border: 2px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            box-sizing: border-box;
+            transition: all 0.3s ease;
+        }
+
+        .delete-confirmation-input:focus {
+            border-color: #dc3545;
+            outline: none;
+            box-shadow: 0 0 10px rgba(220, 53, 69, 0.3);
+        }
+
+        .delete-confirmation-input:disabled {
+            background: #333;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .delete-warning {
+            background: rgba(220, 53, 69, 0.15);
+            border: 1px solid #dc3545;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            color: var(--text-primary);
+        }
+
+        .delete-warning strong {
+            color: #dc3545;
+            display: block;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+
+        .delete-warning p {
+            margin: 10px 0;
+            color: var(--text-secondary);
+        }
+
+        .delete-warning ul {
+            margin: 15px 0 10px 20px;
+            padding-left: 0;
+            color: var(--text-secondary);
+        }
+
+        .delete-warning li {
+            margin: 8px 0;
+            line-height: 1.5;
+        }
+
+        .delete-warning code {
+            background: rgba(220, 53, 69, 0.2);
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: #dc3545;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        .delete-confirmation-text {
+            font-family: 'Courier New', monospace;
+            color: #dc3545;
+            font-weight: bold;
+            font-size: 16px;
+            margin: 15px 0;
+            padding: 12px;
+            background: rgba(220, 53, 69, 0.1);
+            border: 1px solid #dc3545;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .delete-status {
+            margin-top: 15px;
+            padding: 12px;
+            border-radius: 8px;
+            font-weight: 500;
+        }
+
+        .delete-status.success {
+            background: rgba(40, 167, 69, 0.2);
+            color: #28a745;
+            border: 1px solid #28a745;
+        }
+
+        .delete-status.error {
+            background: rgba(220, 53, 69, 0.2);
+            color: #dc3545;
+            border: 1px solid #dc3545;
+        }
+
+        .delete-status.warning {
+            background: rgba(255, 193, 7, 0.2);
+            color: #ffc107;
+            border: 1px solid #ffc107;
+        }
+
+        .delete-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .modal-body {
+            padding: 20px 0;
+        }
+
+        /* Deleting state styles */
+        .exp-item.deleting {
+            opacity: 0.6;
+            pointer-events: none;
+            position: relative;
+            background: rgba(220, 53, 69, 0.1);
+            border-color: #dc3545;
+        }
+
+        .exp-item.deleting::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 12px;
+            z-index: 10;
+        }
+
+        .deleting-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 20;
+            background: rgba(220, 53, 69, 0.95);
+            padding: 20px 30px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+
+        .deleting-overlay h3 {
+            color: white;
+            margin: 0 0 10px 0;
+            font-size: 1.2em;
+        }
+
+        .deleting-overlay p {
+            color: rgba(255, 255, 255, 0.9);
+            margin: 0;
+            font-size: 0.9em;
+        }
+
+        .spinner {
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top: 3px solid white;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 10px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
         .header-nav {
             margin-bottom: 20px;
             display: flex;
@@ -545,7 +763,13 @@
     </style>
     <script>
         async function downloadExport(url, slugId) {
-            const button = event.target;
+            // Prevent export if experiment is being deleted
+            if (deletingExperiments.has(slugId)) {
+                alert('⚠️ This experiment is currently being deleted. Export is not available.');
+                return;
+            }
+            
+            const button = event.target || document.getElementById(`export-btn-${slugId}`);
             const originalText = button.innerHTML;
             button.disabled = true;
             button.innerHTML = '⏳ Preparing export...';
@@ -763,7 +987,7 @@
         }
         
         async function detectSlugFromFile(file) {
-            // Detect from ZIP structure (experiments/{slug}/) - ONLY method, no filename guessing
+            // Detect from ZIP structure (supports both upload-ready and standalone export formats)
             try {
                 const formData = new FormData();
                 formData.append('file', file);
@@ -803,13 +1027,13 @@
                     const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
                     showUploadStatus('info', `📦 Selected: ${file.name} (${fileSizeMB} MB) - Detecting slug from ZIP structure...`);
                     
-                    // Detect slug from ZIP structure (experiments/{slug}/)
+                    // Detect slug from ZIP structure (supports both formats)
                     const detectedSlug = await detectSlugFromFile(file);
                     
                     if (detectedSlug) {
-                        showUploadStatus('success', `✅ Auto-detected slug: <strong>${detectedSlug}</strong> from experiments/${detectedSlug}/ structure | 📦 ${file.name} (${fileSizeMB} MB)`);
+                        showUploadStatus('success', `✅ Auto-detected slug: <strong>${detectedSlug}</strong> | 📦 ${file.name} (${fileSizeMB} MB)`);
                     } else {
-                        showUploadStatus('error', `❌ Could not detect slug from ZIP structure. ZIP must contain experiments/{slug}/ with manifest.json, actor.py, and __init__.py. Only standalone export ZIPs are accepted.`);
+                        showUploadStatus('error', `❌ Could not detect slug from ZIP. ZIP must follow either format: (1) Upload-ready: root-level files (manifest.json, actor.py, __init__.py), or (2) Standalone export: experiments/{slug}/ with manifest.json, actor.py, and __init__.py.`);
                     }
                 });
             }
@@ -832,10 +1056,10 @@
                 return;
             }
             
-            // Auto-detect slug from ZIP structure BEFORE uploading
+            // Auto-detect slug from ZIP structure BEFORE uploading (supports both formats)
             const detectedSlug = await detectSlugFromFile(file);
             if (!detectedSlug) {
-                showUploadStatus('error', '❌ Could not detect slug from ZIP structure. ZIP must contain experiments/{slug}/ with manifest.json, actor.py, and __init__.py. Only standalone export ZIPs are accepted.');
+                showUploadStatus('error', '❌ Could not detect slug from ZIP. ZIP must follow either format: (1) Upload-ready: root-level files (manifest.json, actor.py, __init__.py), or (2) Standalone export: experiments/{slug}/ with manifest.json, actor.py, and __init__.py.');
                 return;
             }
             
@@ -954,7 +1178,7 @@
     <h2>Configured Experiments</h2>
     <ul class="exp-list">
         {% for exp in configured %}
-            <li class="exp-item">
+            <li class="exp-item" data-slug="{{ exp.slug }}">
                 <h3>{{ exp.name }} <span class="status status-{{ exp.status }}">{{ exp.status }}</span></h3>
                 <p>{{ exp.description }}</p>
                 <div class="exp-meta">
@@ -964,29 +1188,26 @@
                     <strong>Export Count:</strong> <span style="font-weight: 600; color: #007bff;">{{ exp.export_count | default(0) }}</span>
                 </div>
                 <hr>
-                <a href="{{ request.url_for('configure_experiment_get', slug_id=exp.slug) }}" class="action-btn">Configure</a>
                 
                 <button onclick="downloadExport('{{ request.url_for('package_experiment', slug_id=exp.slug) }}', '{{ exp.slug }}')" 
-                        class="export-btn">
+                        class="export-btn"
+                        id="export-btn-{{ exp.slug }}">
                     📦 Create Standalone Package
                 </button>
+                <button onclick="openDeleteModal('{{ exp.slug }}')" 
+                        class="delete-btn" 
+                        id="delete-btn-{{ exp.slug }}"
+                        style="background: #dc3545; color: white; margin-left: 10px;">
+                    🗑️ Delete Experiment
+                </button>
+                <div class="deleting-overlay" id="deleting-overlay-{{ exp.slug }}" style="display: none;">
+                    <div class="spinner"></div>
+                    <h3>⚠️ EXPERIMENT BEING DELETED</h3>
+                    <p>Please wait... This experiment cannot be used during deletion.</p>
+                </div>
                 </li>
         {% else %}
             <li>No configured experiments found.</li>
-        {% endfor %}
-    </ul>
-
-    <h2>Discovered Experiments</h2>
-    <p>These experiments exist on disk but have not been configured. Click "Configure" to activate them.</p>
-    <ul class="exp-list">
-        {% for slug in discovered %}
-            <li class="exp-item">
-                <h3>{{ slug }}</h3>
-                <p>A new experiment folder found on disk.</p>
-                <a href="{{ request.url_for('configure_experiment_get', slug_id=slug) }}" class="action-btn">Configure & Activate</a>
-            </li>
-        {% else %}
-            <li>No new experiments discovered.</li>
         {% endfor %}
     </ul>
     
@@ -1025,8 +1246,10 @@
                             required
                         />
                         <small>
-                            <strong>Slug is auto-detected from ZIP structure:</strong> experiments/{slug}/<br>
-                            <strong>Required files in ZIP:</strong> experiments/{slug}/manifest.json, experiments/{slug}/actor.py, experiments/{slug}/__init__.py<br>
+                            <strong>Slug is auto-detected from ZIP structure.</strong><br>
+                            <strong>Supported formats:</strong><br>
+                            • <strong>Upload-ready format:</strong> Root-level files (manifest.json, actor.py, __init__.py)<br>
+                            • <strong>Standalone export format:</strong> experiments/{slug}/ with manifest.json, actor.py, __init__.py<br>
                             <strong>Optional:</strong> requirements.txt, static/, templates/, etc.
                         </small>
                     </div>
@@ -1046,5 +1269,268 @@
             </div>
         </div>
     </div>
+
+    <!-- Delete Experiment Modal -->
+    <div id="deleteModal" class="modal">
+        <div class="modal-content danger">
+            <div class="modal-header danger">
+                <h2>⚠️ Delete Experiment</h2>
+                <span class="close" onclick="closeDeleteModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="delete-warning">
+                    <strong>⚠️ WARNING: This action is DESTRUCTIVE and cannot be undone!</strong>
+                    <p>The following will be permanently deleted:</p>
+                    <ul>
+                        <li>Experiment code directory (<code>experiments/&lt;slug&gt;/</code>)</li>
+                        <li>All database collections prefixed with <code>&lt;slug&gt;_</code></li>
+                        <li>Experiment configuration from database</li>
+                        <li>All export logs for this experiment</li>
+                        <li>Ray actor for this experiment</li>
+                        <li>All routes and static files</li>
+                        <li>B2 storage files (if configured)</li>
+                    </ul>
+                </div>
+                
+                <p style="color: var(--text-primary); font-weight: 600; margin: 25px 0 10px 0;">
+                    To confirm deletion, type the following command exactly:
+                </p>
+                <div class="delete-confirmation-text" id="deleteConfirmationText"></div>
+                
+                <input type="text" 
+                       id="deleteConfirmationInput" 
+                       class="delete-confirmation-input" 
+                       placeholder="Type the confirmation command above..."
+                       autocomplete="off"
+                       onkeyup="checkDeleteConfirmation()">
+                
+                <p style="color: var(--text-secondary); font-size: 0.9em; margin-top: 10px; text-align: center;">
+                    This safety measure prevents accidental deletions.
+                </p>
+                
+                <div class="delete-actions">
+                    <button onclick="closeDeleteModal()" 
+                            class="export-btn" 
+                            style="background: #6c757d; color: white;">
+                        Cancel
+                    </button>
+                    <button onclick="confirmDeleteExperiment()" 
+                            id="confirmDeleteBtn"
+                            class="delete-btn" 
+                            disabled>
+                        🗑️ Delete Experiment
+                    </button>
+                </div>
+                
+                <div id="deleteStatus" class="delete-status" style="display: none;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentDeleteSlug = null;
+        const deletingExperiments = new Set(); // Track which experiments are being deleted
+
+        function setExperimentDeleting(slug, isDeleting) {
+            const expItem = document.querySelector(`.exp-item[data-slug="${slug}"]`) || 
+                           document.querySelector(`.exp-item:has(button[id*="${slug}"])`);
+            
+            if (!expItem) {
+                // Try to find by slug in the exp item content
+                const items = document.querySelectorAll('.exp-item');
+                let foundItem = null;
+                items.forEach(item => {
+                    const slugMatch = item.innerHTML.match(/<code>([^<]+)<\/code>/);
+                    if (slugMatch && slugMatch[1] === slug) {
+                        foundItem = item;
+                    }
+                });
+                if (foundItem) {
+                    setDeletingState(foundItem, slug, isDeleting);
+                }
+                return;
+            }
+            
+            setDeletingState(expItem, slug, isDeleting);
+        }
+
+        function setDeletingState(expItem, slug, isDeleting) {
+            const exportBtn = document.getElementById(`export-btn-${slug}`);
+            const deleteBtn = document.getElementById(`delete-btn-${slug}`);
+            const deletingOverlay = document.getElementById(`deleting-overlay-${slug}`);
+            
+            if (isDeleting) {
+                deletingExperiments.add(slug);
+                expItem.classList.add('deleting');
+                if (exportBtn) exportBtn.disabled = true;
+                if (deleteBtn) deleteBtn.disabled = true;
+                if (deletingOverlay) deletingOverlay.style.display = 'block';
+            } else {
+                deletingExperiments.delete(slug);
+                expItem.classList.remove('deleting');
+                if (exportBtn) exportBtn.disabled = false;
+                if (deleteBtn) deleteBtn.disabled = false;
+                if (deletingOverlay) deletingOverlay.style.display = 'none';
+            }
+        }
+
+        function openDeleteModal(slug) {
+            // Prevent opening delete modal if already deleting
+            if (deletingExperiments.has(slug)) {
+                alert('⚠️ This experiment is currently being deleted. Please wait for the deletion to complete.');
+                return;
+            }
+            
+            currentDeleteSlug = slug;
+            const modal = document.getElementById('deleteModal');
+            const confirmationText = `sudo rm -rf experiments/${slug}`;
+            document.getElementById('deleteConfirmationText').textContent = confirmationText;
+            document.getElementById('deleteConfirmationInput').value = '';
+            document.getElementById('deleteConfirmationInput').focus();
+            document.getElementById('confirmDeleteBtn').disabled = true;
+            const deleteStatus = document.getElementById('deleteStatus');
+            deleteStatus.style.display = 'none';
+            deleteStatus.innerHTML = '';
+            modal.style.display = 'block';
+        }
+
+        function closeDeleteModal() {
+            const modal = document.getElementById('deleteModal');
+            modal.style.display = 'none';
+            currentDeleteSlug = null;
+            document.getElementById('deleteConfirmationInput').value = '';
+            document.getElementById('confirmDeleteBtn').disabled = true;
+            const deleteStatus = document.getElementById('deleteStatus');
+            deleteStatus.style.display = 'none';
+            deleteStatus.innerHTML = '';
+        }
+
+        function checkDeleteConfirmation() {
+            const input = document.getElementById('deleteConfirmationInput').value;
+            const expected = currentDeleteSlug ? `sudo rm -rf experiments/${currentDeleteSlug}` : '';
+            const confirmBtn = document.getElementById('confirmDeleteBtn');
+            
+            if (input === expected) {
+                confirmBtn.disabled = false;
+                confirmBtn.style.boxShadow = '0 6px 20px rgba(220, 53, 69, 0.6)';
+            } else {
+                confirmBtn.disabled = true;
+                confirmBtn.style.boxShadow = '0 4px 15px rgba(220, 53, 69, 0.3)';
+            }
+        }
+
+        async function confirmDeleteExperiment() {
+            if (!currentDeleteSlug) {
+                return;
+            }
+
+            const confirmBtn = document.getElementById('confirmDeleteBtn');
+            const deleteStatus = document.getElementById('deleteStatus');
+            const confirmationInput = document.getElementById('deleteConfirmationInput').value;
+            const expected = `sudo rm -rf experiments/${currentDeleteSlug}`;
+
+            if (confirmationInput !== expected) {
+                deleteStatus.className = 'delete-status error';
+                deleteStatus.style.display = 'block';
+                deleteStatus.innerHTML = '❌ Confirmation string does not match. Please type it exactly as shown.';
+                return;
+            }
+
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = '⏳ Deleting...';
+            deleteStatus.className = 'delete-status warning';
+            deleteStatus.style.display = 'block';
+            deleteStatus.innerHTML = '⏳ Deleting experiment and all associated data...';
+            
+            // Mark experiment as deleting and update UI
+            setExperimentDeleting(currentDeleteSlug, true);
+
+            try {
+                const baseUrl = window.location.origin;
+                const deleteUrl = `${baseUrl}/admin/api/delete-experiment/${currentDeleteSlug}`;
+
+                const response = await fetch(deleteUrl, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        confirmation: confirmationInput
+                    })
+                });
+
+                const responseText = await response.text();
+                let data;
+                try {
+                    data = JSON.parse(responseText);
+                } catch (jsonError) {
+                    throw new Error(`Server returned invalid response (${response.status}): ${responseText.substring(0, 200)}`);
+                }
+
+                if (response.ok && data.status === 'success') {
+                    deleteStatus.className = 'delete-status success';
+                    deleteStatus.style.display = 'block';
+                    deleteStatus.innerHTML = '✅ Experiment deleted successfully! Reloading page...';
+                    
+                    // Keep deleting state until page reloads (experiment will be gone after reload)
+                    setTimeout(() => {
+                        closeDeleteModal();
+                        window.location.reload();
+                    }, 2000);
+                } else {
+                    // Remove deleting state on error
+                    setExperimentDeleting(currentDeleteSlug, false);
+                    
+                    const errorMsg = data.message || data.detail || 'Delete failed';
+                    deleteStatus.className = 'delete-status error';
+                    deleteStatus.style.display = 'block';
+                    deleteStatus.innerHTML = `❌ Delete failed: ${errorMsg}`;
+                    confirmBtn.disabled = false;
+                    confirmBtn.textContent = '🗑️ Delete Experiment';
+                }
+            } catch (error) {
+                // Remove deleting state on error
+                setExperimentDeleting(currentDeleteSlug, false);
+                
+                console.error('Delete error:', error);
+                deleteStatus.className = 'delete-status error';
+                deleteStatus.style.display = 'block';
+                deleteStatus.innerHTML = `❌ Delete error: ${error.message || 'Network error. Please check your connection and try again.'}`;
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = '🗑️ Delete Experiment';
+            }
+        }
+
+        // Close modal when clicking outside of it
+        window.onclick = function(event) {
+            const deleteModal = document.getElementById('deleteModal');
+            if (event.target === deleteModal) {
+                closeDeleteModal();
+            }
+            const exportsModal = document.getElementById('exportsModal');
+            if (event.target === exportsModal) {
+                closeExportsModal();
+            }
+            const uploadModal = document.getElementById('uploadModal');
+            if (event.target === uploadModal) {
+                closeUploadModal();
+            }
+        }
+
+        // Allow Enter key to confirm deletion if confirmation is valid
+        document.addEventListener('DOMContentLoaded', function() {
+            const confirmationInput = document.getElementById('deleteConfirmationInput');
+            if (confirmationInput) {
+                confirmationInput.addEventListener('keypress', function(event) {
+                    if (event.key === 'Enter') {
+                        const confirmBtn = document.getElementById('confirmDeleteBtn');
+                        if (!confirmBtn.disabled) {
+                            confirmDeleteExperiment();
+                        }
+                    }
+                });
+            }
+        });
+    </script>
 </body>
 </html>

@@ -1,286 +1,390 @@
-# Standalone Export Implementation Notes
+# System Architecture & Performance Notes
 
 ## Overview
 
-This document explains the implementation of standalone exports that work with Ray actors and MongoDB. The standalone export creates a self-contained FastAPI application that can run independently of the main platform.
+This document tracks architecture decisions, performance characteristics, scalability considerations, and optimization opportunities for the g.nome platform.
 
-## Upload Compatibility
+## Architecture Components
 
-**Important**: If you want to iterate on an exported experiment and upload it back, see [UPLOAD_COMPATIBILITY.md](./UPLOAD_COMPATIBILITY.md) for details.
+### Core Stack
 
-**Quick Answer**: Use the `/api/package-upload-ready/{slug_id}` endpoint for iterative development workflow instead of standalone export. The upload-ready export is specifically formatted for upload and doesn't include platform files.
+- **Framework**: FastAPI (async web framework)
+- **Database**: MongoDB via Motor (async driver)
+- **Distributed Computing**: Ray (for actor-based isolation)
+- **Authentication**: JWT tokens in HTTP-only cookies
+- **Authorization**: Casbin (RBAC via pluggable provider)
+- **Storage**: Backblaze B2 (optional, for exports)
+- **Rate Limiting**: slowapi (in-memory, per-IP)
 
-## Key Components
+### Request Flow
 
-### 1. Template System
+1. **Request ID Generation** (RequestIDMiddleware) → First middleware
+2. **Proxy Detection** (ProxyAwareHTTPSMiddleware) → Corrects URL scheme/host
+3. **Experiment Scoping** (ExperimentScopeMiddleware) → Sets slug_id from path
+4. **HTTPS Enforcement** (HTTPSEnforcementMiddleware) → HSTS, mixed content protection
+5. **Route Handler** → Business logic execution
+6. **Response Compression** (GZipMiddleware) → Last middleware, compresses >1KB
 
-- **Template File**: `templates/standalone_main_intelligent.py.jinja2`
-- **Purpose**: Generates the `standalone_main.py` file for exported experiments
-- **Features**:
-  - Real Ray integration (not stubs)
-  - Real MongoDB integration using database abstractions
-  - Automatic actor creation and management
-  - Experiment route injection and dependency patching
+### Database Architecture
 
-### 2. Ray Actor Integration
+**MongoDB Connection Pooling**:
+- Main pool: 10-50 connections (configurable via `MONGO_MAIN_MIN_POOL_SIZE`, `MONGO_MAIN_MAX_POOL_SIZE`)
+- Per-experiment scoped wrappers share main pool
+- Connection pool is global, but database access is scoped per experiment
 
-#### Actor Initialization
-- Ray is initialized at **module level** (before FastAPI app creation)
-- Ray warning suppressed: `RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0`
-- Actor is created in the FastAPI `lifespan` manager during app startup
-- Actor handle is stored in `app.state.actor_handle`
-- Actor is created with `lifetime="detached"` for persistence
+**Experiment Scoping**:
+- Uses `ScopedMongoWrapper` to automatically prefix collection names
+- Read scopes: `[slug]` or `[slug, "shared"]`
+- Write scope: `slug` (single write scope)
+- Prevents cross-experiment data leakage
 
-#### Actor Handle Injection
-The standalone template **injects** a custom `get_actor_handle` function that:
-1. Checks if Ray is available (`app.state.ray_is_available`)
-2. Returns the actor handle from `app.state.actor_handle` (primary)
-3. Falls back to `ray.get_actor()` by name if not in app.state
-4. Works as both sync function (direct calls) and FastAPI dependency
+**Indexing**:
+- Core indexes: `users.email` (unique), `experiments_config.slug` (unique)
+- Export logs: `slug_id`, `created_at`, `checksum` (compound: `checksum + invalidated`)
+- Per-experiment indexes managed via `AsyncAtlasIndexManager`
 
-**Critical Implementation Details**:
-- Function injection happens **BEFORE** the experiment module is imported
-- Module is loaded using `importlib.util` to control execution
-- `get_actor_handle` is replaced in the module **before** decorators run
-- This ensures FastAPI `Depends()` captures the injected version
+### Ray Integration
 
-### 3. Route Mounting and Redirect
+**Ray Initialization**:
+- **Local mode**: Starts Ray cluster inside container (2 CPUs, 2GB object store)
+- **Cluster mode**: Connects to external Ray cluster via `RAY_ADDRESS`
+- Namespace: `"modular_labs"` (isolates actors from other applications)
 
-**Important**: The root route `/` redirects to `/experiments/{slug}/` to ensure:
-- The experiment route handler is called (which calls the actor)
-- The actor response is properly passed to the template
-- Without redirect, root route would render template without actor call
+**Actor Lifecycle**:
+- Actors use `lifetime="detached"` for persistence
+- `max_restarts=-1` (unlimited restarts)
+- Actors are created during app startup, not on-demand
+- Actor handles stored in `app.state.actor_handle`
 
-**Implementation**:
-```python
-@app.get("/", response_class=HTMLResponse)
-async def standalone_index(request: Request):
-    experiment_router_prefix = f"/experiments/{SLUG}"
-    return RedirectResponse(url=experiment_router_prefix, status_code=status.HTTP_302_FOUND)
-```
+**Actor Runtime Environment**:
+- Working directory: Platform root directory
+- B2 credentials passed via `runtime_env` if B2 enabled
+- Experiment-specific dependencies can be passed per actor (via `runtime_env`)
 
-### 4. Database Abstraction
+### Security Architecture
 
-The standalone export uses the **database abstraction layer**:
-- `ScopedMongoWrapper`: Automatic experiment scoping
-- `ExperimentDB`: MongoDB-style API with automatic scoping
-- `AsyncAtlasIndexManager`: Index management (vector search, Lucene, standard)
-- `get_shared_mongo_client`: Connection pooling
+**Authentication**:
+- JWT tokens stored in HTTP-only cookies (prevents XSS token theft)
+- Cookie `samesite="lax"` (allows GET from external sites, blocks POST)
+- Cookie `secure` flag: Enabled in production, conditional in development
+- Token expiration: 1 day (24 hours)
 
-**Key Files Included in Export**:
-- `async_mongo_wrapper.py`
-- `mongo_connection_pool.py`
-- `experiment_db.py`
+**Authorization**:
+- Casbin RBAC model (policy file: `casbin_model.conf`)
+- Authorization cache: 5-minute TTL, max 1000 entries (FIFO eviction)
+- Cache prevents blocking event loop on repeated checks
+- Policies checked per-request via `require_admin` dependency
 
-**Usage in Routes**:
-```python
-async def get_experiment_db_standalone(request: Request) -> ExperimentDB:
-    # Returns ExperimentDB instance with automatic scoping
-    return ExperimentDB(scoped_db)
-```
+**Rate Limiting**:
+- In-memory storage (doesn't persist across restarts)
+- Per-IP address (uses `get_remote_address`)
+- Limits:
+  - Login POST: 5/minute
+  - Login GET: 20/minute
+  - Register POST: 3/minute
+  - Export: 10/minute per slug
+  - File download: 30/minute
 
-### 5. Module Injection and Patching
+**File Upload Security**:
+- Max upload size: 100MB (configurable via `MAX_UPLOAD_SIZE_MB`)
+- ZIP Slip protection: Path traversal validation
+- Platform file filtering: Automatically filters platform files during extraction
+- Security checks: Validates paths, prevents absolute paths, checks for `..`
 
-The template uses advanced Python module manipulation:
+## Performance Characteristics
 
-1. **Pre-injection**: Sets `get_actor_handle` in module **before** execution
-2. **Module Execution**: Loads module using `importlib.util`
-3. **Post-injection**: Replaces `get_actor_handle` **after** execution (in case module redefined it)
-4. **Dependency Patching**: Patches FastAPI route dependencies to use injected function
+### Request Processing
 
-**Why This Is Necessary**:
-- Python decorators evaluate their arguments at decoration time
-- `@bp.get("/", Depends(get_actor_handle))` captures the function reference immediately
-- We must inject our version **before** the decorator runs
+**Synchronous Operations**:
+- File I/O (ZIP extraction, file writes): Uses `asyncio.to_thread()` to prevent blocking
+- Ray actor calls: `.remote()` calls are async, but actor methods may block
+- Authorization checks: Casbin `enforce()` runs in thread pool (prevents GIL blocking)
 
-## Common Issues and Solutions
+**Async Operations**:
+- MongoDB queries: Fully async via Motor
+- HTTP requests: Async via httpx/aiohttp (in experiments)
+- File reads: Uses `aiofiles` if available, falls back to `asyncio.to_thread()`
 
-### Issue: Actor Not Responding
+**Bottlenecks**:
+1. **Ray Actor Initialization**: Actors start during app startup (slows startup)
+2. **Authorization Cache Misses**: Casbin `enforce()` blocks event loop on cache miss
+3. **File I/O**: Large ZIP uploads/extractions can block even with `to_thread()`
+4. **MongoDB Connection Pool Exhaustion**: High concurrency can exhaust pool
 
-**Symptoms**:
-- Route returns 200 OK but no actor response
-- No logs from actor method calls
+### Scalability Considerations
 
-**Root Cause**:
-- Root route `/` was serving template directly without calling actor
-- Experiment route mounted at `/experiments/{slug}/` wasn't being hit
+**Horizontal Scaling**:
+- ✅ **Stateless**: Application is stateless (JWT in cookies, no server-side sessions)
+- ✅ **Database**: MongoDB supports horizontal scaling (sharding, replica sets)
+- ⚠️ **Rate Limiting**: In-memory rate limiting doesn't work across instances
+- ⚠️ **Ray Cluster**: Requires shared Ray cluster for actor coordination
 
-**Solution**:
-- Root route now redirects to `/experiments/{slug}/`
-- This ensures experiment route handler (which calls actor) is executed
+**Vertical Scaling**:
+- **Connection Pool**: Increase `MONGO_MAIN_MAX_POOL_SIZE` for more DB connections
+- **Ray Resources**: Increase CPU/memory for Ray actors (local mode)
+- **File Upload**: Increase `MAX_UPLOAD_SIZE_MB` if needed
 
-### Issue: Ray Warning Messages
+**Scaling Limitations**:
+- **Rate Limiting**: In-memory only (per-instance), doesn't aggregate across instances
+- **Authorization Cache**: Per-instance cache (no shared cache)
+- **File Uploads**: Large uploads stored in B2 or local disk (not distributed)
+- **Ray Actors**: Actor handles are instance-specific (won't work across instances)
 
-**Symptoms**:
-- Ray warning: `RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO`
+### Resource Usage
 
-**Solution**:
-```python
-os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "0")
-```
-Set this **before** Ray initialization.
+**Memory**:
+- **Authorization Cache**: Max 1000 entries (minimal memory)
+- **Rate Limiter**: Per-IP tracking (grows with unique IPs)
+- **MongoDB Connection Pool**: ~1MB per connection (50 connections = ~50MB)
+- **Ray Object Store**: 2GB in local mode (configurable)
 
-### Issue: Actor Handle Not Found
+**CPU**:
+- **FastAPI Event Loop**: Single-threaded (async I/O)
+- **Ray Actors**: Run in separate processes (bypasses GIL)
+- **Thread Pool**: Used for blocking operations (file I/O, Casbin)
 
-**Symptoms**:
-- `get_actor_handle` fails to find actor
-- HTTP 503 or 500 errors
+**Disk**:
+- **Temporary Exports**: `temp_exports/` directory (B2 disabled)
+- **Experiment Code**: `experiments/{slug}/` directories
+- **Logs**: Application logs (if file-based logging configured)
 
-**Checklist**:
-1. Verify Ray is initialized (`ray.is_initialized()`)
-2. Check `app.state.ray_is_available = True` is set in lifespan
-3. Verify actor is created and stored in `app.state.actor_handle`
-4. Ensure actor name matches: `{slug}-actor`
-5. Ensure namespace matches: `"modular_labs"`
+## Optimization Opportunities
 
-### Issue: Function Injection Not Working
+### High Priority
 
-**Symptoms**:
-- Original `get_actor_handle` from experiment module is called
-- Not seeing logs from injected function
+1. **Distributed Rate Limiting**:
+   - Replace in-memory rate limiter with Redis-based limiter
+   - Enables rate limiting across multiple instances
+   - Use `slowapi` with Redis backend or custom Redis implementation
 
-**Solution**:
-1. Ensure injection happens **before** module import
-2. Verify `get_actor_handle` is replaced in `sys.modules`
-3. Check that FastAPI route dependencies are patched
-4. Add logging to injected function to verify it's being called
+2. **Authorization Cache Sharing**:
+   - Move authorization cache to Redis
+   - Reduces cache misses across instances
+   - Consistent authorization checks across instances
 
-## Export Process
+3. **Ray Actor Health Checks**:
+   - Implement periodic health checks for actors
+   - Auto-restart failed actors
+   - Track actor availability metrics
 
-### Files Included in Standalone Export
+4. **Connection Pool Monitoring**:
+   - Add metrics for pool usage (active/idle connections)
+   - Alert on pool exhaustion
+   - Dynamic pool sizing based on load
 
-1. **Python Modules**:
-   - `standalone_main.py` (generated from template)
-   - `experiments/{slug}/` (experiment code)
-   - `async_mongo_wrapper.py`
-   - `mongo_connection_pool.py`
-   - `experiment_db.py`
+### Medium Priority
 
-2. **Data Files**:
-   - `db_config.json` (experiment configuration)
-   - `db_collections.json` (database collections snapshot)
+5. **Async File Operations**:
+   - Replace `asyncio.to_thread()` with truly async file I/O where possible
+   - Use `aiofiles` for all file operations (ensure it's installed)
 
-3. **Configuration**:
-   - `requirements.txt` (includes Ray and MongoDB dependencies)
-   - `README.md` (setup instructions)
+6. **ZIP Streaming**:
+   - Stream ZIP extraction instead of loading entire ZIP into memory
+   - Reduces memory usage for large uploads
+   - Use `zipfile` with file handles instead of `BytesIO`
 
-### Dependencies Required
+7. **Response Caching**:
+   - Add HTTP caching headers for static assets
+   - Cache experiment templates/static files
+   - Use ETag/Last-Modified for conditional requests
 
-**Base Requirements** (always included):
-- `fastapi`
-- `uvicorn[standard]`
-- `motor>=3.0.0`
-- `pymongo==4.15.3`
-- `ray[default]>=2.9.0` (Ray is required for actors)
-- `jinja2`
-- `python-multipart`
+8. **Database Query Optimization**:
+   - Add query performance logging
+   - Identify slow queries via MongoDB profiling
+   - Optimize indexes based on query patterns
 
-## Usage Example
+### Low Priority
 
-### Running the Exported Experiment
+9. **Background Task Queue**:
+   - Move long-running tasks to background queue (Celery, RQ, etc.)
+   - Export generation, actor initialization, etc.
+   - Improves request response times
 
-1. **Extract the export ZIP**
-2. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. **Set environment variables** (if needed):
-   ```bash
-   export MONGO_URI=mongodb://localhost:27017/
-   export DB_NAME=labs_db
-   ```
-4. **Run the application**:
-   ```bash
-   python standalone_main.py
-   ```
-5. **Access the experiment**:
-   - Root: `http://localhost:8000/` (redirects to experiment route)
-   - Experiment: `http://localhost:8000/experiments/{slug}/`
-   - API Docs: `http://localhost:8000/docs`
+10. **Compression**:
+    - Already using GZip for responses >1KB
+    - Consider Brotli compression for better ratios
+    - Pre-compress static assets
 
-## Technical Details
+11. **CDN Integration**:
+    - Serve static assets via CDN
+    - Cache experiment static files in CDN
+    - Reduce server load
 
-### Ray Initialization Flow
+## Monitoring & Observability
 
-1. **Module Level** (before app creation):
-   ```python
-   os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "0")
-   ray.init(namespace="modular_labs", ...)
-   ```
+### Logging
 
-2. **Lifespan Manager** (during app startup):
-   ```python
-   actor_handle = ExperimentActor.options(...).remote(...)
-   app.state.actor_handle = actor_handle
-   app.state.ray_is_available = True
-   ```
+**Request ID Tracking**:
+- Every request gets unique ID via `RequestIDMiddleware`
+- Request ID propagated via contextvars
+- Logs include request ID for tracing
 
-3. **Route Handler** (when route is called):
-   ```python
-   actor = get_standalone_actor_handle(request)  # Injected function
-   greeting = await actor.say_hello.remote()
-   ```
+**Log Levels**:
+- `DEBUG`: Detailed debugging information
+- `INFO`: General application flow
+- `WARNING`: Non-critical issues (default admin password, etc.)
+- `ERROR`: Errors with full traceback
+- `CRITICAL`: Critical failures (MongoDB connection timeout, etc.)
 
-### Module Injection Flow
+**Structured Logging**:
+- Format: `%(asctime)s | [%(request_id)s] | %(name)s | %(levelname)-8s | %(message)s`
+- Request ID filter applied to all loggers
+- Safe formatter handles missing request IDs
 
-1. **Before Module Load**:
-   ```python
-   exp_mod.get_actor_handle = get_standalone_actor_handle
-   sys.modules[mod_name] = exp_mod
-   ```
+### Metrics to Track
 
-2. **Module Execution**:
-   ```python
-   spec.loader.exec_module(exp_mod)  # Decorators run here
-   ```
+**Application Metrics**:
+- Request rate (requests/second)
+- Request latency (p50, p95, p99)
+- Error rate (4xx, 5xx responses)
+- Rate limit hits (429 responses)
 
-3. **After Module Load**:
-   ```python
-   exp_mod.get_actor_handle = get_standalone_actor_handle  # Replace again
-   # Patch FastAPI route dependencies
-   ```
+**Database Metrics**:
+- Connection pool usage (active/idle)
+- Query latency (p50, p95, p99)
+- Slow query count (>100ms)
+- Index usage statistics
 
-### Database Initialization Flow
+**Ray Metrics**:
+- Actor count (total, active)
+- Actor initialization time
+- Actor method call latency
+- Ray cluster resources (CPU, memory)
 
-1. **Connection**:
-   ```python
-   _shared_mongo_client = get_shared_mongo_client(MONGO_URI, ...)
-   _scoped_db = ScopedMongoWrapper(real_db, read_scopes=[SLUG], write_scope=SLUG)
-   ```
+**Resource Metrics**:
+- CPU usage
+- Memory usage (RSS, heap)
+- Disk usage (`temp_exports/`, `experiments/`)
+- Network I/O (for B2 uploads)
 
-2. **Seeding**:
-   ```python
-   db = ExperimentDB(_scoped_db)
-   await collection.insert_many(docs)
-   ```
+### Health Checks
 
-3. **Index Management**:
-   ```python
-   index_manager = AsyncAtlasIndexManager(real_db[collection_name])
-   await index_manager.ensure_indexes(index_definitions)
-   ```
+**Endpoints**:
+- `/health`: Basic health check (MongoDB connectivity)
+- `/health/detailed`: Full health check (MongoDB, Ray, B2, disk space)
+- Experiment-specific health checks: `/experiments/{slug}/health`
 
-## Best Practices
+**Health Check Components**:
+- MongoDB: Ping database connection
+- Ray: Check `ray.is_initialized()`
+- B2: Check B2 API connectivity (if enabled)
+- Disk: Check available disk space
 
-1. **Always use database abstractions**: Use `ExperimentDB` instead of direct Motor/MongoDB access
-2. **Test actor calls**: Ensure actor methods are actually being called (add logging)
-3. **Verify injection**: Check logs to confirm injected functions are being used
-4. **Route paths**: Remember routes are mounted at `/experiments/{slug}/` not root
-5. **Actor initialization**: Actors are created during app startup, not on first request
+## Database Schema
 
-## Debugging Tips
+### Collections
 
-1. **Enable verbose logging**: Set `LOG_LEVEL=DEBUG` in environment
-2. **Check actor accessibility**: Use `ray.get_actor(name, namespace)` directly
-3. **Verify route mounting**: Check `app.include_router()` calls
-4. **Inspect app.state**: Log `app.state` to see what's stored
-5. **Test actor directly**: Call actor methods from Python REPL
+**`users`**:
+- `_id`: ObjectID
+- `email`: String (unique index)
+- `password_hash`: Binary (bcrypt hash)
+- `is_admin`: Boolean
+- `created_at`: DateTime
+
+**`experiments_config`**:
+- `_id`: ObjectID
+- `slug`: String (unique index)
+- `name`: String
+- `description`: String
+- `manifest`: Dict (experiment manifest.json)
+- `runtime_s3_uri`: String (B2 presigned URL for Ray)
+- `created_at`: DateTime
+- `updated_at`: DateTime
+
+**`export_logs`**:
+- `_id`: ObjectID
+- `slug_id`: String (indexed)
+- `export_type`: String (standalone, upload-ready, docker)
+- `user_email`: String
+- `file_size`: Integer
+- `checksum`: String (SHA256, indexed)
+- `b2_filename`: String (if B2 enabled)
+- `created_at`: DateTime (indexed)
+- `invalidated`: Boolean (compound index with checksum)
+
+**Per-Experiment Collections** (prefixed with `{slug}_`):
+- Dynamically created by experiments
+- Scoped via `ScopedMongoWrapper`
+- Indexes managed per experiment
+
+## Deployment Considerations
+
+### Environment Variables
+
+**Required**:
+- `MONGO_URI`: MongoDB connection string
+- `FLASK_SECRET_KEY`: JWT signing secret (⚠️ CHANGE FROM DEFAULT)
+
+**Optional**:
+- `G_NOME_ENV`: `production` or `development` (affects HTTPS enforcement)
+- `ENABLE_REGISTRATION`: `true`/`false` (enable user registration)
+- `ADMIN_EMAIL`: Default admin email (default: `admin@example.com`)
+- `ADMIN_PASSWORD`: Default admin password (default: `password123` ⚠️)
+- `LOG_LEVEL`: Logging level (default: `INFO`)
+- `MAX_UPLOAD_SIZE_MB`: Max upload size in MB (default: 100)
+
+**B2 Configuration**:
+- `B2_APPLICATION_KEY_ID` or `B2_ACCESS_KEY_ID`
+- `B2_APPLICATION_KEY` or `B2_SECRET_ACCESS_KEY`
+- `B2_BUCKET_NAME`
+- `B2_ENDPOINT_URL` (optional, legacy)
+
+**Ray Configuration**:
+- `RAY_ADDRESS`: Ray cluster address (if connecting to external cluster)
+- If not set, starts local Ray cluster
+
+**MongoDB Pool Configuration**:
+- `MONGO_MAIN_MIN_POOL_SIZE`: Minimum pool size (default: 10)
+- `MONGO_MAIN_MAX_POOL_SIZE`: Maximum pool size (default: 50)
+
+### Production Checklist
+
+- [ ] Change `FLASK_SECRET_KEY` from default value
+- [ ] Change `ADMIN_PASSWORD` from default value
+- [ ] Set `G_NOME_ENV=production`
+- [ ] Configure B2 credentials (if using B2)
+- [ ] Set up MongoDB replica set (if high availability needed)
+- [ ] Configure Ray cluster (if using distributed Ray)
+- [ ] Set up monitoring/alerting
+- [ ] Configure log aggregation
+- [ ] Set up backups (MongoDB, B2)
+- [ ] Enable HTTPS/TLS termination
+- [ ] Configure firewall/security groups
+- [ ] Set up rate limiting (Redis-based if multiple instances)
+- [ ] Test disaster recovery procedures
+
+## Known Limitations
+
+1. **Rate Limiting**: In-memory only, doesn't work across multiple instances
+2. **Authorization Cache**: Per-instance, not shared across instances
+3. **Ray Actors**: Instance-specific handles (can't share actors across instances)
+4. **File Uploads**: Single-instance processing (no distributed upload handling)
+5. **MongoDB Connection Pool**: Fixed size (doesn't auto-scale)
+6. **Default Credentials**: Default admin password (`password123`) if not changed
+
+## Performance Benchmarks
+
+**Target Metrics** (to be measured):
+- Request latency: <100ms (p95) for simple routes
+- Database query latency: <50ms (p95) for indexed queries
+- Ray actor initialization: <5s for standard actors
+- ZIP upload/extraction: <10s for 10MB ZIP
+- Export generation: <30s for 100MB export
+
+**Load Testing**:
+- Recommended tool: `locust`, `k6`, or `wrk`
+- Test endpoints: `/auth/login`, `/admin/api/upload-experiment`, `/api/package-standalone/{slug}`
+- Monitor: Request latency, error rate, resource usage
 
 ## Future Improvements
 
-- [ ] Add actor health check endpoint
-- [ ] Support multiple actors per experiment
-- [ ] Add graceful actor shutdown
-- [ ] Support Ray cluster connection (not just local)
-- [ ] Add actor metrics/monitoring
-
+1. **Distributed Rate Limiting**: Redis-based rate limiter
+2. **Shared Authorization Cache**: Redis cache for authz results
+3. **Actor Health Monitoring**: Periodic health checks, auto-restart
+4. **Connection Pool Auto-Scaling**: Dynamic pool sizing based on load
+5. **ZIP Streaming**: Stream large ZIP uploads instead of loading into memory
+6. **Background Task Queue**: Move long-running tasks to background queue
+7. **CDN Integration**: Serve static assets via CDN
+8. **Query Performance Monitoring**: Track slow queries, optimize indexes
+9. **Distributed Tracing**: OpenTelemetry integration for request tracing
+10. **Metrics Export**: Prometheus metrics endpoint

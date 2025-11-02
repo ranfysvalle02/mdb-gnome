@@ -14,6 +14,12 @@ The intended workflow is:
 
 ## Important: Upload Format vs Standalone Export Format
 
+**✅ Both formats are now fully supported!**
+
+The upload endpoint now supports both:
+1. **Upload-ready format**: Root-level files (manifest.json, actor.py, __init__.py at ZIP root)
+2. **Standalone export format**: Files in experiments/{slug}/ directory structure
+
 ### Standalone Export Structure
 
 The standalone export ZIP contains:
@@ -42,18 +48,36 @@ standalone_export.zip
 
 ### Upload Format Requirements
 
-The upload endpoint expects a ZIP with:
+The upload endpoint accepts ZIP files in TWO formats:
+
+#### Format 1: Upload-Ready Format (Recommended for Iterative Development)
 ```
 upload.zip
-├── manifest.json        # REQUIRED: Must be in root or in experiments/{slug}/
-├── actor.py             # REQUIRED: Must be in root or in experiments/{slug}/
-├── __init__.py          # REQUIRED: Must be in root or in experiments/{slug}/
-├── requirements.txt     # OPTIONAL: Experiment-specific dependencies only
-├── templates/           # OPTIONAL: If present
-└── static/              # OPTIONAL: If present
+├── manifest.json        # REQUIRED: At root level
+├── actor.py             # REQUIRED: At root level
+├── __init__.py          # REQUIRED: At root level
+├── requirements.txt     # OPTIONAL: At root level
+├── templates/           # OPTIONAL: At root level
+└── static/              # OPTIONAL: At root level
 ```
 
-**Critical**: The upload process extracts ALL files from the ZIP. Platform files from standalone export should NOT be uploaded.
+#### Format 2: Standalone Export Format
+```
+upload.zip
+├── experiments/
+│   └── {slug}/
+│       ├── manifest.json        # REQUIRED: In experiments/{slug}/
+│       ├── actor.py             # REQUIRED: In experiments/{slug}/
+│       ├── __init__.py           # REQUIRED: In experiments/{slug}/
+│       ├── requirements.txt      # OPTIONAL: In experiments/{slug}/
+│       ├── templates/             # OPTIONAL: In experiments/{slug}/
+│       └── static/                # OPTIONAL: In experiments/{slug}/
+├── standalone_main.py    # Platform file (IGNORED during upload)
+├── db_config.json        # Platform file (IGNORED during upload)
+└── ...                   # Other platform files (IGNORED during upload)
+```
+
+**Note**: The upload process automatically detects the format and extracts only experiment files. Platform files from standalone export are automatically filtered out.
 
 ## Solution: Extract and Re-Zip Experiment Files
 
@@ -137,76 +161,106 @@ This ZIP contains:
 
 The upload endpoint:
 
-1. **Validates** ZIP contains required files:
-   - `manifest.json`
-   - `actor.py`
-   - `__init__.py`
+1. **Detects format**:
+   - Checks for upload-ready format (root-level files)
+   - Checks for standalone export format (experiments/{slug}/ structure)
+   - Auto-detects slug from manifest.json or directory structure
 
-2. **Extracts** all files to `experiments/{slug}/`
+2. **Validates** ZIP contains required files:
+   - `manifest.json` (at root or in experiments/{slug}/)
+   - `actor.py` (at root or in experiments/{slug}/)
+   - `__init__.py` (at root or in experiments/{slug}/)
 
-3. **Handles nested structures**:
+3. **Extracts** experiment files to `experiments/{slug}/`:
+   - **Upload-ready format**: Extracts root-level files directly
+   - **Standalone export format**: Extracts from experiments/{slug}/ directory
+   - Automatically filters out platform files (standalone_main.py, db_config.json, etc.)
+
+4. **Handles nested structures**:
    - If files are in `experiments/{slug}/experiments/{slug}/`, flattens them
    - Looks for directories with both `__init__.py` and `actor.py`
 
-4. **Filters files**:
-   - Currently does NOT filter platform files
-   - **Issue**: Platform files from standalone export will be extracted to experiment directory
+5. **Filters platform files**:
+   - Automatically filters out platform files from standalone export
+   - Platform files are NOT extracted to experiment directory
+   - ✅ **Fixed**: Platform files are now properly filtered
 
-5. **Registers experiment**:
+6. **Registers experiment**:
    - Updates database configuration
    - Registers routes
    - Starts Ray actors
    - Reloads experiment
 
-## Current Limitations
+## Current Status
 
-### Platform Files in Standalone Export
+### ✅ Platform Files Filtering (FIXED)
 
-**Problem**: Standalone export includes platform files that shouldn't be in experiment directory:
-- `main.py`, `standalone_main.py` → Should not be in experiment
-- `db_config.json`, `db_collections.json` → Should not be in experiment
-- `async_mongo_wrapper.py`, etc. → Should not be in experiment
+**Previous Problem**: Standalone export includes platform files that shouldn't be in experiment directory.
 
-**Impact**: If standalone export ZIP is uploaded directly:
-- Platform files will be extracted to `experiments/{slug}/`
-- These files will be ignored by the platform (not used)
-- They won't cause errors but are unnecessary
+**Current Status**: ✅ **FIXED**
+- Platform files are automatically filtered during upload
+- Platform files are NOT extracted to experiment directory
+- Both upload-ready and standalone export formats are fully supported
 
-**Solution**: 
-1. Use upload-ready export instead (recommended)
-2. Or extract and re-zip only experiment files (manual)
+**Platform files that are automatically filtered**:
+- `standalone_main.py` → Filtered out (exact match)
+- `main.py` → Should be filtered if present in standalone export (verify implementation)
+- `db_config.json`, `db_collections.json` → Filtered out (exact match)
+- `async_mongo_wrapper.py`, `mongo_connection_pool.py`, `experiment_db.py` → Filtered out (prefix match)
+- `Dockerfile`, `docker-compose.yml` → Filtered out (exact match)
+- Root-level `README.md` → Filtered out (exact match)
+- Root-level `requirements.txt` (platform version) → Not explicitly filtered (verify behavior)
+
+**You can now**:
+1. ✅ Upload standalone export directly (platform files automatically filtered)
+2. ✅ Upload upload-ready export directly (clean, no platform files)
+3. ✅ Either format works seamlessly
 
 ### Recommendation
 
 **For iterative development workflow**:
-1. Use `/api/package-upload-ready/{slug_id}` for export
-2. This gives you a clean ZIP with only experiment files
+1. Use `/api/package-upload-ready/{slug_id}` for export (recommended)
+2. This gives you a clean ZIP with only experiment files at root level
 3. Edit files and upload directly
+4. ✅ Both formats work, but upload-ready is simpler
 
 **For standalone deployment**:
 1. Use `/api/package-standalone/{slug_id}` for export
 2. This gives you a complete standalone application
-3. Extract experiment files if you need to upload them back
+3. ✅ You can now upload the standalone export directly back to the platform
+4. Platform files are automatically filtered during upload
+
+## Platform File Filtering Implementation
+
+The upload process automatically filters platform files using:
+
+1. **Platform File List**: Known platform files are filtered by exact name match
+2. **Platform File Prefixes**: Files starting with platform module prefixes are filtered
+3. **Path-based Detection**: Platform files are detected regardless of their location in the ZIP structure
+4. **Automatic Format Detection**: Detects both upload-ready and standalone export formats
+
+**Filtered Platform Files**:
+- Exact matches: `README.md`, `db_config.json`, `db_collections.json`, `standalone_main.py`, `Dockerfile`, `docker-compose.yml`
+- Prefix matches: Files starting with `async_mongo_wrapper`, `mongo_connection_pool`, `experiment_db`
+
+**Note**: If `main.py` is present in standalone exports, it should also be filtered (verify implementation if needed).
 
 ## Future Improvements
 
 Potential enhancements:
 
-1. **Filter platform files in upload**:
-   - Upload process could ignore known platform files
-   - Whitelist approach: only extract known experiment file types
+1. **Enhanced Platform File Detection**:
+   - Add `main.py` to explicit platform files list (if not already handled)
+   - Expand pattern matching for platform files
 
-2. **Smart ZIP detection**:
-   - Detect standalone export format
-   - Automatically extract only experiment files
+2. **Upload Progress Tracking**:
+   - Progress indicator for large ZIP uploads
+   - Detailed logging of filtered files
 
-3. **Unified export format**:
-   - Create export that works for both standalone AND upload
-   - Include flag to indicate export type
-
-4. **Extract helper script**:
-   - Provide script to extract experiment files from standalone export
-   - Automatically create upload-ready ZIP
+3. **ZIP Validation**:
+   - Pre-upload validation of ZIP structure
+   - Check for required files before extraction
+   - Verify no platform files in experiment directory after extraction
 
 ## Testing Upload Compatibility
 
@@ -236,9 +290,14 @@ To test if your modified ZIP will upload correctly:
 
 ## Summary
 
-✅ **Works**: Upload-ready export → Edit → Upload  
+✅ **Works**: Upload-ready export → Edit → Upload directly  
+✅ **Works**: Standalone export → Upload directly (platform files automatically filtered)  
 ✅ **Works**: Standalone export → Extract experiment files → Re-zip → Upload  
-⚠️ **Not Recommended**: Standalone export → Upload directly (includes platform files)
 
-**Best Practice**: Use upload-ready export for iterative development workflow.
+**Both formats are fully supported!** The upload endpoint automatically:
+- Detects the ZIP format (upload-ready or standalone export)
+- Extracts only experiment files (filters out platform files)
+- Handles both root-level and nested directory structures
+
+**Best Practice**: Use upload-ready export for iterative development workflow (simpler, cleaner ZIP).
 

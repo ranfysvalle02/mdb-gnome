@@ -134,10 +134,11 @@ The upload process handles re-importing modified exports back into the platform.
    - Creates fresh directory
 
 5. **File Extraction**
-   - Extracts all files from ZIP to `experiments/{slug}/`
+   - Extracts experiment files from ZIP to `experiments/{slug}/`
    - Handles nested structures:
      - Flattens `experiments/{slug}/experiments/{slug}/` → `experiments/{slug}/`
-   - **Important**: Currently extracts ALL files (does not filter platform files)
+   - **Automatically filters out platform files** (standalone_main.py, db_config.json, etc.)
+   - Platform files are NOT extracted to experiment directory
 
 6. **B2 Storage** (if configured)
    - Uploads ZIP to B2 as `{slug}/runtime-{timestamp}.zip`
@@ -159,22 +160,24 @@ The upload process handles re-importing modified exports back into the platform.
 
 ## Best Practices for Re-Import
 
-### ⚠️ Critical: Platform Files vs Experiment Files
+### ✅ Platform Files Filtering (Automatically Handled)
 
-**Problem**: Standalone export includes platform files that should NOT be in the experiment directory.
+**Status**: Platform files are automatically filtered during upload - you don't need to worry about them!
 
-**Platform Files** (DO NOT UPLOAD):
+The upload process automatically filters out platform files that should NOT be in the experiment directory. These files are NOT extracted to the experiment directory, even if present in the ZIP.
+
+**Platform Files** (Automatically Filtered):
 - `standalone_main.py`, `main.py`
 - `db_config.json`, `db_collections.json`
 - `async_mongo_wrapper.py`, `mongo_connection_pool.py`, `experiment_db.py`
 - `Dockerfile`, `docker-compose.yml`
-- Root-level `requirements.txt`, `README.md`
+- Root-level `README.md`
 
-**Experiment Files** (UPLOAD THESE):
+**Experiment Files** (Uploaded Successfully):
 - `manifest.json`
 - `actor.py`
 - `__init__.py`
-- `requirements.txt` (experiment-specific only)
+- `requirements.txt` (experiment-specific)
 - `templates/`
 - `static/`
 
@@ -205,9 +208,29 @@ The upload process handles re-importing modified exports back into the platform.
 - Files at correct structure level
 - Optimized for iterative workflow
 
-#### Option 2: Extract from Standalone Export (Manual)
+#### Option 2: Upload Standalone Export Directly
 
-If you need to use standalone export, extract only experiment files:
+You can now upload standalone export directly without manual extraction:
+
+1. **Download Standalone Export**
+   ```bash
+   GET /api/package-standalone/{slug_id}
+   ```
+
+2. **Edit Files (Optional)**
+   - Extract ZIP if you want to edit files
+   - Modify `experiments/{slug}/actor.py`, `__init__.py`, templates, etc.
+   - Update `requirements.txt` if needed
+   - Re-zip the entire standalone export (platform files will be filtered automatically)
+
+3. **Upload**
+   - Upload standalone export ZIP directly via admin panel
+   - Platform files are automatically filtered during upload
+   - No manual extraction needed!
+
+**Alternative: Manual Extraction Workflow**
+
+If you prefer to extract and re-zip only experiment files:
 
 1. **Extract Standalone Export**
    ```bash
@@ -278,17 +301,20 @@ Before uploading a modified export, verify:
 
 ## Common Issues and Solutions
 
-### Issue 1: Platform Files in Experiment Directory
+### Issue 1: Platform Files in Experiment Directory (FIXED)
 
-**Symptom**: After upload, experiment directory contains `standalone_main.py`, `db_config.json`, etc.
+**Status**: ✅ **FIXED** - Platform files are automatically filtered during upload.
 
-**Cause**: Uploaded standalone export ZIP directly without extracting experiment files.
+**Previous Symptom**: After upload, experiment directory contained `standalone_main.py`, `db_config.json`, etc.
 
-**Solution**: 
-- Use upload-ready export for iterative development
-- Or extract only `experiments/{slug}/` files from standalone export
+**Previous Cause**: Upload process didn't filter platform files from standalone export.
 
-**Prevention**: Always verify ZIP contents before upload.
+**Current Solution**: 
+- ✅ Platform files are automatically filtered during upload
+- ✅ You can upload standalone export directly without manual extraction
+- ✅ Use upload-ready export for cleaner workflow (recommended)
+
+**Note**: Platform files are now automatically filtered, so this issue should no longer occur.
 
 ### Issue 2: Missing Required Files
 
@@ -395,10 +421,12 @@ If B2 not configured, exports stored locally in `temp_exports/` directory.
 - Clean ZIP with only experiment files
 - Ready to edit and upload directly
 - No platform file extraction needed
+- **Recommended for iterative development**
 
-❌ **DON'T**: Upload standalone export directly
-- Contains platform files that shouldn't be in experiment directory
-- Requires manual extraction
+✅ **CAN ALSO DO**: Upload standalone export directly (`/api/package-standalone/{slug_id}`)
+- Platform files are automatically filtered during upload
+- Works seamlessly, but includes extra files in ZIP
+- No manual extraction needed
 
 ### For Standalone Deployment
 
@@ -430,9 +458,10 @@ If B2 not configured, exports stored locally in `temp_exports/` directory.
 ## Summary
 
 - **Export Process**: Creates ZIP with experiment code, database snapshots, and platform files
-- **Import Process**: Extracts ZIP, validates files, registers experiment
-- **Best Practice**: Use upload-ready export for iterative development
-- **Critical**: Never upload standalone export directly (extract experiment files first)
-- **Verification**: Always check ZIP contents before upload
+- **Import Process**: Extracts ZIP, validates files, filters platform files automatically, registers experiment
+- **Best Practice**: Use upload-ready export for iterative development (cleaner, simpler)
+- **Platform Files**: Automatically filtered during upload - no manual extraction needed
+- **Both Formats Work**: Upload-ready and standalone export formats are both fully supported
+- **Verification**: Always check ZIP contents before upload (especially when editing files)
 
-Understanding the export/import process and following best practices prevents issues and enables smooth iterative development workflows.
+Understanding the export/import process and following best practices prevents issues and enables smooth iterative development workflows. Platform file filtering is now automatic, making the upload process more robust and user-friendly.

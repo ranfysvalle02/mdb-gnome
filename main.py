@@ -2180,20 +2180,6 @@ async def admin_dashboard(request: Request, user: Dict[str, Any] = Depends(requi
   db: AsyncIOMotorDatabase = request.app.state.mongo_db
   error_message: Optional[str] = None
 
-  code_slugs = set()
-  if EXPERIMENTS_DIR.is_dir():
-    try:
-      code_slugs = {
-        item.name for item in EXPERIMENTS_DIR.iterdir()
-        if item.is_dir() and not item.name.startswith(("_", "."))
-      }
-    except OSError as e:
-      error_message = f"Error reading experiments directory '{EXPERIMENTS_DIR}': {e}"
-      logger.error(error_message)
-  else:
-    error_message = f"Experiments directory missing at '{EXPERIMENTS_DIR}'"
-    logger.error(error_message)
-
   # Fetch configs and export counts in parallel (independent queries)
   async def fetch_configs():
     try:
@@ -2223,34 +2209,38 @@ async def admin_dashboard(request: Request, user: Dict[str, Any] = Depends(requi
     fetch_export_counts()
   )
 
-  db_slug_map = {cfg.get("slug"): cfg for cfg in db_configs_list if cfg.get("slug")}
+  # Check for orphaned configs (configs without code on disk)
+  code_slugs = set()
+  if EXPERIMENTS_DIR.is_dir():
+    try:
+      code_slugs = {
+        item.name for item in EXPERIMENTS_DIR.iterdir()
+        if item.is_dir() and not item.name.startswith(("_", "."))
+      }
+    except OSError as e:
+      error_message = f"Error reading experiments directory '{EXPERIMENTS_DIR}': {e}"
+      logger.error(error_message)
+
   configured_experiments: List[Dict[str, Any]] = []
-  discovered_slugs: List[str] = []
   orphaned_configs: List[Dict[str, Any]] = []
 
-  for slug in code_slugs:
-    if slug in db_slug_map:
-      cfg = db_slug_map[slug]
+  for cfg in db_configs_list:
+    slug = cfg.get("slug")
+    if slug in code_slugs:
       cfg["code_found"] = True
       cfg["export_count"] = export_counts.get(slug, 0)
       configured_experiments.append(cfg)
     else:
-      discovered_slugs.append(slug)
-
-  for cfg in db_configs_list:
-    if cfg.get("slug") not in code_slugs:
       cfg["code_found"] = False
-      cfg["export_count"] = export_counts.get(cfg.get("slug", ""), 0)
+      cfg["export_count"] = export_counts.get(slug, 0)
       orphaned_configs.append(cfg)
 
   configured_experiments.sort(key=lambda x: x.get("slug", ""))
-  discovered_slugs.sort()
   orphaned_configs.sort(key=lambda x: x.get("slug", ""))
 
   return templates.TemplateResponse("admin/index.html", {
     "request": request,
     "configured": configured_experiments,
-    "discovered": discovered_slugs,
     "orphaned": orphaned_configs,
     "message": message,
     "error_message": error_message,
@@ -2268,83 +2258,6 @@ def _get_default_manifest(slug_id: str) -> Dict[str, Any]:
     "data_scope": ["self"],
     "managed_indexes": {}
   }
-
-
-@admin_router.get("/configure/{slug_id}", response_class=HTMLResponse, name="configure_experiment_get")
-async def configure_experiment_get(request: Request, slug_id: str, user: Dict[str, Any] = Depends(require_admin)):
-  templates = get_templates_from_request(request)
-  if not templates:
-    raise HTTPException(500, "Template engine not available.")
-  experiment_path = EXPERIMENTS_DIR / slug_id
-  manifest_data: Optional[Dict[str, Any]] = None
-  manifest_content: str = ""
-
-  try:
-    # Use cached config dependency to avoid duplicate fetches
-    db_config = await get_experiment_config(request, slug_id)
-    if db_config:
-      db_config.pop("_id", None)
-      db_config.pop("runtime_s3_uri", None)
-      db_config.pop("runtime_pip_deps", None)
-      manifest_data = db_config
-      manifest_content = json.dumps(manifest_data, indent=2)
-    else:
-      logger.info(f"No manifest found in DB for '{slug_id}'. Using default template.")
-      manifest_data = _get_default_manifest(slug_id)
-      manifest_content = json.dumps(manifest_data, indent=2)
-  except Exception as e:
-    logger.error(f"Error loading manifest for '{slug_id}' from DB: {e}", exc_info=True)
-    manifest_data = {"error": f"DB load failed: {e}"}
-    manifest_content = json.dumps(manifest_data, indent=2)
-
-  file_tree = await _scan_directory(experiment_path, experiment_path)
-
-  discovery_info = {
-    "has_actor_file": False,
-    "defines_actor_class": False,
-    "has_requirements": False,
-    "requirements": [],
-    "has_static_dir": False,
-    "has_templates_dir": False,
-  }
-  if experiment_path.is_dir():
-    actor_path = experiment_path / "actor.py"
-    discovery_info["has_actor_file"] = actor_path.is_file()
-    if discovery_info["has_actor_file"]:
-      try:
-        actor_content = await _read_file_async(actor_path)
-        discovery_info["defines_actor_class"] = "class ExperimentActor" in actor_content
-      except Exception as e:
-        logger.warning(f"Could not read actor.py: {e}")
-
-    reqs_path = experiment_path / "requirements.txt"
-    discovery_info["has_requirements"] = reqs_path.is_file()
-    if discovery_info["has_requirements"]:
-      try:
-        discovery_info["requirements"] = await _parse_requirements_file(reqs_path)
-      except Exception as e:
-        logger.warning(f"Could not read requirements.txt for '{slug_id}': {e}")
-
-    discovery_info["has_static_dir"] = (experiment_path / "static").is_dir()
-    discovery_info["has_templates_dir"] = (experiment_path / "templates").is_dir()
-
-  core_info = {
-    "ray_available": getattr(request.app.state, "ray_is_available", False),
-    "environment_mode": getattr(request.app.state, "environment_mode", "unknown"),
-    "isolation_enabled": getattr(request.app.state, "environment_mode", "") == "isolated",
-    "b2_enabled": B2_ENABLED,
-    "b2_bucket": B2_BUCKET_NAME,
-  }
-
-  return templates.TemplateResponse("admin/configure.html", {
-    "request": request,
-    "slug_id": slug_id,
-    "current_user": user,
-    "manifest_content": manifest_content,
-    "discovery_info": discovery_info,
-    "file_tree": file_tree,
-    "core_info": core_info,
-  })
 
 
 @admin_router.post("/api/save-manifest/{slug_id}", response_class=JSONResponse)
@@ -2417,6 +2330,212 @@ async def reload_experiment(request: Request, slug_id: str, user: Dict[str, Any]
   except Exception as e:
     logger.error(f"Manual experiment reload failed: {e}", exc_info=True)
     raise HTTPException(500, f"Reload failed: {e}")
+
+
+@admin_router.delete("/api/delete-experiment/{slug_id}", response_class=JSONResponse)
+async def delete_experiment(
+  request: Request,
+  slug_id: str,
+  body: Dict[str, str] = Body(...),
+  user: Dict[str, Any] = Depends(require_admin)
+):
+  """
+  Destructively delete an experiment and all associated data.
+  Requires confirmation string: 'sudo rm -rf experiments/<slug>'
+  """
+  confirmation = body.get("confirmation", "")
+  expected_confirmation = f"sudo rm -rf experiments/{slug_id}"
+  
+  if confirmation != expected_confirmation:
+    raise HTTPException(
+      status_code=400,
+      detail=f"Confirmation string must be exactly: '{expected_confirmation}'"
+    )
+  
+  db: AsyncIOMotorDatabase = request.app.state.mongo_db
+  logger.info(f"[{slug_id}] Starting destructive deletion by {user.get('email', 'Unknown')}")
+  
+  cleanup_results = {
+    "ray_actor": False,
+    "routes": False,
+    "database_config": False,
+    "export_logs": False,
+    "database_collections": [],
+    "filesystem": False,
+    "b2_storage": False,
+    "errors": []
+  }
+  
+  try:
+    # 1. Kill Ray Actor
+    if RAY_AVAILABLE and getattr(request.app.state, "ray_is_available", False):
+      try:
+        import ray
+        actor_name = f"{slug_id}-actor"
+        try:
+          actor_handle = ray.get_actor(actor_name, namespace="modular_labs")
+          ray.kill(actor_handle, no_restart=True)
+          logger.info(f"[{slug_id}] ✅ Ray actor '{actor_name}' killed")
+          cleanup_results["ray_actor"] = True
+        except ValueError:
+          logger.warning(f"[{slug_id}] Ray actor '{actor_name}' not found (may already be stopped)")
+          cleanup_results["ray_actor"] = True  # Consider successful if not found
+      except Exception as e:
+        error_msg = f"Failed to kill Ray actor: {e}"
+        logger.error(f"[{slug_id}] ❌ {error_msg}", exc_info=True)
+        cleanup_results["errors"].append(error_msg)
+    
+    # 2. Remove routes from FastAPI app
+    try:
+      prefix = f"/experiments/{slug_id}"
+      # Remove routes that match the prefix
+      routes_to_remove = [
+        route for route in request.app.routes
+        if hasattr(route, "path") and route.path.startswith(prefix)
+      ]
+      for route in routes_to_remove:
+        request.app.routes.remove(route)
+      
+      # Remove from mounted static paths
+      if hasattr(request.app.state, "mounted_static_paths"):
+        request.app.state.mounted_static_paths.discard(f"{prefix}/static")
+      
+      # Remove from app.state.experiments
+      if hasattr(request.app.state, "experiments") and slug_id in request.app.state.experiments:
+        del request.app.state.experiments[slug_id]
+      
+      logger.info(f"[{slug_id}] ✅ Removed {len(routes_to_remove)} routes")
+      cleanup_results["routes"] = True
+    except Exception as e:
+      error_msg = f"Failed to remove routes: {e}"
+      logger.error(f"[{slug_id}] ❌ {error_msg}", exc_info=True)
+      cleanup_results["errors"].append(error_msg)
+    
+    # 3. Get experiment config and collect B2 file names before deletion
+    config_doc = await db.experiments_config.find_one({"slug": slug_id})
+    runtime_s3_uri = config_doc.get("runtime_s3_uri") if config_doc else None
+    
+    # Collect B2 file names from export logs before deletion
+    b2_files_to_delete = []
+    try:
+      export_logs = await db.export_logs.find({"slug_id": slug_id}).to_list(length=None)
+      for log in export_logs:
+        if log.get("b2_file_name"):
+          b2_files_to_delete.append(log["b2_file_name"])
+      logger.info(f"[{slug_id}] Found {len(b2_files_to_delete)} B2 files to delete from export logs")
+      
+      # Also add runtime_s3_uri if it exists and is a B2 file path (not a presigned URL)
+      if runtime_s3_uri and B2_ENABLED:
+        # If runtime_s3_uri is not a URL (presigned), it's likely a file path
+        if not runtime_s3_uri.startswith("http"):
+          if runtime_s3_uri not in b2_files_to_delete:
+            b2_files_to_delete.append(runtime_s3_uri)
+            logger.info(f"[{slug_id}] Added runtime ZIP to B2 cleanup list: {runtime_s3_uri}")
+    except Exception as e:
+      logger.warning(f"[{slug_id}] ⚠️ Failed to collect B2 file names: {e}")
+    
+    # 4. Delete database config
+    try:
+      result = await db.experiments_config.delete_one({"slug": slug_id})
+      if result.deleted_count > 0:
+        logger.info(f"[{slug_id}] ✅ Deleted experiment config from database")
+        cleanup_results["database_config"] = True
+      else:
+        logger.warning(f"[{slug_id}] No experiment config found in database")
+        cleanup_results["database_config"] = True  # Consider successful if not found
+    except Exception as e:
+      error_msg = f"Failed to delete database config: {e}"
+      logger.error(f"[{slug_id}] ❌ {error_msg}", exc_info=True)
+      cleanup_results["errors"].append(error_msg)
+    
+    # 5. Delete export logs
+    try:
+      result = await db.export_logs.delete_many({"slug_id": slug_id})
+      deleted_count = result.deleted_count
+      logger.info(f"[{slug_id}] ✅ Deleted {deleted_count} export log entries")
+      cleanup_results["export_logs"] = True
+    except Exception as e:
+      error_msg = f"Failed to delete export logs: {e}"
+      logger.error(f"[{slug_id}] ❌ {error_msg}", exc_info=True)
+      cleanup_results["errors"].append(error_msg)
+    
+    # 6. Delete database collections (all collections prefixed with slug_)
+    try:
+      collection_prefix = f"{slug_id}_"
+      collections = await db.list_collection_names()
+      deleted_collections = []
+      for collection_name in collections:
+        if collection_name.startswith(collection_prefix):
+          await db.drop_collection(collection_name)
+          deleted_collections.append(collection_name)
+      logger.info(f"[{slug_id}] ✅ Deleted {len(deleted_collections)} database collections: {deleted_collections}")
+      cleanup_results["database_collections"] = deleted_collections
+    except Exception as e:
+      error_msg = f"Failed to delete database collections: {e}"
+      logger.error(f"[{slug_id}] ❌ {error_msg}", exc_info=True)
+      cleanup_results["errors"].append(error_msg)
+    
+    # 7. Delete filesystem directory
+    try:
+      exp_path = EXPERIMENTS_DIR / slug_id
+      if exp_path.exists() and exp_path.is_dir():
+        shutil.rmtree(exp_path)
+        logger.info(f"[{slug_id}] ✅ Deleted filesystem directory: {exp_path}")
+        cleanup_results["filesystem"] = True
+      else:
+        logger.warning(f"[{slug_id}] Experiment directory not found on disk: {exp_path}")
+        cleanup_results["filesystem"] = True  # Consider successful if not found
+    except Exception as e:
+      error_msg = f"Failed to delete filesystem directory: {e}"
+      logger.error(f"[{slug_id}] ❌ {error_msg}", exc_info=True)
+      cleanup_results["errors"].append(error_msg)
+    
+    # 8. Delete B2 storage (runtime ZIPs and export ZIPs)
+    if B2_ENABLED and b2_files_to_delete:
+      try:
+        b2_bucket = getattr(request.app.state, "b2_bucket", None)
+        if b2_bucket:
+          deleted_b2_files = []
+          for b2_file_name in b2_files_to_delete:
+            try:
+              # Delete the file from B2
+              # Get file info first, then delete by version
+              file_info = b2_bucket.get_file_info_by_name(b2_file_name)
+              b2_bucket.delete_file_version(file_info.id_, file_info.file_name)
+              deleted_b2_files.append(b2_file_name)
+              logger.info(f"[{slug_id}] ✅ Deleted B2 file: {b2_file_name}")
+            except Exception as e:
+              # File might not exist or already deleted
+              logger.warning(f"[{slug_id}] ⚠️ Failed to delete B2 file '{b2_file_name}': {e}")
+          cleanup_results["b2_storage"] = True
+          cleanup_results["deleted_b2_files"] = deleted_b2_files
+          logger.info(f"[{slug_id}] ✅ Deleted {len(deleted_b2_files)} B2 files")
+        else:
+          logger.warning(f"[{slug_id}] ⚠️ B2 bucket not available for cleanup")
+          cleanup_results["b2_storage"] = False
+      except Exception as e:
+        error_msg = f"Failed to access B2 for cleanup: {e}"
+        logger.warning(f"[{slug_id}] ⚠️ {error_msg}")
+        cleanup_results["errors"].append(error_msg)
+    else:
+      if not B2_ENABLED:
+        logger.info(f"[{slug_id}] B2 not enabled, skipping B2 cleanup")
+      cleanup_results["b2_storage"] = True  # Consider successful if no B2 or no files to delete
+    
+    logger.info(f"[{slug_id}] ✅ Deletion complete. Cleanup results: {cleanup_results}")
+    
+    return JSONResponse({
+      "status": "success",
+      "message": f"Experiment '{slug_id}' deleted successfully",
+      "cleanup_results": cleanup_results
+    })
+    
+  except Exception as e:
+    logger.error(f"[{slug_id}] ❌ Critical error during deletion: {e}", exc_info=True)
+    raise HTTPException(
+      status_code=500,
+      detail=f"Error deleting experiment: {e}"
+    )
 
 
 @admin_router.get("/api/index-status/{slug_id}", response_class=JSONResponse)
@@ -2533,52 +2652,120 @@ async def get_file_content(slug_id: str, path: str = Query(...), user: Dict[str,
 
 def _detect_slug_from_zip(zip_data: bytes) -> Optional[str]:
   """
-  Detects the experiment slug from standalone export ZIP structure.
-  ONLY accepts standalone export format: experiments/{slug}/
+  Detects the experiment slug from ZIP file.
+  Supports TWO formats:
+  1. Upload-ready format: Files at root level (manifest.json, actor.py, __init__.py)
+  2. Standalone export format: Files in experiments/{slug}/ directory
   
-  This is strict - the ZIP must follow the standalone export structure
-  with experiments/{slug}/ containing manifest.json, actor.py, and __init__.py
+  Returns the detected slug, or None if detection fails.
   """
   try:
     with io.BytesIO(zip_data) as buff:
       with zipfile.ZipFile(buff, "r") as zip_ref:
         namelist = zip_ref.namelist()
         
-        # PRIMARY METHOD: Look for experiments/{slug}/ structure
-        # This is the standalone export format - strict requirement
-        experiments_pattern = re.compile(r'^experiments/([a-z0-9\-_]+)/')
-        detected_slugs = set()
+        # METHOD 1: Check for upload-ready format (root-level files)
+        # Look for manifest.json, actor.py, __init__.py at root level
+        # Handle different ZIP path formats (with/without leading slashes, trailing slashes)
+        def normalize_path(path: str) -> str:
+          """Normalize ZIP path for comparison (remove leading/trailing slashes)."""
+          return path.lstrip("/").rstrip("/")
+        
+        def is_exact_file(normalized_path: str, filename: str) -> bool:
+          """Check if normalized path is exactly the filename (root-level)."""
+          return normalized_path == filename
+        
+        # Find files that could be root-level (normalize paths first)
+        root_manifest = None
+        root_actor = None
+        root_init = None
+        
+        for path in namelist:
+          normalized = normalize_path(path)
+          
+          if is_exact_file(normalized, "manifest.json"):
+            root_manifest = path
+          elif is_exact_file(normalized, "actor.py"):
+            root_actor = path
+          elif is_exact_file(normalized, "__init__.py"):
+            root_init = path
+        
+        # Check if all three required files are at root level
+        is_root_format = (
+          root_manifest is not None and
+          root_actor is not None and
+          root_init is not None
+        )
+        
+        if is_root_format:
+          # Read manifest.json to extract slug
+          try:
+            with zip_ref.open(root_manifest) as mf:
+              manifest_data = json.load(mf)
+              detected_slug = manifest_data.get("slug_id") or manifest_data.get("slug")
+              
+              if detected_slug:
+                logger.info(f"Detected slug '{detected_slug}' from upload-ready format (root-level files)")
+                return detected_slug
+              else:
+                logger.warning("Found root-level format but manifest.json missing 'slug_id' or 'slug' field")
+          except (json.JSONDecodeError, KeyError, Exception) as e:
+            logger.warning(f"Failed to read manifest.json from root format: {e}")
+            # Fall through to check standalone export format
+        
+        # METHOD 2: Check for standalone export format (experiments/{slug}/ structure)
+        # Handle both direct experiments/{slug}/ and wrapper/{experiments/{slug}/ patterns
+        # Pattern: find */experiments/{slug}/ anywhere in the path (handles wrapper directories)
+        experiments_pattern = re.compile(r'.*?/experiments/([a-z0-9\-_]+)/')
+        detected_slugs = {}  # slug -> actual path prefix found
         
         for name in namelist:
-          # Skip macOS metadata and root-level files
+          # Skip macOS metadata
           if "MACOSX" in name or "__MACOSX" in name:
             continue
           
+          # Try pattern that matches wrapper/experiments/{slug}/ or experiments/{slug}/
           match = experiments_pattern.match(name)
           if match:
-            detected_slugs.add(match.group(1))
+            detected_slug = match.group(1)
+            # Extract the path prefix up to experiments/{slug}/
+            match_obj = re.search(r'(.+?/experiments/' + re.escape(detected_slug) + r'/).*', name)
+            if match_obj:
+              path_prefix = match_obj.group(1)
+              # Store the shortest prefix (prefer direct experiments/{slug}/ over wrapper/experiments/{slug}/)
+              if detected_slug not in detected_slugs or len(path_prefix) < len(detected_slugs[detected_slug]):
+                detected_slugs[detected_slug] = path_prefix
         
         # Validate that we found exactly one experiment slug
         if len(detected_slugs) == 1:
-          detected_slug = detected_slugs.pop()
+          detected_slug = list(detected_slugs.keys())[0]
+          path_prefix = detected_slugs[detected_slug]
           
-          # Verify required files exist in experiments/{slug}/
+          # Verify required files exist in path_prefix (which may be wrapper/experiments/{slug}/)
           required_files = {
-            f"experiments/{detected_slug}/manifest.json",
-            f"experiments/{detected_slug}/actor.py",
-            f"experiments/{detected_slug}/__init__.py"
+            f"{path_prefix}manifest.json",
+            f"{path_prefix}actor.py",
+            f"{path_prefix}__init__.py"
           }
           
-          found_files = {f for f in required_files if any(p for p in namelist if p == f or p.startswith(f))}
+          # Also check for files with trailing slash variations
+          found_files = set()
+          for req_file in required_files:
+            for p in namelist:
+              normalized_p = normalize_path(p)
+              normalized_req = normalize_path(req_file)
+              if normalized_p == normalized_req or normalized_p.startswith(normalized_req + "/"):
+                found_files.add(req_file)
+                break
           
           if found_files and len(found_files) >= 3:  # At least 3 required files found
-            logger.info(f"Detected slug '{detected_slug}' from standalone export structure (experiments/{detected_slug}/)")
+            logger.info(f"Detected slug '{detected_slug}' from standalone export structure ({path_prefix})")
             return detected_slug
           else:
-            logger.warning(f"Found experiments/{detected_slug}/ but missing required files. Found: {found_files}")
+            logger.warning(f"Found {path_prefix} but missing required files. Found: {found_files}")
         
         elif len(detected_slugs) > 1:
-          logger.warning(f"Multiple experiment slugs detected: {detected_slugs}. This is not a valid standalone export.")
+          logger.warning(f"Multiple experiment slugs detected: {list(detected_slugs.keys())}. This is not a valid export.")
         
   except zipfile.BadZipFile:
     logger.error("Invalid/corrupted .zip file during slug detection")
@@ -2587,7 +2774,7 @@ def _detect_slug_from_zip(zip_data: bytes) -> Optional[str]:
     logger.error(f"Error detecting slug from ZIP: {e}", exc_info=True)
     return None
   
-  logger.debug("Could not detect slug - ZIP does not match standalone export structure (experiments/{slug}/)")
+  logger.debug("Could not detect slug - ZIP does not match either upload-ready format (root-level files) or standalone export structure (experiments/{slug}/)")
   return None
 
 
@@ -2602,8 +2789,10 @@ async def detect_slug_from_zip(
   user: Dict[str, Any] = Depends(require_admin)
 ):
   """
-  Detects the experiment slug from a standalone export ZIP file.
-  Only accepts ZIP files with experiments/{slug}/ structure.
+  Detects the experiment slug from a ZIP file.
+  Supports both formats:
+  1. Upload-ready format: root-level files (manifest.json, actor.py, __init__.py)
+  2. Standalone export format: experiments/{slug}/ structure
   Validates file size before processing to prevent memory exhaustion.
   """
   if file.content_type not in ("application/zip", "application/x-zip-compressed"):
@@ -2646,13 +2835,13 @@ async def detect_slug_from_zip(
       return JSONResponse({
         "status": "success",
         "slug": detected_slug,
-        "message": f"Detected slug '{detected_slug}' from standalone export structure."
+        "message": f"Detected slug '{detected_slug}' from ZIP file."
       })
     else:
       return JSONResponse({
         "status": "not_found",
         "slug": None,
-        "message": "ZIP does not match standalone export structure. Expected: experiments/{slug}/ with manifest.json, actor.py, and __init__.py"
+        "message": "ZIP does not match supported formats. Expected either: (1) Upload-ready format: root-level files (manifest.json, actor.py, __init__.py), or (2) Standalone export format: experiments/{slug}/ with manifest.json, actor.py, and __init__.py"
       })
   except Exception as e:
     logger.error(f"Error detecting slug: {e}", exc_info=True)
@@ -2670,8 +2859,9 @@ async def upload_experiment_zip(
   user: Dict[str, Any] = Depends(require_admin)
 ):
   """
-  Upload an experiment ZIP file. Slug is automatically detected from experiments/{slug}/ structure.
-  Only standalone export ZIPs are accepted.
+  Upload an experiment ZIP file. Slug is automatically detected from ZIP structure.
+  Supports both formats: (1) Upload-ready format (root-level files), 
+  (2) Standalone export format (experiments/{slug}/ structure).
   Validates file size before processing to prevent memory exhaustion.
   """
   admin_email = user.get('email', 'Unknown Admin')
@@ -2719,13 +2909,13 @@ async def upload_experiment_zip(
       f"(limit: {MAX_UPLOAD_SIZE_MB:.0f}MB)"
     )
     
-    # Auto-detect slug from ZIP structure
+    # Auto-detect slug from ZIP structure (supports both formats)
     slug_id = _detect_slug_from_zip(zip_data)
     
     if not slug_id:
-      raise HTTPException(400, "ZIP must follow standalone export structure: experiments/{slug}/ with manifest.json, actor.py, and __init__.py. Only standalone export ZIPs are accepted.")
+      raise HTTPException(400, "ZIP must follow either format: (1) Upload-ready format: root-level files (manifest.json, actor.py, __init__.py), or (2) Standalone export format: experiments/{slug}/ with manifest.json, actor.py, and __init__.py.")
     
-    logger.info(f"Admin '{admin_email}' initiated zip upload. Auto-detected slug: '{slug_id}' from experiments/{slug_id}/ structure.")
+    logger.info(f"Admin '{admin_email}' initiated zip upload. Auto-detected slug: '{slug_id}'")
   except HTTPException:
     raise
   except Exception as e:
@@ -2739,40 +2929,89 @@ async def upload_experiment_zip(
       with zipfile.ZipFile(buff, "r") as zip_ref:
         namelist = zip_ref.namelist()
         
-        # Validate required files exist in experiments/{slug}/
-        manifest_path_in_zip = next((p for p in namelist if p == f"experiments/{slug_id}/manifest.json" or p.endswith("experiments/{slug_id}/manifest.json")), None)
-        actor_path_in_zip = next((p for p in namelist if p == f"experiments/{slug_id}/actor.py" or p.endswith("experiments/{slug_id}/actor.py")), None)
-        init_path_in_zip = next((p for p in namelist if p == f"experiments/{slug_id}/__init__.py" or p.endswith("experiments/{slug_id}/__init__.py")), None)
+        # Determine format: check for root-level files or experiments/{slug}/ structure
+        root_manifest = next((p for p in namelist if p == "manifest.json"), None)
+        root_actor = next((p for p in namelist if p == "actor.py"), None)
+        root_init = next((p for p in namelist if p == "__init__.py"), None)
+        
+        is_root_format = (
+          root_manifest is not None and
+          root_actor is not None and
+          root_init is not None
+        )
+        
+        # Validate required files exist in appropriate format
+        if is_root_format:
+          # Upload-ready format: root-level files
+          manifest_path_in_zip = root_manifest
+          actor_path_in_zip = root_actor
+          init_path_in_zip = root_init
+          experiment_prefix = ""  # No prefix for root format
+        else:
+          # Standalone export format: experiments/{slug}/ structure
+          manifest_path_in_zip = next((p for p in namelist if p == f"experiments/{slug_id}/manifest.json" or p.endswith(f"experiments/{slug_id}/manifest.json")), None)
+          actor_path_in_zip = next((p for p in namelist if p == f"experiments/{slug_id}/actor.py" or p.endswith(f"experiments/{slug_id}/actor.py")), None)
+          init_path_in_zip = next((p for p in namelist if p == f"experiments/{slug_id}/__init__.py" or p.endswith(f"experiments/{slug_id}/__init__.py")), None)
+          experiment_prefix = f"experiments/{slug_id}/"
         
         if not manifest_path_in_zip:
-          raise HTTPException(400, f"Zip must contain 'experiments/{slug_id}/manifest.json'.")
+          raise HTTPException(400, f"Zip must contain 'manifest.json' (at root or in experiments/{slug_id}/).")
         if not actor_path_in_zip:
-          raise HTTPException(400, f"Zip must contain 'experiments/{slug_id}/actor.py'.")
+          raise HTTPException(400, f"Zip must contain 'actor.py' (at root or in experiments/{slug_id}/).")
         if not init_path_in_zip:
-          raise HTTPException(400, f"Zip must contain 'experiments/{slug_id}/__init__.py'.")
+          raise HTTPException(400, f"Zip must contain '__init__.py' (at root or in experiments/{slug_id}/).")
         
-        # Security check: Ensure all paths are within experiments/{slug}/ structure
+        # Security check: Ensure all paths are safe
         for member in zip_ref.infolist():
           member_path = member.filename
           # Skip macOS metadata
           if "MACOSX" in member_path or "__MACOSX" in member_path:
             continue
           
-          # Allow files from experiments/{slug}/ directory only
-          if not member_path.startswith(f"experiments/{slug_id}/"):
-            # Also allow root-level platform files that will be ignored
+          # Allow files from experiment directory or root-level platform files
+          if is_root_format:
+            # Root format: allow root-level files and filter out platform files
+            if member_path.startswith("/") or ".." in member_path:
+              logger.error(f"SECURITY ALERT: Invalid path in '{slug_id}': '{member_path}'")
+              raise HTTPException(400, f"Invalid path in zip: '{member_path}'")
+            
+            # Skip platform files (they'll be ignored during extraction)
             if member_path in ("README.md", "db_config.json", "db_collections.json", "standalone_main.py", "Dockerfile", "docker-compose.yml") or member_path.startswith("async_mongo_wrapper") or member_path.startswith("mongo_connection_pool") or member_path.startswith("experiment_db"):
               continue
-          
-          target_path = (experiment_path / member_path.replace(f"experiments/{slug_id}/", "")).resolve()
-          if experiment_path not in target_path.parents and target_path != experiment_path:
-            logger.error(f"SECURITY ALERT: Zip Slip attempt in '{slug_id}'! '{member_path}'")
-            raise HTTPException(400, f"Path traversal in zip member '{member_path}'")
+            
+            # For root format, all non-platform files should be extracted
+            # Check for path traversal
+            if "/" in member_path and not member_path.startswith("templates/") and not member_path.startswith("static/"):
+              # Allow subdirectories for templates/ and static/, but validate other paths
+              path_parts = member_path.split("/")
+              for part in path_parts:
+                if part == ".." or (part.startswith(".") and part not in [".", ".."]):
+                  logger.error(f"SECURITY ALERT: Zip Slip attempt in '{slug_id}'! '{member_path}'")
+                  raise HTTPException(400, f"Path traversal in zip member '{member_path}'")
+          else:
+            # Standalone export format: only allow experiments/{slug}/ files
+            if not member_path.startswith(experiment_prefix):
+              # Allow root-level platform files that will be ignored
+              if member_path in ("README.md", "db_config.json", "db_collections.json", "standalone_main.py", "Dockerfile", "docker-compose.yml") or member_path.startswith("async_mongo_wrapper") or member_path.startswith("mongo_connection_pool") or member_path.startswith("experiment_db"):
+                continue
+            else:
+              # Check for path traversal within experiment directory
+              relative_path = member_path[len(experiment_prefix):]
+              target_path = (experiment_path / relative_path).resolve()
+              if experiment_path not in target_path.parents and target_path != experiment_path:
+                logger.error(f"SECURITY ALERT: Zip Slip attempt in '{slug_id}'! '{member_path}'")
+                raise HTTPException(400, f"Path traversal in zip member '{member_path}'")
 
         with zip_ref.open(manifest_path_in_zip) as mf:
           parsed_manifest = json.load(mf)
 
-        reqs_path_in_zip = next((p for p in namelist if p.endswith("requirements.txt") and "MACOSX" not in p), None)
+        # Find requirements.txt (could be at root or in experiments/{slug}/)
+        reqs_path_in_zip = None
+        if is_root_format:
+          reqs_path_in_zip = next((p for p in namelist if p == "requirements.txt"), None)
+        else:
+          reqs_path_in_zip = next((p for p in namelist if p.endswith("requirements.txt") and "MACOSX" not in p and f"experiments/{slug_id}/" in p), None)
+        
         parsed_reqs = []
         if reqs_path_in_zip:
           with zip_ref.open(reqs_path_in_zip) as rf:
@@ -2854,78 +3093,173 @@ async def upload_experiment_zip(
     
     # Create fresh directory
     experiment_path.mkdir(parents=True, exist_ok=True)
-    logger.info(f"[{slug_id}] Extracting standalone export from experiments/{slug_id}/ to {experiment_path}...")
     
-    # Extract only files from experiments/{slug_id}/ directory (standalone export structure)
+    # Determine format for extraction (need to check again)
+    # Also detect wrapper directories like __zip__1/experiments/{slug}/
+    def normalize_path(path: str) -> str:
+      """Normalize ZIP path for comparison (remove leading/trailing slashes)."""
+      return path.lstrip("/").rstrip("/")
+    
+    with io.BytesIO(zip_data) as buff:
+      with zipfile.ZipFile(buff, "r") as zip_ref:
+        namelist = zip_ref.namelist()
+        root_manifest = next((p for p in namelist if normalize_path(p) == "manifest.json"), None)
+        root_actor = next((p for p in namelist if normalize_path(p) == "actor.py"), None)
+        root_init = next((p for p in namelist if normalize_path(p) == "__init__.py"), None)
+        is_root_format = (
+          root_manifest is not None and
+          root_actor is not None and
+          root_init is not None
+        )
+        
+        # If not root format, find the actual path prefix for experiments/{slug_id}/
+        # Handle wrapper directories like __zip__1/experiments/{slug_id}/
+        experiment_prefix = None
+        if not is_root_format:
+          # Look for any path that contains experiments/{slug_id}/
+          experiments_pattern = re.compile(r'(.+?/experiments/' + re.escape(slug_id) + r'/).*')
+          for name in namelist:
+            if "MACOSX" in name or "__MACOSX" in name:
+              continue
+            match = experiments_pattern.match(name)
+            if match:
+              candidate_prefix = match.group(1)
+              # Use the first/longest matching prefix (prefer more specific paths)
+              if experiment_prefix is None or len(candidate_prefix) >= len(experiment_prefix):
+                experiment_prefix = candidate_prefix
+          
+          # Fallback to direct experiments/{slug_id}/ if not found with wrapper
+          if not experiment_prefix:
+            experiment_prefix = f"experiments/{slug_id}/"
+    
+    if is_root_format:
+      logger.info(f"[{slug_id}] Extracting upload-ready format (root-level files) to {experiment_path}...")
+    else:
+      logger.info(f"[{slug_id}] Extracting standalone export format from {experiment_prefix} to {experiment_path}...")
+    
+    # Extract files from ZIP (supports both formats)
     # Use synchronous extraction (zipfile operations are sync anyway)
     with io.BytesIO(zip_data) as buff:
       with zipfile.ZipFile(buff, "r") as zip_ref:
-        experiment_prefix = f"experiments/{slug_id}/"
+        # experiment_prefix was already determined above (handles wrapper directories)
+        if is_root_format:
+          experiment_prefix = ""  # Root format, no prefix needed
         EXCLUSION_PATTERNS = ["__pycache__", "__MACOSX", ".DS_Store", "*.pyc", "*.pyo"]
+        PLATFORM_FILES = ["README.md", "db_config.json", "db_collections.json", "standalone_main.py", "Dockerfile", "docker-compose.yml"]
+        PLATFORM_PREFIXES = ["async_mongo_wrapper", "mongo_connection_pool", "experiment_db"]
         
         for member in zip_ref.infolist():
-          # Skip macOS metadata and non-experiment files
+          # Skip macOS metadata
           if "MACOSX" in member.filename or "__MACOSX" in member.filename:
             continue
           
-          # Only extract files from experiments/{slug_id}/
-          if member.filename.startswith(experiment_prefix):
-            # Remove the experiments/{slug_id}/ prefix to get the relative path
-            relative_path = member.filename[len(experiment_prefix):]
-            # Skip empty paths or directory entries (those ending with /)
-            if not relative_path or relative_path.endswith('/'):
-              continue
-            
-            # Skip excluded patterns (__pycache__, etc.)
-            path_parts = relative_path.split("/")
-            should_skip = False
-            for part in path_parts:
-              # Check exact matches and wildcard patterns
-              if part in EXCLUSION_PATTERNS:
+          # Skip platform files (not part of experiment)
+          # Check if filename ends with platform file or starts with platform prefix
+          # Also check normalized path to handle wrapper directories
+          normalized_member = normalize_path(member.filename)
+          is_platform_file = (
+            normalized_member in PLATFORM_FILES or
+            any(normalized_member.startswith(prefix) for prefix in PLATFORM_PREFIXES) or
+            any(member.filename.endswith(f"/{pf}") for pf in PLATFORM_FILES) or
+            any(f"/{pf}/" in normalized_member or normalized_member.startswith(f"{pf}/") for pf in PLATFORM_FILES)
+          )
+          if is_platform_file:
+            logger.debug(f"[{slug_id}] Skipping platform file: {member.filename}")
+            continue
+          
+          # Determine if this file should be extracted
+          should_extract = False
+          relative_path = None
+          
+          if is_root_format:
+            # Upload-ready format: extract root-level files and subdirectories (skip platform files already handled above)
+            # Check if it's a root-level file or in templates/ or static/ subdirectories
+            if "/" not in member.filename:
+              # Root-level file (no path separators)
+              relative_path = member.filename
+              should_extract = True
+            elif member.filename.startswith("templates/") or member.filename.startswith("static/"):
+              # Subdirectories for templates/ and static/
+              relative_path = member.filename
+              should_extract = True
+            elif "/" in member.filename:
+              # Other subdirectories - validate and allow (but not platform files)
+              path_parts = member.filename.split("/")
+              if not any(part == ".." or (part.startswith(".") and part not in [".", ".."]) for part in path_parts):
+                # Allow other subdirectories (user-defined experiment subdirs)
+                relative_path = member.filename
+                should_extract = True
+          else:
+            # Standalone export format: extract only from experiments/{slug_id}/
+            if member.filename.startswith(experiment_prefix):
+              # Remove the experiments/{slug_id}/ prefix to get the relative path
+              relative_path = member.filename[len(experiment_prefix):]
+              should_extract = True
+          
+          if not should_extract or not relative_path:
+            continue
+          
+          # Skip empty paths or directory entries (those ending with /)
+          if not relative_path or relative_path.endswith('/'):
+            continue
+          
+          # Skip excluded patterns (__pycache__, etc.)
+          path_parts = relative_path.split("/")
+          should_skip = False
+          for part in path_parts:
+            # Check exact matches and wildcard patterns
+            if part in EXCLUSION_PATTERNS:
+              should_skip = True
+              break
+            # Check wildcard patterns
+            for pattern in EXCLUSION_PATTERNS:
+              if "*" in pattern and fnmatch.fnmatch(part, pattern):
                 should_skip = True
                 break
-              # Check wildcard patterns
-              for pattern in EXCLUSION_PATTERNS:
-                if "*" in pattern and fnmatch.fnmatch(part, pattern):
-                  should_skip = True
-                  break
-              if should_skip:
-                break
-            
             if should_skip:
-              logger.debug(f"[{slug_id}] Skipping excluded file/directory: {relative_path}")
-              continue
+              break
+          
+          if should_skip:
+            logger.debug(f"[{slug_id}] Skipping excluded file/directory: {relative_path}")
+            continue
+          
+          # Construct target path
+          target_path = experiment_path / relative_path
+          
+          # Security check: ensure target is within experiment_path
+          try:
+            target_path.resolve().relative_to(experiment_path.resolve())
+          except ValueError:
+            logger.error(f"SECURITY ALERT: Path traversal attempt in '{slug_id}': '{member.filename}' -> '{relative_path}'")
+            continue
+          
+          try:
+            # Remove existing file/directory if it exists (robust handling)
+            if target_path.exists():
+              if target_path.is_file():
+                target_path.unlink()
+                logger.debug(f"[{slug_id}] Removed existing file before extraction: {relative_path}")
+              elif target_path.is_dir():
+                shutil.rmtree(target_path)
+                logger.debug(f"[{slug_id}] Removed existing directory before extraction: {relative_path}")
             
-            # Construct target path
-            target_path = experiment_path / relative_path
+            # Ensure parent directory exists
+            target_path.parent.mkdir(parents=True, exist_ok=True)
             
-            try:
-              # Remove existing file/directory if it exists (robust handling)
-              if target_path.exists():
-                if target_path.is_file():
-                  target_path.unlink()
-                  logger.debug(f"[{slug_id}] Removed existing file before extraction: {relative_path}")
-                elif target_path.is_dir():
-                  shutil.rmtree(target_path)
-                  logger.debug(f"[{slug_id}] Removed existing directory before extraction: {relative_path}")
+            # Extract the file (synchronous file I/O - acceptable for extraction)
+            with zip_ref.open(member) as source:
+              # Read file content and write synchronously (extraction is typically synchronous)
+              content = source.read()
+              target_path.write_bytes(content)
               
-              # Ensure parent directory exists
-              target_path.parent.mkdir(parents=True, exist_ok=True)
-              
-              # Extract the file (synchronous file I/O - acceptable for extraction)
-              with zip_ref.open(member) as source:
-                # Read file content and write synchronously (extraction is typically synchronous)
-                content = source.read()
-                target_path.write_bytes(content)
-                
-            except OSError as e:
-              # Handle file system errors gracefully (permissions, etc.)
-              logger.warning(f"[{slug_id}] Error extracting {relative_path}: {e}. Skipping...")
-              continue
-            except Exception as e:
-              # Handle other errors gracefully
-              logger.error(f"[{slug_id}] Unexpected error extracting {relative_path}: {e}", exc_info=True)
-              continue
+          except OSError as e:
+            # Handle file system errors gracefully (permissions, etc.)
+            logger.warning(f"[{slug_id}] Error extracting {relative_path}: {e}. Skipping...")
+            continue
+          except Exception as e:
+            # Handle other errors gracefully
+            logger.error(f"[{slug_id}] Unexpected error extracting {relative_path}: {e}", exc_info=True)
+            continue
     
     # Verify extraction was successful - check for required files
     required_files_exist = (
