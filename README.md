@@ -44,7 +44,7 @@ The philosophy of g.nome is built on a simple separation of concerns:
   
 - **The Admin Panel (The Control Tower)**: This is the magic. As an admin, you can log in to `/admin` and see a list of all your "experiments." You can "Activate" or "Deactivate" them, set them to require login, or configure their data-sharing rules. You can even upload entire experiments `.zip` files from the Admin Panel, letting g.nome push your code to Backblaze B2 seamlessly.  
   
-And now, if you place a `manifest.json` in any `/experiments/<slug>/` folder, g.nome will read it on startup and automatically create a matching DB entry if none exists—so local experiments "just work," no tedious config required.  
+And now, if you place a `manifest.json` in any `/experiments/<slug>/` folder, g.nome will automatically discover it on startup and create a matching database entry if none exists. If the manifest specifies `"status": "active"`, it will even update existing "draft" entries to "active"—so local experiments "just work," no tedious config required.  
   
 This immediately solves the maintenance and authentication problem. But the real power comes from how it solves the data problem.  
   
@@ -67,12 +67,11 @@ This immediately solves the maintenance and authentication problem. But the real
 - **Flexible Front-end Hosting**:  
   - Custom Routes: Your experiment defines its own routes (like `@bp.get('/')`) and can render templates however it likes.  
   - Static Files: The CORE automatically mounts any `/experiments/<slug>/static/` folder so your experiment can serve its own CSS, JS, images, etc.  
-  - Manifest-based Seeding: On startup, if g.nome sees that `/experiments/<slug>/manifest.json` is *not* in the database, it seeds the database entry. Perfect for local development or offline building of new experiments.  
+  - Manifest-based Discovery: On startup, g.nome scans `/experiments` for folders containing `manifest.json` files. If a manifest exists but no database entry exists, it creates one. If the manifest specifies `"status": "active"` but the database has `"status": "draft"`, it automatically updates to "active". Perfect for local development or offline building of new experiments.  
   - Over-the-Air Updates: If you prefer an "upload" workflow, the Admin Panel provides a route to upload a `.zip`, and g.nome will automatically push it to Backblaze B2 (if configured), or store it locally, then reload. No restarts needed.  
   
 - **Secure Data Sharing**: Securely grant one experiment read-only access to another's data from the Admin Panel by configuring `data_scope`.  
-  
-- **Hybrid Compute Runtime**: Run simple experiments in-process, or "promote" heavier experiments to run in isolated Ray Actors to solve dependency conflicts and scale. The system automatically detects Ray availability and falls back gracefully if unavailable.  
+- **Hybrid Compute Runtime**: Experiments run in Ray Actors for isolation and scale. Ray is required at runtime; there is currently no local in‑process fallback.  
   
 - **Graduation Path**: "Graduate" a successful experiment into its own standalone application with a simple `mongodump`—no data lock-in.  
   
@@ -370,12 +369,18 @@ document.addEventListener('DOMContentLoaded', () => {
 ```  
   
 ### Step 5: Activation  
-  
+
 ![](mdb-genome-configure.png)  
-  
-That's it. You now have a fully self-contained experiment. You log into the `/admin` panel, find `"click_tracker"` in the list of discovered experiments, click **"Configure"**, set the status to `"active"`, and hit **"Save"**  
-  
-Your experiment is now live at `/experiments/click_tracker/`, secure, and sandboxed, all without writing a single line of boilerplate.  
+
+That's it. You now have a fully self-contained experiment. On the next server startup, g.nome will automatically discover it and create a database entry.
+
+**Option 1: Automatic Activation (via manifest.json)**  
+If your `manifest.json` specifies `"status": "active"`, g.nome will automatically activate the experiment on startup. No admin panel action needed.
+
+**Option 2: Manual Activation (via Admin Panel)**  
+Alternatively, you can log into the `/admin` panel, find `"click_tracker"` in the list of discovered experiments, click **"Configure"**, set the status to `"active"`, and hit **"Save"**.
+
+Once active, your experiment is live at `/experiments/click_tracker/`, secure, and sandboxed, all without writing a single line of boilerplate.
   
 ---  
   
@@ -583,6 +588,8 @@ This is where g.nome's second, and most powerful, piece of magic comes in. It's 
 ## Magic #3: The Hybrid Runtime (In-Process vs. Isolated)  
   
 g.nome is built on a hybrid model that gives you the right tool for any job.  
+ 
+> Important: Experiments currently require Ray. There is no local in‑process fallback; ensure a Ray runtime is available and reachable at startup.
   
 ### 1. The "In-Process" Experiment (The Simple Way)  
   
@@ -602,14 +609,16 @@ This is the solution for "dependency hell" and heavy-duty tasks. You "promote" a
 - If `G_NOME_ENV=isolated`, g.nome can parse your `requirements.txt` and automatically pass them to Ray as a dedicated `runtime_env` for that actor.    
 - The "thin client" code in your `__init__.py` uses simple `await actor.method_name.remote()`, letting Ray handle concurrency or conflicting dependencies.  
   
-**Automatic Fallback**: If Ray is unavailable or the actor fails to start, g.nome seamlessly falls back to a local service class that uses the standard `ScopedMongoWrapper` for database access. Your routes continue to work, just without the isolation or concurrency benefits of Ray.  
+**No Fallback**: Ray is required. If Ray is unavailable or the actor fails to start, the experiment will not run until Ray is available and the actor starts successfully.  
   
 ---  
   
 ## Anatomy of a "Hybrid" Experiment (The Full Pattern)  
   
 Here's an extended version of the "click-tracker" experiment that demonstrates the hybrid pattern. This version includes both a Ray Actor and a local fallback service:  
-  
+
+Note: The fallback class shown below is illustrative only. The current engine requires Ray; experiments will not run without a working Ray runtime.
+
 ```python  
 # experiments/click_tracker/__init__.py  
 """  
@@ -820,26 +829,77 @@ async def record_click(service: Any = Depends(get_click_service)):
         )  
 ```  
   
-Now you get scalable concurrency (if you’re using a Ray cluster) *or* you fall back to plain in-process code otherwise.  
+Experiments achieve scalable concurrency via Ray. A working Ray runtime is required.  
   
 ---  
   
-## Magic #4: Over-the-Air Experiment Upload and Local Seeding  
-  
-Historically, you might have manually copied each experiment folder to the server’s `/experiments/<slug>` directory. Now, g.nome supports two powerful new workflows:  
-  
-1. **Local File Seeding**:    
-   If you put a valid `manifest.json` into `/experiments/<slug>/` and start your server, g.nome calls `_seed_db_from_local_files` internally. If the database doesn't already have a config for `<slug>`, it inserts one—no manual steps required.    
-   This is perfect for local development: new experiments are "discovered" automatically so you can test them before production.  
-  
-2. **Over-the-Air Zip Upload** (via Backblaze B2 / S3):    
-   From the admin panel or an API call to `/admin/api/upload-experiment/<slug_id>`, you can upload a `.zip` containing everything your experiment needs (`actor.py`, `__init__.py`, `requirements.txt`, etc.).    
-   - If B2 is configured via env vars (`B2_ENDPOINT_URL`, `B2_BUCKET_NAME`, `B2_ACCESS_KEY_ID`, `B2_SECRET_ACCESS_KEY`), g.nome automatically stores the zip in that bucket and sets a presigned URL in the experiment’s database record.    
-   - On subsequent reload, Ray uses that presigned URL as a "py_modules" reference for fully isolated, versioned code.    
-   - If needed, we also parse the `requirements.txt` from inside the zip, attach it to the experiment’s config, and pass those dependencies to Ray when `G_NOME_ENV=isolated`.    
-   - The local "thin client" files are extracted to `/experiments/<slug>/`, letting you serve templates and static files as usual.    
-  
-This means you can push updates to your experiment’s codebase in seconds, from anywhere, without messing with server-side file systems manually. Combined with the Ray runtime environment isolation, you have a robust pipeline for shipping new features or conflicting dependencies seamlessly.  
+## Magic #4: Experiment Discovery, Export, and Over-the-Air Upload  
+
+g.nome provides powerful workflows for experiment lifecycle management, from local development to production deployment:
+
+### Startup Discovery Process
+
+On application startup, g.nome automatically discovers experiments in the `/experiments` directory:
+
+1. **Manifest Scanning**: During startup (in `lifespan.py`), g.nome calls `seed_db_from_local_files()` which scans the `/experiments` directory for folders containing `manifest.json` files.
+
+2. **Automatic Database Seeding**: For each discovered experiment:
+   - If a `manifest.json` exists but no database entry exists, g.nome creates a new database record with the manifest data.
+   - If the manifest specifies `"status": "active"` but the database entry has `"status": "draft"`, g.nome automatically updates the status to `"active"`.
+   - If a database entry already exists, it is preserved (no overwrite).
+
+3. **Experiment Loading**: After seeding, `reload_active_experiments()` loads all experiments with `status: "active"` from the database, mounting their routes and starting their Ray actors.
+
+This means new experiments are automatically "discovered" on startup—perfect for local development. Just create a folder with `manifest.json`, `actor.py`, and `__init__.py`, and g.nome will register it when you restart the server.
+
+### Export Types (Download)
+
+g.nome supports multiple export formats for different use cases:
+
+1. **Standalone Export** (`/api/package-standalone/{slug_id}`):
+   - Full standalone application including platform files (`main.py`, `Dockerfile`, `requirements.txt`, etc.)
+   - Includes database snapshots (`db_config.json`, `db_collections.json`)
+   - Designed for "graduating" an experiment into its own independent application
+   - Includes generated `standalone_main.py` that can run independently
+
+2. **Upload-Ready Export** (`/api/package-upload-ready/{slug_id}`):
+   - Experiment files only (no platform files)
+   - Files at root level (no nested `experiments/{slug}/` structure)
+   - Optimized for iterative development: edit files and upload directly
+   - Contains only: `manifest.json`, `actor.py`, `__init__.py`, `requirements.txt` (optional), `templates/` (optional), `static/` (optional)
+
+3. **Docker Export** (`/api/package-docker/{slug_id}`):
+   - Intelligent packaging with Docker configuration
+   - Includes platform files and database snapshots
+   - Optimized for containerized deployments
+
+**Recommendation**: Use upload-ready export for iterative development; use standalone export when graduating an experiment to its own application.
+
+### Upload Process (Import)
+
+Upload experiments via the Admin Panel (`/admin`) or API endpoint (`/admin/api/upload-experiment`):
+
+1. **Auto-Detection**: The upload endpoint automatically detects the experiment slug from the ZIP structure by looking for `experiments/{slug}/` containing `manifest.json`, `actor.py`, and `__init__.py`.
+
+2. **Validation**: The ZIP must contain:
+   - `manifest.json` (required)
+   - `actor.py` with `ExperimentActor` class (required)
+   - `__init__.py` with `bp` (APIRouter) variable (required)
+   - `requirements.txt` (optional, for isolated mode dependencies)
+   - `templates/` and `static/` directories (optional)
+
+3. **Extraction**: Files are extracted to `/experiments/{slug}/`, flattening nested structures if present.
+
+4. **B2 Storage** (if configured): If Backblaze B2 is configured via environment variables (`B2_ENDPOINT_URL`, `B2_BUCKET_NAME`, `B2_ACCESS_KEY_ID`, `B2_SECRET_ACCESS_KEY`):
+   - The runtime ZIP is uploaded to B2 and stored as `{slug}/runtime-{timestamp}.zip`
+   - A presigned download URL is generated and stored in the experiment's database record (`runtime_s3_uri`)
+   - On subsequent reload, Ray uses this presigned URL as a `py_modules` reference for fully isolated, versioned code
+
+5. **Registration**: The experiment configuration is updated in the database, routes are registered, Ray actors are started, and the experiment is immediately available.
+
+**Note**: Upload-ready export ZIPs can be uploaded directly without extraction. Standalone export ZIPs should be extracted first, then only the `experiments/{slug}/` contents should be re-zipped for upload (or use the upload-ready export instead).
+
+This workflow enables pushing experiment updates from anywhere, without manual file system manipulation. Combined with Ray runtime environment isolation, you have a robust pipeline for shipping new features or conflicting dependencies seamlessly.
   
 ---  
   
@@ -876,21 +936,21 @@ You stop worrying about managing users, scaling databases, or writing security f
   
 ## Your Deployment, Your Choice  
   
-g.nome's hybrid architecture is controlled by a single environment variable: `G_NOME_ENV`. By default, g.nome tries to connect to a Ray cluster. If Ray isn't installed or not found, it silently falls back to safe, in-process mode.  
+g.nome's runtime expects a Ray cluster to be available at startup. Set `RAY_ADDRESS` to connect to an existing cluster, or start a local Ray runtime before launching the app.  
   
 ### Two Key Modes  
   
 **Production Mode (Default)**    
 `G_NOME_ENV="production"` (or not set)    
   
-Uses Ray if available, else fallback to in-process. The engine respects any `runtime_env` declared inside an experiment's actor class.    
+Requires Ray to be reachable. The engine respects any `runtime_env` declared inside an experiment's actor class.    
   
 **Isolated Mode**    
 `G_NOME_ENV="isolated"`    
   
 On startup, each experiment can parse a local `requirements.txt` file (via `_parse_requirements_file()`) and g.nome automatically creates a Ray actor with those specific dependencies in an isolated `runtime_env`. This is the definitive solution for mixing conflicting library versions.  
-  
-If Ray fails entirely, g.nome reverts each experiment to in-process mode. You still get all the core features (Admin Panel, RBAC, data sandboxing) with zero extra overhead.  
+
+If Ray is unavailable, experiments will not load until Ray is reachable.  
   
 ### Backblaze B2 (S3-Compatible) Config  
   
@@ -955,9 +1015,9 @@ You get the developer convenience of "functions," while staying in standard Pyth
   
 ---  
   
-## Appendix D: Deploying on Render.com (Fallback if Ray is Unavailable) 🚀  
+## Appendix D: Deploying on Render.com (Ray Required) 🚀  
   
-g.nome is perfectly suited for streamlined hosting on Render. By default, if there's no Ray cluster, the system simply runs experiments in-process.  
+g.nome is perfectly suited for streamlined hosting on Render. Experiments require Ray; provision a Ray runtime accessible from your service.  
   
 - Connect to your GitHub and point a Render Web Service at your g.nome repo (or fork).  
 - Add environment variables like:  
@@ -973,8 +1033,8 @@ g.nome is perfectly suited for streamlined hosting on Render. By default, if the
   B2_SECRET_ACCESS_KEY  
   ```  
   
-- Deploy. The included Dockerfile (or Render's automatic Python detection) runs your entire app in a single container. If Ray is missing or fails to connect, it automatically uses the in-process fallback.  
-- You still get every core feature (Admin Panel, RBAC, data sandboxing, local file seeding) with zero extra overhead.  
+- Deploy. The included Dockerfile (or Render's automatic Python detection) runs your entire app in a single container. Ensure Ray is running and reachable; if Ray is missing or fails to connect, experiments will not run.  
+- You still get every core feature (Admin Panel, RBAC, data sandboxing, local file seeding) once Ray is available.  
   
 ---  
   
