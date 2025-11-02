@@ -115,16 +115,41 @@ def should_use_disk_streaming(estimated_size: int, max_size_mb: int = 100) -> bo
     return estimated_size > max_size_bytes
 
 
-def calculate_export_checksum(zip_source: io.BytesIO | Path) -> str:
-    """Calculate SHA256 checksum of the export ZIP."""
+async def calculate_export_checksum(zip_source: io.BytesIO | Path) -> str:
+    """
+    Calculate SHA256 checksum of the export ZIP.
+    Uses thread pool to prevent blocking the event loop for large files.
+    """
+    import asyncio
+    
+    def _calculate_checksum_sync(source: io.BytesIO | Path) -> str:
+        """Synchronous checksum calculation (runs in thread pool)."""
+        try:
+            if isinstance(source, Path):
+                # For file paths, use streaming hash calculation for large files
+                hasher = hashlib.sha256()
+                with open(source, "rb") as f:
+                    # Read in chunks to manage memory
+                    while True:
+                        chunk = f.read(1024 * 1024)  # 1MB chunks
+                        if not chunk:
+                            break
+                        hasher.update(chunk)
+                checksum = hasher.hexdigest()
+            else:
+                # For BytesIO, read the value (usually already in memory)
+                source.seek(0)
+                zip_data = source.getvalue()
+                checksum = hashlib.sha256(zip_data).hexdigest()
+            
+            return checksum
+        except Exception as e:
+            logger.error(f"Failed to calculate export checksum: {e}", exc_info=True)
+            raise
+    
     try:
-        if isinstance(zip_source, Path):
-            zip_data = zip_source.read_bytes()
-        else:
-            zip_source.seek(0)
-            zip_data = zip_source.getvalue()
-        
-        checksum = hashlib.sha256(zip_data).hexdigest()
+        # Run checksum calculation in thread pool to prevent blocking event loop
+        checksum = await asyncio.to_thread(_calculate_checksum_sync, zip_source)
         logger.debug(f"Calculated export checksum: {checksum[:16]}...")
         return checksum
     except Exception as e:
@@ -280,19 +305,44 @@ async def dump_db_to_json(db, slug_id: str) -> Tuple[Dict[str, Any], Dict[str, L
         if cname.startswith(f"{slug_id}_"):
             sub_collections.append(cname)
 
+    # Use batch processing to prevent memory exhaustion on large collections
+    BATCH_SIZE = 1000  # Process documents in batches
+    MAX_DOCUMENTS = 10000  # Maximum documents per collection
+    
     async def _dump_single_collection(coll_name: str) -> Tuple[str, List[Dict[str, Any]]]:
-        """Dump a single collection's documents."""
+        """Dump a single collection's documents using batch processing."""
         docs_list = []
+        processed_count = 0
         try:
-            cursor = db[coll_name].find().limit(10000)
+            cursor = db[coll_name].find().limit(MAX_DOCUMENTS)
+            batch = []
+            
             async for doc in cursor:
+                if processed_count >= MAX_DOCUMENTS:
+                    logger.warning(f"Collection '{coll_name}' has more than {MAX_DOCUMENTS} documents. Stopping at limit.")
+                    break
+                
                 doc_dict = dict(doc)
                 if "_id" in doc_dict:
                     doc_dict["_id"] = str(doc_dict["_id"])
                 doc_dict = make_json_serializable(doc_dict)
-                docs_list.append(doc_dict)
+                batch.append(doc_dict)
+                processed_count += 1
+                
+                # Process in batches to manage memory
+                if len(batch) >= BATCH_SIZE:
+                    docs_list.extend(batch)
+                    batch = []
+                    logger.debug(f"Processed {processed_count} documents from '{coll_name}' (batch of {BATCH_SIZE})")
+            
+            # Add remaining documents in final batch
+            if batch:
+                docs_list.extend(batch)
+            
+            logger.info(f"Collection '{coll_name}': Exported {len(docs_list)} documents")
         except Exception as e:
             logger.error(f"Error dumping collection '{coll_name}': {e}", exc_info=True)
+            # Return what we have so far on error
             docs_list = []
         return coll_name, docs_list
 

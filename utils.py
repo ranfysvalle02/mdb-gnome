@@ -213,6 +213,55 @@ def build_absolute_https_url(request, relative_url: str) -> str:
     return absolute_url
 
 
+def should_use_secure_cookie(request) -> bool:
+    """
+    Determines if cookies should use the secure flag.
+    
+    In production: Always returns True (cookies must be secure).
+    In development: Returns True if HTTPS is detected (behind proxy or direct).
+    
+    Uses request.state.detected_scheme from ProxyAwareHTTPSMiddleware if available,
+    otherwise checks proxy headers or request.url.scheme.
+    
+    Args:
+        request: FastAPI Request object
+        
+    Returns:
+        bool: True if cookies should use secure flag, False otherwise
+    """
+    G_NOME_ENV = os.getenv("G_NOME_ENV", "production").lower()
+    
+    # Always use secure cookies in production for security
+    if G_NOME_ENV == "production":
+        return True
+    
+    # In development, check if HTTPS is being used
+    # Use detected_scheme from middleware if available (handles proxies correctly)
+    if hasattr(request.state, "detected_scheme"):
+        detected_scheme = request.state.detected_scheme
+        if detected_scheme == "https":
+            return True
+        # If not HTTPS and we're behind a proxy, check original scheme
+        if detected_scheme == "http" and hasattr(request.state, "original_scheme"):
+            return request.state.original_scheme == "https"
+    
+    # Fallback: check proxy headers directly
+    forwarded_proto = request.headers.get("X-Forwarded-Proto", "").lower()
+    if forwarded_proto == "https":
+        return True
+    
+    if request.headers.get("X-Forwarded-Ssl", "").lower() == "on":
+        return True
+    
+    forwarded_header = request.headers.get("Forwarded", "")
+    if forwarded_header and "proto=https" in forwarded_header.lower():
+        return True
+    
+    # Final fallback: check request.url.scheme
+    # This should work if middleware hasn't run yet or isn't available
+    return request.url.scheme == "https"
+
+
 def make_json_serializable(obj: Any) -> Any:
     """Recursively converts MongoDB objects (datetime, ObjectId, etc.) to JSON-serializable types."""
     import datetime

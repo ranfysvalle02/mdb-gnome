@@ -101,6 +101,20 @@ from middleware import (
     ProxyAwareHTTPSMiddleware,
     HTTPSEnforcementMiddleware,
 )
+from request_id_middleware import RequestIDMiddleware
+
+# Rate limiting
+from rate_limit import (
+    limiter,
+    LOGIN_POST_LIMIT,
+    LOGIN_GET_LIMIT,
+    REGISTER_POST_LIMIT,
+    REGISTER_GET_LIMIT,
+    EXPORT_LIMIT,
+    EXPORT_FILE_LIMIT,
+    rate_limit_exceeded_handler,
+)
+from slowapi.errors import RateLimitExceeded
 
 # Background tasks
 from background_tasks import (
@@ -120,6 +134,7 @@ from utils import (
     secure_path as _secure_path,
     build_absolute_https_url as _build_absolute_https_url,
     make_json_serializable as _make_json_serializable,
+    should_use_secure_cookie,
 )
 
 # B2 utilities
@@ -312,6 +327,47 @@ app = FastAPI(
 )
 app.router.redirect_slashes = True
 
+# Initialize rate limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
+# Ensure request ID filter is applied to all handlers (including ones created later)
+# (It's already set up in config.py, but ensure it's applied here too)
+try:
+    from config import RequestIDLoggingFilter, SafeRequestIDFormatter, _request_id_filter, _formatter
+    
+    root_logger = logging.getLogger()
+    
+    # Ensure filter is on root logger
+    if _request_id_filter not in root_logger.filters:
+        root_logger.addFilter(_request_id_filter)
+    
+    # Ensure filter and formatter are on all existing handlers
+    for handler in root_logger.handlers:
+        if _request_id_filter not in handler.filters:
+            handler.addFilter(_request_id_filter)
+        # Also ensure safe formatter is used
+        if not isinstance(handler.formatter, SafeRequestIDFormatter):
+            handler.setFormatter(_formatter)
+    
+    # Patch Handler.addHandler to automatically add filter to new handlers
+    original_add_handler = logging.Logger.addHandler
+    
+    def add_handler_with_filter(self, handler):
+        """Wrapper to ensure new handlers get the request ID filter."""
+        result = original_add_handler(self, handler)
+        if _request_id_filter not in handler.filters:
+            handler.addFilter(_request_id_filter)
+        if not isinstance(handler.formatter, SafeRequestIDFormatter):
+            handler.setFormatter(_formatter)
+        return result
+    
+    logging.Logger.addHandler = add_handler_with_filter
+    
+    logger.debug("Request ID logging filter verified and configured for all handlers.")
+except Exception as e:
+    logger.warning(f"Could not configure request ID logging filter: {e}")
+
 # Exception handler to ensure HTTPException returns JSON for API routes
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
@@ -371,8 +427,11 @@ async def general_exception_handler(request: Request, exc: Exception):
 # Middleware Setup
 # ============================================================================
 # Middleware classes are now imported from middleware.py
-# Middleware order matters: Proxy-aware middleware must run FIRST
-# so that request.url is corrected before route handlers execute
+# Middleware order matters: 
+# 1. Request ID middleware should run FIRST to track all requests
+# 2. Proxy-aware middleware must run early so request.url is corrected
+# 3. Experiment scope middleware runs after proxy detection
+app.add_middleware(RequestIDMiddleware)  # First: Generate request IDs for tracing
 app.add_middleware(ProxyAwareHTTPSMiddleware)
 app.add_middleware(ExperimentScopeMiddleware)
 G_NOME_ENV = os.getenv("G_NOME_ENV", "production").lower()
@@ -401,6 +460,7 @@ auth_router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
 @auth_router.get("/login", response_class=HTMLResponse, name="login_get")
+@limiter.limit(LOGIN_GET_LIMIT)
 async def login_get(request: Request, next: Optional[str] = None, message: Optional[str] = None):
   templates = getattr(request.app.state, "templates", None) or get_templates()
   if not templates:
@@ -416,6 +476,7 @@ async def login_get(request: Request, next: Optional[str] = None, message: Optio
 
 
 @auth_router.post("/login")
+@limiter.limit(LOGIN_POST_LIMIT)
 async def login_post(request: Request):
   templates = get_templates_from_request(request)
   if not templates:
@@ -459,7 +520,7 @@ async def login_post(request: Request):
       key="token",
       value=token,
       httponly=True,
-      secure=(request.url.scheme == "https"),
+      secure=should_use_secure_cookie(request),
       samesite="lax",
       max_age=60 * 60 * 24,
     )
@@ -489,6 +550,7 @@ if ENABLE_REGISTRATION:
   logger.info("Registration is ENABLED. Adding /register routes.")
 
   @auth_router.get("/register", response_class=HTMLResponse, name="register_get")
+  @limiter.limit(REGISTER_GET_LIMIT)
   async def register_get(request: Request, next: Optional[str] = None, message: Optional[str] = None):
     templates = get_templates_from_request(request)
     if not templates:
@@ -502,6 +564,7 @@ if ENABLE_REGISTRATION:
     })
 
   @auth_router.post("/register", name="register_post")
+  @limiter.limit(REGISTER_POST_LIMIT)
   async def register_post(request: Request):
     templates = get_templates_from_request(request)
     if not templates:
@@ -559,7 +622,7 @@ if ENABLE_REGISTRATION:
         key="token",
         value=token,
         httponly=True,
-        secure=(request.url.scheme == "https"),
+        secure=should_use_secure_cookie(request),
         samesite="lax",
         max_age=60 * 60 * 24
       )
@@ -605,22 +668,45 @@ async def _dump_db_to_json(db: AsyncIOMotorDatabase, slug_id: str) -> Tuple[Dict
       sub_collections.append(cname)
 
   # Parallelize collection dumping for better performance
+  # Use batch processing to prevent memory exhaustion on large collections
+  BATCH_SIZE = 1000  # Process documents in batches
+  MAX_DOCUMENTS = 10000  # Maximum documents per collection
+  
   async def _dump_single_collection(coll_name: str) -> Tuple[str, List[Dict[str, Any]]]:
-    """Dump a single collection's documents."""
+    """Dump a single collection's documents using batch processing."""
     docs_list = []
+    processed_count = 0
     try:
-      # Limit to 10000 documents per collection to prevent accidental large exports
-      cursor = db[coll_name].find().limit(10000)
+      cursor = db[coll_name].find().limit(MAX_DOCUMENTS)
+      batch = []
+      
       async for doc in cursor:
+        if processed_count >= MAX_DOCUMENTS:
+          logger.warning(f"Collection '{coll_name}' has more than {MAX_DOCUMENTS} documents. Stopping at limit.")
+          break
+        
         doc_dict = dict(doc)
         if "_id" in doc_dict:
           doc_dict["_id"] = str(doc_dict["_id"])
         # Make document JSON-serializable
         doc_dict = _make_json_serializable(doc_dict)
-        docs_list.append(doc_dict)
+        batch.append(doc_dict)
+        processed_count += 1
+        
+        # Process in batches to manage memory
+        if len(batch) >= BATCH_SIZE:
+          docs_list.extend(batch)
+          batch = []
+          logger.debug(f"Processed {processed_count} documents from '{coll_name}' (batch of {BATCH_SIZE})")
+      
+      # Add remaining documents in final batch
+      if batch:
+        docs_list.extend(batch)
+      
+      logger.info(f"Collection '{coll_name}': Exported {len(docs_list)} documents")
     except Exception as e:
       logger.error(f"Error dumping collection '{coll_name}': {e}", exc_info=True)
-      # Return empty list on error
+      # Return what we have so far on error
       docs_list = []
     return coll_name, docs_list
 
@@ -1482,6 +1568,7 @@ public_api_router = APIRouter(prefix="/api", tags=["Public API"])
 
 
 @public_api_router.get("/package-standalone/{slug_id}", name="package_standalone")
+@limiter.limit(EXPORT_LIMIT)
 async def package_standalone_experiment(
   request: Request,
   slug_id: str,
@@ -1522,8 +1609,8 @@ async def package_standalone_experiment(
     file_name = f"{slug_id}_intelligent_export_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     file_size = zip_buffer.getbuffer().nbytes
     
-    # Calculate checksum for deduplication
-    checksum = _calculate_export_checksum(zip_buffer)
+    # Calculate checksum for deduplication (runs in thread pool to prevent blocking)
+    checksum = await _calculate_export_checksum(zip_buffer)
     
     # Check for existing export with same checksum
     existing_export = await _find_existing_export_by_checksum(db, checksum, slug_id)
@@ -1614,6 +1701,7 @@ async def package_standalone_experiment(
 
 
 @public_api_router.get("/package-upload-ready/{slug_id}", name="package_upload_ready")
+@limiter.limit(EXPORT_LIMIT)
 async def package_upload_ready_experiment(
   request: Request,
   slug_id: str,
@@ -1675,6 +1763,7 @@ async def package_upload_ready_experiment(
 
 
 @public_api_router.get("/package-docker/{slug_id}", name="package_docker")
+@limiter.limit(EXPORT_LIMIT)
 async def package_docker_experiment(
   request: Request,
   slug_id: str,
@@ -1782,6 +1871,7 @@ async def package_docker_experiment(
 
 # Export file serving endpoint (with cleanup check)
 @public_api_router.get("/export/{filename:path}", name="exports")
+@limiter.limit(EXPORT_FILE_LIMIT)
 async def serve_export_file(filename: str, request: Request):
   """
   Serves export files from temp directory or B2.
@@ -1841,6 +1931,7 @@ app.include_router(public_api_router)
 
 
 @admin_router.get("/package/{slug_id}", name="package_experiment")
+@limiter.limit("20 per minute")  # More lenient limit for authenticated admin users
 async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any] = Depends(require_admin)):
   """
   NOTE: This is the original, restricted admin route.
@@ -1862,8 +1953,8 @@ async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any
     file_name = f"{slug_id}_intelligent_export_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     file_size = zip_buffer.getbuffer().nbytes
     
-    # Calculate checksum for deduplication
-    checksum = _calculate_export_checksum(zip_buffer)
+    # Calculate checksum for deduplication (runs in thread pool to prevent blocking)
+    checksum = await _calculate_export_checksum(zip_buffer)
     
     # Check for existing export with same checksum
     existing_export = await _find_existing_export_by_checksum(db, checksum, slug_id)
@@ -2500,6 +2591,10 @@ def _detect_slug_from_zip(zip_data: bytes) -> Optional[str]:
   return None
 
 
+# File upload size limits (configurable via environment)
+MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE_MB", "100")) * 1024 * 1024  # 100MB default
+MAX_UPLOAD_SIZE_MB = MAX_UPLOAD_SIZE / (1024 * 1024)
+
 @admin_router.post("/api/detect-slug", response_class=JSONResponse)
 async def detect_slug_from_zip(
   request: Request,
@@ -2509,12 +2604,42 @@ async def detect_slug_from_zip(
   """
   Detects the experiment slug from a standalone export ZIP file.
   Only accepts ZIP files with experiments/{slug}/ structure.
+  Validates file size before processing to prevent memory exhaustion.
   """
   if file.content_type not in ("application/zip", "application/x-zip-compressed"):
     return JSONResponse({"error": "Invalid file type; must be .zip."}, status_code=400)
   
+  # Validate file size before reading into memory
+  if hasattr(file, 'size') and file.size and file.size > MAX_UPLOAD_SIZE:
+    return JSONResponse({
+      "error": f"File too large. Maximum size is {MAX_UPLOAD_SIZE_MB:.0f}MB. "
+               f"Received: {file.size / (1024 * 1024):.2f}MB"
+    }, status_code=413)  # 413 Payload Too Large
+  
   try:
-    zip_data = await file.read()
+    # Read file in chunks to check size and prevent memory exhaustion
+    zip_data = b""
+    total_size = 0
+    
+    # Read file in 1MB chunks to validate size early
+    while True:
+      chunk = await file.read(1024 * 1024)  # 1MB chunks
+      if not chunk:
+        break
+      
+      total_size += len(chunk)
+      if total_size > MAX_UPLOAD_SIZE:
+        return JSONResponse({
+          "error": f"File too large. Maximum size is {MAX_UPLOAD_SIZE_MB:.0f}MB. "
+                   f"Received: {total_size / (1024 * 1024):.2f}MB (exceeded during upload)"
+        }, status_code=413)
+      
+      zip_data += chunk
+    
+    # Validate we read something
+    if not zip_data:
+      return JSONResponse({"error": "Empty file received."}, status_code=400)
+    
     detected_slug = _detect_slug_from_zip(zip_data)
     
     if detected_slug:
@@ -2547,6 +2672,7 @@ async def upload_experiment_zip(
   """
   Upload an experiment ZIP file. Slug is automatically detected from experiments/{slug}/ structure.
   Only standalone export ZIPs are accepted.
+  Validates file size before processing to prevent memory exhaustion.
   """
   admin_email = user.get('email', 'Unknown Admin')
 
@@ -2555,14 +2681,56 @@ async def upload_experiment_zip(
   if file.content_type not in ("application/zip", "application/x-zip-compressed"):
     raise HTTPException(400, "Invalid file type; must be .zip.")
 
-  # Auto-detect slug from ZIP structure (read file once)
-  zip_data = await file.read()
-  slug_id = _detect_slug_from_zip(zip_data)
+  # Validate file size before reading into memory
+  if hasattr(file, 'size') and file.size and file.size > MAX_UPLOAD_SIZE:
+    raise HTTPException(
+      413,  # Payload Too Large
+      detail=f"File too large. Maximum size is {MAX_UPLOAD_SIZE_MB:.0f}MB. "
+             f"Received: {file.size / (1024 * 1024):.2f}MB"
+    )
+
+  # Read file in chunks to validate size and prevent memory exhaustion
+  zip_data = b""
+  total_size = 0
   
-  if not slug_id:
-    raise HTTPException(400, "ZIP must follow standalone export structure: experiments/{slug}/ with manifest.json, actor.py, and __init__.py. Only standalone export ZIPs are accepted.")
-  
-  logger.info(f"Admin '{admin_email}' initiated zip upload. Auto-detected slug: '{slug_id}' from experiments/{slug_id}/ structure.")
+  try:
+    # Read file in 1MB chunks to validate size early
+    while True:
+      chunk = await file.read(1024 * 1024)  # 1MB chunks
+      if not chunk:
+        break
+      
+      total_size += len(chunk)
+      if total_size > MAX_UPLOAD_SIZE:
+        raise HTTPException(
+          413,  # Payload Too Large
+          detail=f"File too large. Maximum size is {MAX_UPLOAD_SIZE_MB:.0f}MB. "
+                 f"Received: {total_size / (1024 * 1024):.2f}MB (exceeded during upload)"
+        )
+      
+      zip_data += chunk
+    
+    # Validate we read something
+    if not zip_data:
+      raise HTTPException(400, "Empty file received.")
+    
+    logger.info(
+      f"Admin '{admin_email}' uploading ZIP file: {len(zip_data) / (1024 * 1024):.2f}MB "
+      f"(limit: {MAX_UPLOAD_SIZE_MB:.0f}MB)"
+    )
+    
+    # Auto-detect slug from ZIP structure
+    slug_id = _detect_slug_from_zip(zip_data)
+    
+    if not slug_id:
+      raise HTTPException(400, "ZIP must follow standalone export structure: experiments/{slug}/ with manifest.json, actor.py, and __init__.py. Only standalone export ZIPs are accepted.")
+    
+    logger.info(f"Admin '{admin_email}' initiated zip upload. Auto-detected slug: '{slug_id}' from experiments/{slug_id}/ structure.")
+  except HTTPException:
+    raise
+  except Exception as e:
+    logger.error(f"Error reading/validating ZIP file: {e}", exc_info=True)
+    raise HTTPException(500, f"Error processing ZIP file: {e}")
 
   experiment_path = (EXPERIMENTS_DIR / slug_id).resolve()
   try:

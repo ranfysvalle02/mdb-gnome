@@ -11,16 +11,18 @@ actors in the same process share a single MongoDB client instance with a
 reasonable connection pool size.
 
 Usage:
-    from mongo_connection_pool import get_shared_mongo_client
+    from mongo_connection_pool import get_shared_mongo_client, get_pool_metrics
     
     client = get_shared_mongo_client(mongo_uri)
     db = client[db_name]
+    metrics = await get_pool_metrics()  # Monitor pool usage
 """
 
 import asyncio
 import logging
+import os
 import threading
-from typing import Optional
+from typing import Optional, Dict, Any
 from motor.motor_asyncio import AsyncIOMotorClient
 
 logger = logging.getLogger(__name__)
@@ -34,8 +36,8 @@ _init_lock = threading.Lock()
 
 def get_shared_mongo_client(
     mongo_uri: str,
-    max_pool_size: int = 10,
-    min_pool_size: int = 1,
+    max_pool_size: Optional[int] = None,
+    min_pool_size: Optional[int] = None,
     server_selection_timeout_ms: int = 5000,
     max_idle_time_ms: int = 45000,
     retry_writes: bool = True,
@@ -49,8 +51,8 @@ def get_shared_mongo_client(
     
     Args:
         mongo_uri: MongoDB connection URI
-        max_pool_size: Maximum connection pool size (default: 10 for actors, vs 50 for main app)
-        min_pool_size: Minimum connection pool size (default: 1)
+        max_pool_size: Maximum connection pool size (default: from env or 10 for actors)
+        min_pool_size: Minimum connection pool size (default: from env or 1)
         server_selection_timeout_ms: Server selection timeout in milliseconds
         max_idle_time_ms: Maximum idle time before closing connections
         retry_writes: Enable automatic retry for write operations
@@ -64,6 +66,17 @@ def get_shared_mongo_client(
         db = client["my_database"]
     """
     global _shared_client
+    
+    # Get pool sizes from environment or use defaults
+    if max_pool_size is None:
+        max_pool_size = int(os.getenv("MONGO_ACTOR_MAX_POOL_SIZE", "10"))
+    if min_pool_size is None:
+        min_pool_size = int(os.getenv("MONGO_ACTOR_MIN_POOL_SIZE", "1"))
+    
+    logger.info(
+        f"MongoDB Actor Pool Configuration: max_pool_size={max_pool_size}, "
+        f"min_pool_size={min_pool_size} (from env or defaults)"
+    )
     
     # Fast path: return existing client if already initialized
     if _shared_client is not None:
@@ -107,7 +120,11 @@ def get_shared_mongo_client(
             
             logger.info(
                 f"Shared MongoDB client created successfully "
-                f"(pool_size={max_pool_size}, min_pool_size={min_pool_size})"
+                f"(max_pool_size={max_pool_size}, min_pool_size={min_pool_size})"
+            )
+            logger.info(
+                f"Connection pool limits: max={max_pool_size}, min={min_pool_size}. "
+                f"Monitor pool usage with get_pool_metrics() to prevent exhaustion."
             )
             
             # Note: Ping verification happens asynchronously on first use
@@ -145,6 +162,74 @@ async def verify_shared_client() -> bool:
     except Exception as e:
         logger.error(f"Shared MongoDB client verification failed: {e}")
         return False
+
+
+async def get_pool_metrics() -> Dict[str, Any]:
+    """
+    Gets connection pool metrics for monitoring.
+    Returns information about pool size, active connections, etc.
+    
+    Returns:
+        Dictionary with pool metrics including:
+        - max_pool_size: Maximum pool size
+        - min_pool_size: Minimum pool size
+        - active_connections: Current active connections (if available)
+        - pool_usage_percent: Estimated pool usage percentage
+    """
+    global _shared_client
+    
+    if _shared_client is None:
+        return {
+            "status": "no_client",
+            "error": "Shared MongoDB client not initialized"
+        }
+    
+    try:
+        # Get topology information if available
+        topology = getattr(_shared_client, '_topology', None)
+        pool_opts = getattr(_shared_client, '_pool_options', {})
+        
+        max_pool_size = pool_opts.get('max_pool_size', getattr(_shared_client, 'max_pool_size', None))
+        min_pool_size = pool_opts.get('min_pool_size', getattr(_shared_client, 'min_pool_size', None))
+        
+        # Try to get active connection count from topology
+        active_connections = None
+        if topology and hasattr(topology, 'servers'):
+            # Count connections across all servers
+            total_connections = 0
+            for server in topology.servers.values():
+                if hasattr(server, 'pool') and server.pool:
+                    if hasattr(server.pool, 'checked_out'):
+                        total_connections += len(server.pool.checked_out)
+            
+            active_connections = total_connections if total_connections > 0 else None
+        
+        metrics = {
+            "status": "connected",
+            "max_pool_size": max_pool_size,
+            "min_pool_size": min_pool_size,
+            "active_connections": active_connections,
+        }
+        
+        # Calculate usage percentage if we have both values
+        if max_pool_size and active_connections is not None:
+            usage_percent = (active_connections / max_pool_size) * 100
+            metrics["pool_usage_percent"] = round(usage_percent, 2)
+            
+            # Warn if pool usage is high
+            if usage_percent > 80:
+                logger.warning(
+                    f"MongoDB connection pool usage is HIGH: {usage_percent:.1f}% "
+                    f"({active_connections}/{max_pool_size}). Consider increasing max_pool_size."
+                )
+        
+        return metrics
+    except Exception as e:
+        logger.error(f"Error getting pool metrics: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "error": str(e)
+        }
 
 
 def close_shared_client():

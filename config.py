@@ -4,11 +4,64 @@ import logging
 from pathlib import Path
 
 # Setup logging first
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO").upper(),
-    format="%(asctime)s | %(name)s | %(levelname)-8s | %(message)s",
+# Create request ID filter that safely handles missing contextvars
+class RequestIDLoggingFilter(logging.Filter):
+    """Logging filter that adds request ID from contextvars if available."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Always set request_id attribute to avoid KeyError in format string
+        try:
+            # Try to import and get request ID from contextvar
+            # This will fail during import time, which is fine
+            try:
+                from request_id_middleware import _request_id_context
+                request_id = _request_id_context.get(None)
+                record.request_id = request_id if request_id else "no-request-id"
+            except (ImportError, AttributeError, RuntimeError):
+                # If contextvar not available (during import, in different thread, etc.)
+                record.request_id = "no-request-id"
+        except Exception:
+            # Catch-all: always set request_id to prevent format errors
+            record.request_id = "no-request-id"
+        return True
+
+
+class SafeRequestIDFormatter(logging.Formatter):
+    """Formatter that safely handles missing request_id attribute."""
+    def format(self, record: logging.LogRecord) -> str:
+        # Ensure request_id exists before formatting
+        if not hasattr(record, 'request_id'):
+            record.request_id = "no-request-id"
+        return super().format(record)
+
+
+# Create the filter instance
+_request_id_filter = RequestIDLoggingFilter()
+
+# Create formatter with safe request ID handling
+_formatter = SafeRequestIDFormatter(
+    fmt="%(asctime)s | [%(request_id)s] | %(name)s | %(levelname)-8s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s | [%(request_id)s] | %(name)s | %(levelname)-8s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+# Apply filter and formatter to root logger and all existing handlers immediately
+root_logger = logging.getLogger()
+# Remove any existing request ID filters to avoid duplicates
+root_logger.filters = [f for f in root_logger.filters if not isinstance(f, RequestIDLoggingFilter)]
+root_logger.addFilter(_request_id_filter)
+
+# Also apply to all existing handlers
+for handler in root_logger.handlers:
+    handler.filters = [f for f in handler.filters if not isinstance(f, RequestIDLoggingFilter)]
+    handler.addFilter(_request_id_filter)
+    # Also set the safe formatter
+    handler.setFormatter(_formatter)
+
 logger = logging.getLogger("modular_labs.config")
 
 # Global Paths

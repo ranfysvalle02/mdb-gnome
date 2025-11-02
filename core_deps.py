@@ -14,6 +14,7 @@ import asyncio
 from pathlib import Path
 from typing import Optional, Dict, Any, Mapping, List, Tuple
 from datetime import datetime, timedelta
+from collections import OrderedDict
 
 from fastapi import (
     Request,
@@ -310,11 +311,20 @@ def require_permission(obj: str, act: str, force_login: bool = True):
 
 # --- Request-Scoped Config Caching ---
 
-# Application-level cache for experiment configs with TTL
+# Application-level cache for experiment configs with TTL and LRU eviction
 # Format: cache_key -> (config_dict, timestamp)
-_experiment_config_app_cache: Dict[str, Tuple[Dict[str, Any], datetime]] = {}
+# Uses LRU eviction with maximum size to prevent unbounded growth
+
+# Cache configuration
+CACHE_TTL_SECONDS = int(os.getenv("EXPERIMENT_CONFIG_CACHE_TTL_SECONDS", "300"))  # 5 minutes TTL
+CACHE_MAX_SIZE = int(os.getenv("EXPERIMENT_CONFIG_CACHE_MAX_SIZE", "100"))  # Maximum number of cache entries
+
+_experiment_config_app_cache: OrderedDict[str, Tuple[Dict[str, Any], datetime]] = OrderedDict()
 _experiment_config_cache_lock = asyncio.Lock()  # Lock for thread-safe cache access
-CACHE_TTL_SECONDS = 300  # 5 minutes TTL for application-level cache
+
+logger.info(
+    f"Experiment config cache initialized: max_size={CACHE_MAX_SIZE}, ttl={CACHE_TTL_SECONDS}s"
+)
 
 
 async def get_experiment_config(
@@ -360,16 +370,18 @@ async def get_experiment_config(
         )
         return request.state.experiment_config_cache[cache_key]
     
-    # 2. Check application-level cache with TTL (thread-safe)
+    # 2. Check application-level cache with TTL and LRU eviction (thread-safe)
     async with _experiment_config_cache_lock:
         if cache_key in _experiment_config_app_cache:
             config, timestamp = _experiment_config_app_cache[cache_key]
             age = datetime.now() - timestamp
             if age < timedelta(seconds=CACHE_TTL_SECONDS):
-                # Cache hit - still valid
+                # Cache hit - still valid, move to end (most recently used)
+                # Move to end for LRU ordering
+                _experiment_config_app_cache.move_to_end(cache_key)
                 logger.debug(
                     f"get_experiment_config: Using application-level cached config for '{slug_id}' "
-                    f"(projection: {projection}, age: {age.total_seconds():.1f}s)"
+                    f"(projection: {projection}, age: {age.total_seconds():.1f}s, cache_size={len(_experiment_config_app_cache)})"
                 )
                 # Also cache in request-scoped cache for this request
                 request.state.experiment_config_cache[cache_key] = config
@@ -399,9 +411,24 @@ async def get_experiment_config(
         # Cache the result in both request-scoped and application-level caches
         request.state.experiment_config_cache[cache_key] = config
         
-        # Update application-level cache (thread-safe)
+        # Update application-level cache with LRU eviction (thread-safe)
         async with _experiment_config_cache_lock:
+            # Remove old entry if it exists (for updates)
+            if cache_key in _experiment_config_app_cache:
+                del _experiment_config_app_cache[cache_key]
+            
+            # Add new entry at end (most recently used)
             _experiment_config_app_cache[cache_key] = (config, datetime.now())
+            
+            # Evict oldest entries if cache exceeds max size (LRU eviction)
+            while len(_experiment_config_app_cache) > CACHE_MAX_SIZE:
+                # Remove oldest entry (first item in OrderedDict)
+                oldest_key = next(iter(_experiment_config_app_cache))
+                del _experiment_config_app_cache[oldest_key]
+                logger.debug(
+                    f"get_experiment_config: LRU cache evicted oldest entry '{oldest_key}' "
+                    f"(cache_size exceeded {CACHE_MAX_SIZE})"
+                )
         
         if config:
             logger.debug(
@@ -421,6 +448,130 @@ async def get_experiment_config(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching experiment config: {e}",
+        )
+
+
+async def get_experiment_configs_batch(
+    request: Request,
+    slug_ids: List[str],
+    projection: Optional[Dict[str, int]] = None,
+) -> Dict[str, Optional[Dict[str, Any]]]:
+    """
+    Batch load multiple experiment configs efficiently.
+    
+    This function loads configs in a single query using MongoDB's $in operator,
+    preventing N+1 query problems when loading multiple configs.
+    
+    Args:
+        request: The FastAPI Request object
+        slug_ids: List of experiment slugs to fetch
+        projection: Optional MongoDB projection dict
+    
+    Returns:
+        Dictionary mapping slug_id to config dict (or None if not found)
+    """
+    if not slug_ids:
+        return {}
+    
+    # Check request-scoped cache first
+    if not hasattr(request.state, "experiment_config_cache"):
+        request.state.experiment_config_cache = {}
+    
+    # Create cache key for batch lookup
+    sorted_slugs = sorted(slug_ids)
+    batch_cache_key = f"batch:{','.join(sorted_slugs)}:{projection or 'all'}"
+    
+    # Check if all requested configs are in request-scoped cache
+    cached_results = {}
+    missing_slugs = []
+    
+    if projection:
+        sorted_projection = ",".join(f"{k}:{v}" for k, v in sorted(projection.items()))
+        for slug_id in slug_ids:
+            cache_key = f"{slug_id}:{sorted_projection}"
+            if cache_key in request.state.experiment_config_cache:
+                cached_results[slug_id] = request.state.experiment_config_cache[cache_key]
+            else:
+                missing_slugs.append(slug_id)
+    else:
+        for slug_id in slug_ids:
+            if slug_id in request.state.experiment_config_cache:
+                cached_results[slug_id] = request.state.experiment_config_cache[slug_id]
+            else:
+                missing_slugs.append(slug_id)
+    
+    # If all configs are cached, return them
+    if not missing_slugs:
+        logger.debug(
+            f"get_experiment_configs_batch: All {len(slug_ids)} configs found in request-scoped cache"
+        )
+        return cached_results
+    
+    # Fetch missing configs from database in batch
+    db = getattr(request.app.state, "mongo_db", None)
+    if not db:
+        logger.error("get_experiment_configs_batch: MongoDB connection not available.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server configuration error: Database connection not available.",
+        )
+    
+    try:
+        # Use $in operator to fetch multiple configs in one query
+        query = {"slug": {"$in": missing_slugs}}
+        cursor = db.experiments_config.find(query, projection)
+        fetched_configs = await cursor.to_list(length=len(missing_slugs))
+        
+        # Create mapping of slug to config
+        fetched_map = {cfg.get("slug"): cfg for cfg in fetched_configs if cfg.get("slug")}
+        
+        # Cache results and build final result dictionary
+        results = {}
+        async with _experiment_config_cache_lock:
+            for slug_id in slug_ids:
+                if slug_id in cached_results:
+                    results[slug_id] = cached_results[slug_id]
+                    continue
+                
+                config = fetched_map.get(slug_id)
+                
+                # Cache in request-scoped cache
+                if projection:
+                    sorted_projection = ",".join(f"{k}:{v}" for k, v in sorted(projection.items()))
+                    cache_key = f"{slug_id}:{sorted_projection}"
+                else:
+                    cache_key = slug_id
+                
+                request.state.experiment_config_cache[cache_key] = config
+                
+                # Update application-level cache
+                if cache_key in _experiment_config_app_cache:
+                    del _experiment_config_app_cache[cache_key]
+                
+                _experiment_config_app_cache[cache_key] = (config, datetime.now())
+                _experiment_config_app_cache.move_to_end(cache_key)
+                
+                # Evict oldest entries if cache exceeds max size
+                while len(_experiment_config_app_cache) > CACHE_MAX_SIZE:
+                    oldest_key = next(iter(_experiment_config_app_cache))
+                    del _experiment_config_app_cache[oldest_key]
+                
+                results[slug_id] = config
+        
+        logger.debug(
+            f"get_experiment_configs_batch: Loaded {len(fetched_map)} configs from DB "
+            f"(cached: {len(cached_results)}, fetched: {len(missing_slugs)})"
+        )
+        
+        return results
+    except Exception as e:
+        logger.error(
+            f"get_experiment_configs_batch: Error fetching configs: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching experiment configs: {e}",
         )
 
 
@@ -475,7 +626,50 @@ async def _invalidate_experiment_config_cache_async(slug_id: str):
         for key in keys_to_remove:
             _experiment_config_app_cache.pop(key, None)
         if keys_to_remove:
-            logger.debug(f"Invalidated {len(keys_to_remove)} cache entry(ies) for '{slug_id}'")
+            logger.debug(
+                f"Invalidated {len(keys_to_remove)} cache entry(ies) for '{slug_id}' "
+                f"(remaining cache_size={len(_experiment_config_app_cache)})"
+            )
+
+
+async def get_cache_metrics() -> Dict[str, Any]:
+    """
+    Get metrics about the experiment config cache.
+    
+    Returns:
+        Dictionary with cache metrics including:
+        - cache_size: Current number of entries
+        - max_size: Maximum cache size
+        - ttl_seconds: Cache TTL in seconds
+        - oldest_entry_age: Age of oldest entry in seconds (if any)
+    """
+    async with _experiment_config_cache_lock:
+        cache_size = len(_experiment_config_app_cache)
+        
+        metrics = {
+            "cache_size": cache_size,
+            "max_size": CACHE_MAX_SIZE,
+            "ttl_seconds": CACHE_TTL_SECONDS,
+            "usage_percent": (cache_size / CACHE_MAX_SIZE * 100) if CACHE_MAX_SIZE > 0 else 0,
+        }
+        
+        # Get oldest entry age if cache has entries
+        if _experiment_config_app_cache:
+            oldest_key = next(iter(_experiment_config_app_cache))
+            _, oldest_timestamp = _experiment_config_app_cache[oldest_key]
+            oldest_age = (datetime.now() - oldest_timestamp).total_seconds()
+            metrics["oldest_entry_age_seconds"] = round(oldest_age, 2)
+        else:
+            metrics["oldest_entry_age_seconds"] = None
+        
+        # Warn if cache usage is high
+        if metrics["usage_percent"] > 80:
+            logger.warning(
+                f"Experiment config cache usage is HIGH: {metrics['usage_percent']:.1f}% "
+                f"({cache_size}/{CACHE_MAX_SIZE}). Consider increasing CACHE_MAX_SIZE."
+            )
+        
+        return metrics
 
 
 def invalidate_experiment_config_cache(slug_id: str):

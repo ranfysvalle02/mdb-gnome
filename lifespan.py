@@ -163,14 +163,22 @@ async def lifespan(app: FastAPI):
         logger.warning("⚠️ Ray library not found. Ray integration is disabled.")
     
     # MongoDB Connection
+    # Get pool sizes from environment or use defaults
+    main_max_pool_size = int(os.getenv("MONGO_MAIN_MAX_POOL_SIZE", "50"))
+    main_min_pool_size = int(os.getenv("MONGO_MAIN_MIN_POOL_SIZE", "10"))
+    
     logger.info(f"Connecting to MongoDB at '{MONGO_URI}'...")
+    logger.info(
+        f"MongoDB Main Pool Configuration: max_pool_size={main_max_pool_size}, "
+        f"min_pool_size={main_min_pool_size} (from env or defaults)"
+    )
     try:
         client = AsyncIOMotorClient(
             MONGO_URI,
             serverSelectionTimeoutMS=5000,
             appname="ModularLabsAPI",
-            maxPoolSize=50,
-            minPoolSize=10,
+            maxPoolSize=main_max_pool_size,
+            minPoolSize=main_min_pool_size,
             maxIdleTimeMS=45000,
             retryWrites=True,
             retryReads=True,
@@ -179,7 +187,14 @@ async def lifespan(app: FastAPI):
         db = client[DB_NAME]
         app.state.mongo_client = client
         app.state.mongo_db = db
-        logger.info(f"✔️ MongoDB connection successful (Database: '{DB_NAME}').")
+        logger.info(
+            f"✔️ MongoDB connection successful (Database: '{DB_NAME}', "
+            f"max_pool_size={main_max_pool_size}, min_pool_size={main_min_pool_size})."
+        )
+        logger.info(
+            f"Connection pool limits configured. Monitor pool usage to prevent exhaustion. "
+            f"Current limits: max={main_max_pool_size}, min={main_min_pool_size}"
+        )
     except Exception as e:
         logger.critical(f"❌ CRITICAL ERROR: Failed to connect to MongoDB: {e}", exc_info=True)
         raise RuntimeError(f"MongoDB connection failed: {e}") from e
