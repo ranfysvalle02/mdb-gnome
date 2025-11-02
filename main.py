@@ -1681,6 +1681,14 @@ def _create_intelligent_export_zip(
     else:
       logger.warning("async_mongo_wrapper.py not found - export may not work correctly")
     
+    # Add mongo_connection_pool.py (required for actors)
+    mongo_pool = source_dir / "mongo_connection_pool.py"
+    if mongo_pool.is_file():
+      zf.write(mongo_pool, "mongo_connection_pool.py")
+      logger.debug("Included mongo_connection_pool.py")
+    else:
+      logger.warning("mongo_connection_pool.py not found - actors may not work correctly")
+    
     # Add experiment_db.py (required for actor initialization)
     experiment_db = source_dir / "experiment_db.py"
     if experiment_db.is_file():

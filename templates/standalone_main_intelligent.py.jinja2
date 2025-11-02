@@ -35,12 +35,10 @@ from fastapi.templating import Jinja2Templates
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 # Import experiment-specific dependencies
-try:
-    from async_mongo_wrapper import ScopedMongoWrapper, AsyncAtlasIndexManager
-    MONGO_WRAPPER_AVAILABLE = True
-except ImportError:
-    MONGO_WRAPPER_AVAILABLE = False
-    logging.warning("async_mongo_wrapper not available. Using direct MongoDB access.")
+# Note: async_mongo_wrapper.py is included in the export package and should always be available
+# This wrapper provides ScopedMongoWrapper and AsyncAtlasIndexManager for standalone use
+from async_mongo_wrapper import ScopedMongoWrapper, AsyncAtlasIndexManager
+MONGO_WRAPPER_AVAILABLE = True
 
 # --------------------------------------------------------------------------
 # Logging Configuration
@@ -145,7 +143,7 @@ async def seed_database():
 
 async def ensure_indexes():
     """Ensure MongoDB indexes from experiment manifest."""
-    if mongo_db is None or not MONGO_WRAPPER_AVAILABLE:
+    if mongo_db is None:
         return
     
     if "managed_indexes" not in DB_CONFIG:
@@ -297,18 +295,21 @@ async def require_admin(current_user: Optional[Dict[str, Any]] = Depends(get_cur
     return current_user or {"email": "admin@standalone", "is_admin": True}
 
 async def get_scoped_db(request: Request) -> "ScopedMongoWrapper":
-    """Provide scoped database wrapper."""
-    if not MONGO_WRAPPER_AVAILABLE or mongo_db is None:
+    """Provide scoped database wrapper for standalone use."""
+    if mongo_db is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database not available."
         )
     
     # Create scoped wrapper with experiment slug as scope
+    # In standalone mode, we use the experiment slug as both read and write scope
+    # This ensures the experiment can access its own data independently
     return ScopedMongoWrapper(
         real_db=mongo_db,
         read_scopes=[SLUG],
-        write_scope=SLUG
+        write_scope=SLUG,
+        auto_index=True  # Enable automatic index creation in standalone mode
     )
 
 # Create a minimal core_deps module
@@ -673,10 +674,8 @@ class ExperimentScopeMiddleware(BaseHTTPMiddleware):
     """Middleware to set slug_id for experiment routes."""
     async def dispatch(self, request: Request, call_next: ASGIApp):
         path = request.url.path
-        if path.startswith(f"/experiments/{SLUG}"):
-            request.state.slug_id = SLUG
-        else:
-            request.state.slug_id = None
+        # Always set slug_id to the experiment slug for standalone mode
+        request.state.slug_id = SLUG
         response = await call_next(request)
         return response
 
@@ -751,19 +750,143 @@ async def debug_db(request: Request):
 # --------------------------------------------------------------------------
 # Import and Mount Experiment Router
 # --------------------------------------------------------------------------
+# CRITICAL: We need to inject our get_actor_handle BEFORE the experiment module
+# is imported, because Python decorators evaluate their arguments at decoration time.
+# When @bp.post("/generate", Depends(get_actor_handle)) runs, Python evaluates
+# get_actor_handle immediately and FastAPI stores that function reference.
+
+# Create a standalone get_actor_handle function that the experiment routes can use
+async def get_standalone_actor_handle(request: Request) -> "ray.actor.ActorHandle":
+    """
+    Standalone version of get_actor_handle that works with the standalone app setup.
+    This replaces the platform's get_actor_handle dependency.
+    """
+    if not hasattr(request.app.state, "actor_handle"):
+        logger.error(f"[{SLUG}] Actor handle not found in app.state")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Actor not initialized. Check server logs."
+        )
+    return request.app.state.actor_handle
+
+# Add the experiment directory to the path before importing
 sys.path.insert(0, str(BASE_DIR))
+
+# CRITICAL FIX: We need to replace get_actor_handle in a way that works with FastAPI's Depends
+# The problem: When @bp.post("/generate", Depends(get_actor_handle)) runs, Python evaluates
+# get_actor_handle and FastAPI stores that function reference. So we need our version
+# to be in place BEFORE the decorators run.
+
+# Strategy: Use a class with __call__ that FastAPI can use as a dependency
+# This way, we can replace it in the module and FastAPI will call it at request time
+class StandaloneActorHandleDependency:
+    """Dependency class that FastAPI can use to get the actor handle."""
+    async def __call__(self, request: Request) -> "ray.actor.ActorHandle":
+        if not hasattr(request.app.state, "actor_handle"):
+            logger.error(f"[{SLUG}] Actor handle not found in app.state")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Actor not initialized. Check server logs."
+            )
+        return request.app.state.actor_handle
+
+# Create an instance for FastAPI to use
+standalone_actor_handle_dep = StandaloneActorHandleDependency()
+
+# Also create a function version for compatibility
+async def get_standalone_actor_handle_func(request: Request) -> "ray.actor.ActorHandle":
+    """Function version of get_actor_handle for compatibility."""
+    return await standalone_actor_handle_dep(request)
+
+# Use importlib to load and patch the module
+import importlib.util
+import importlib
+
 try:
     mod_name = f"experiments.{SLUG.replace('-', '_')}"
-    exp_mod = __import__(mod_name, fromlist=["bp"])
+    module_path = BASE_DIR / "experiments" / SLUG / "__init__.py"
+    
+    if not module_path.exists():
+        raise FileNotFoundError(f"Experiment module not found: {module_path}")
+    
+    # Create spec and module
+    spec = importlib.util.spec_from_file_location(mod_name, module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Could not create spec for module '{mod_name}'")
+    
+    exp_mod = importlib.util.module_from_spec(spec)
+    
+    # Pre-inject our dependency BEFORE module code runs
+    # When routes evaluate Depends(get_actor_handle), they'll get our version
+    exp_mod.get_actor_handle = get_standalone_actor_handle_func
+    
+    # Store in sys.modules BEFORE executing so imports work
+    sys.modules[mod_name] = exp_mod
+    
+    # Now execute the module - our get_actor_handle will be used when decorators run
+    spec.loader.exec_module(exp_mod)
+    
+    # CRITICAL: Replace it again AFTER module execution in case module redefined it
+    # This ensures all routes use our version
+    exp_mod.get_actor_handle = get_standalone_actor_handle_func
+    
+    logger.info(f"✅ Injected standalone get_actor_handle into module '{mod_name}'.")
+    
+    # Verify the router exists
     if not hasattr(exp_mod, "bp"):
         raise RuntimeError(f"Module '{mod_name}' has no 'bp' APIRouter.")
+    
     exp_router = getattr(exp_mod, "bp")
+    
+    # CRITICAL FIX: Replace get_actor_handle in module AFTER module loads
+    # The module may have defined its own version, but we need to use ours
+    # Store the original if it exists (for debugging)
+    original_get_actor_handle = getattr(exp_mod, "get_actor_handle", None)
+    exp_mod.get_actor_handle = get_standalone_actor_handle_func
+    logger.info(f"✅ Replaced get_actor_handle in module '{mod_name}' (original: {original_get_actor_handle is not None})")
+    
+    # Now patch all routes to use our dependency
+    # FastAPI stores dependencies in route.dependant.dependencies
+    # We need to replace the dependency.call references
+    if hasattr(exp_router, "routes"):
+        patched_routes = 0
+        for route in exp_router.routes:
+            if hasattr(route, "dependant") and route.dependant and route.dependant.dependencies:
+                for dep in route.dependant.dependencies:
+                    # Check if this dependency calls get_actor_handle
+                    # The dependency.call is the function that was captured
+                    if hasattr(dep, "call"):
+                        # If it's the module's original get_actor_handle, replace it
+                        if dep.call == original_get_actor_handle or (original_get_actor_handle is None and hasattr(exp_mod, "get_actor_handle") and dep.call == getattr(exp_mod, "get_actor_handle", None)):
+                            # Replace the dependency's call with our version
+                            dep.call = get_standalone_actor_handle_func
+                            patched_routes += 1
+                            logger.debug(f"Patched dependency on route: {getattr(route, 'path', '?')}")
+        if patched_routes > 0:
+            logger.info(f"✅ Patched {patched_routes} route dependency references to use standalone get_actor_handle")
+    
+    # Include the router
     app.include_router(exp_router, prefix=f"/experiments/{SLUG}", tags=[f"Experiment: {SLUG}"])
-    logger.info(f"Included APIRouter for experiment '{SLUG}'.")
+    
+    route_count = len(exp_router.routes) if hasattr(exp_router, "routes") else 0
+    logger.info(f"✅ Included APIRouter for experiment '{SLUG}' with {route_count} route(s).")
+    
+    # Log route details for debugging
+    if hasattr(exp_router, "routes"):
+        for route in exp_router.routes:
+            if hasattr(route, "path"):
+                methods = ", ".join(route.methods) if hasattr(route, "methods") and route.methods else "?"
+                logger.info(f"  📍 {methods} {route.path}")
+            
+except FileNotFoundError as e:
+    logger.error(f"❌ Experiment module file not found: {e}")
 except ModuleNotFoundError as e:
-    logger.error(f"No local experiment module found for '{SLUG}': {e}")
+    logger.error(f"❌ No local experiment module found for '{SLUG}': {e}")
+    logger.error(f"   Ensure 'experiments/{SLUG.replace('-', '_')}/__init__.py' exists.")
 except Exception as e:
-    logger.error(f"Failed to include experiment router: {e}", exc_info=True)
+    logger.error(f"❌ Failed to include experiment router: {e}", exc_info=True)
+    import traceback
+    logger.error(traceback.format_exc())
 
 # --------------------------------------------------------------------------
 # Main Entry Point

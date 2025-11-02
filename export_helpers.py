@@ -416,6 +416,10 @@ def create_zip_to_disk(
             if mongo_wrapper.is_file():
                 zf.write(mongo_wrapper, "async_mongo_wrapper.py")
             
+            mongo_pool = source_dir / "mongo_connection_pool.py"
+            if mongo_pool.is_file():
+                zf.write(mongo_pool, "mongo_connection_pool.py")
+            
             experiment_db = source_dir / "experiment_db.py"
             if experiment_db.is_file():
                 zf.write(experiment_db, "experiment_db.py")
