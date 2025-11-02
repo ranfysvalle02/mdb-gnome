@@ -5,19 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">  
     <title>LABS Dashboard</title>  
     <style>
-        /* MongoDB Theme Colors */
+        /* --- MongoDB Theme Colors & Variables --- */
         :root {
             --mongodb-green: #00ED64;
-            --mongodb-dark-green: #13AA52;
+            --mongodb-dark-green: #00BF57; /* Slightly brighter for better contrast on hover */
             --mongodb-dark-blue: #001E2B;
             --mongodb-medium-blue: #0F1419;
-            --mongodb-bg: #0A0E27;
-            --text-primary: #E8E8E8;
+            --mongodb-bg: #03081A; /* Even darker base */
+            --text-primary: #F0F0F0; /* Brighter text */
             --text-secondary: #B0B0B0;
-            --card-bg: #1A1F35;
-            --border-color: #2A3441;
+            --card-bg: rgba(26, 31, 53, 0.7); /* Semi-transparent background for glass effect */
+            --border-color: rgba(42, 52, 65, 0.8);
+            --glow-color: rgba(0, 237, 100, 0.5);
         }
 
+        /* --- Base Reset and Setup --- */
         * {
             margin: 0;
             padding: 0;
@@ -25,17 +27,20 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             margin: 0;
-            padding: 40px;
+            padding: 50px 80px; /* More generous padding */
             background: var(--mongodb-bg);
             color: var(--text-primary);
             position: relative;
             min-height: 100vh;
             overflow-x: hidden;
+            overflow-y: auto; /* Ensure scrolling is smooth */
         }
 
-        /* Particle Animation Background */
+        /* --- Particle Animation Background (MAGICAL UX) --- */
+        
+        /* 1. Subtle, slow background gradient shift */
         body::before {
             content: '';
             position: fixed;
@@ -43,12 +48,12 @@
             left: 0;
             width: 100%;
             height: 100%;
-            z-index: -1;
-            background: radial-gradient(ellipse at center, var(--mongodb-medium-blue) 0%, var(--mongodb-dark-blue) 100%);
-            animation: particle-float 20s ease-in-out infinite;
+            z-index: -2; /* Background layer */
+            background: radial-gradient(circle at 50% 120%, var(--mongodb-medium-blue) 0%, var(--mongodb-dark-blue) 100%);
+            animation: background-pulse 40s ease-in-out infinite;
         }
 
-        /* Particle effect using multiple pseudo-elements */
+        /* 2. More complex and widespread particle effect */
         body::after {
             content: '';
             position: fixed;
@@ -56,197 +61,311 @@
             left: 0;
             width: 100%;
             height: 100%;
-            z-index: -1;
+            z-index: -1; /* Particle layer */
             background-image: 
-                radial-gradient(2px 2px at 20px 30px, var(--mongodb-green), transparent),
-                radial-gradient(2px 2px at 60px 70px, rgba(0, 237, 100, 0.3), transparent),
-                radial-gradient(1px 1px at 90px 40px, rgba(0, 237, 100, 0.4), transparent),
-                radial-gradient(1px 1px at 130px 80px, rgba(19, 170, 82, 0.3), transparent),
-                radial-gradient(2px 2px at 160px 30px, rgba(0, 237, 100, 0.2), transparent),
-                radial-gradient(1px 1px at 200px 60px, rgba(0, 237, 100, 0.3), transparent),
-                radial-gradient(2px 2px at 240px 90px, rgba(19, 170, 82, 0.4), transparent),
-                radial-gradient(1px 1px at 280px 50px, rgba(0, 237, 100, 0.2), transparent);
+                radial-gradient(1px 1px at 10% 20%, var(--glow-color), transparent),
+                radial-gradient(2px 2px at 90% 80%, rgba(0, 237, 100, 0.4), transparent),
+                radial-gradient(1.5px 1.5px at 50% 50%, rgba(0, 237, 100, 0.6), transparent),
+                radial-gradient(1px 1px at 30% 70%, rgba(19, 170, 82, 0.5), transparent),
+                radial-gradient(2.5px 2.5px at 70% 30%, rgba(0, 237, 100, 0.3), transparent),
+                radial-gradient(1px 1px at 20% 90%, rgba(0, 237, 100, 0.7), transparent),
+                radial-gradient(2px 2px at 80% 10%, rgba(19, 170, 82, 0.6), transparent);
             background-repeat: repeat;
-            background-size: 300px 200px;
-            animation: particle-drift 30s linear infinite;
-            opacity: 0.6;
+            background-size: 400px 400px; /* Larger area for background-size */
+            animation: particle-drift 50s linear infinite alternate, particle-twinkle 2s ease-in-out infinite alternate;
+            opacity: 0.7;
+            pointer-events: none;
         }
 
-        @keyframes particle-float {
-            0%, 100% { transform: translateY(0px) scale(1); }
-            50% { transform: translateY(-20px) scale(1.05); }
+        @keyframes background-pulse {
+            0%, 100% { transform: scale(1) translate(0, 0); }
+            50% { transform: scale(1.1) translate(10px, -10px); }
         }
 
         @keyframes particle-drift {
             0% { transform: translate(0, 0); }
-            100% { transform: translate(300px, 200px); }
+            100% { transform: translate(500px, 400px); }
+        }
+        
+        @keyframes particle-twinkle {
+            0% { opacity: 0.7; }
+            50% { opacity: 1; }
+            100% { opacity: 0.7; }
         }
 
-        /* Additional floating particles */
-        @keyframes float {
-            0%, 100% { transform: translateY(0px) translateX(0px); opacity: 0.3; }
-            25% { transform: translateY(-30px) translateX(10px); opacity: 0.6; }
-            50% { transform: translateY(-60px) translateX(-10px); opacity: 0.4; }
-            75% { transform: translateY(-30px) translateX(5px); opacity: 0.5; }
-        }
 
-        h1 {
-            color: var(--text-primary);
-            margin-bottom: 30px;
-            font-size: 2.5em;
-            text-shadow: 0 0 10px rgba(0, 237, 100, 0.3);
-        }
-
-        ul {
-            list-style-type: none;
-            padding: 0;
+        /* --- Logo Styling --- */
+        .logo-container {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 40px;
             position: relative;
             z-index: 1;
+            animation: fadeInDown 0.8s ease-out;
         }
 
-        li {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            margin-bottom: 20px;
-            padding: 25px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), 0 0 10px rgba(0, 237, 100, 0.1);
-            transition: transform 0.3s ease, box-shadow 0.3s ease;
-            position: relative;
+        .logo {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
             overflow: hidden;
+            flex-shrink: 0;
+            box-shadow: 0 0 20px rgba(0, 237, 100, 0.4);
+            border: 2px solid rgba(0, 237, 100, 0.3);
+            background: var(--mongodb-dark-blue);
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
-        li::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
+        .logo img {
             width: 100%;
             height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(0, 237, 100, 0.1), transparent);
-            transition: left 0.5s ease;
+            object-fit: cover;
+            object-position: center 50%;
+            /* Clever trickery: Position to capture the full gnome including his hat
+               by centering slightly below middle to ensure the hat isn't cut off */
+            transform: scale(1.4);
+            transition: transform 0.3s ease;
         }
 
-        li:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4), 0 0 20px rgba(0, 237, 100, 0.2);
-            border-color: var(--mongodb-green);
+        .logo:hover img {
+            transform: scale(1.5);
         }
 
-        li:hover::before {
-            left: 100%;
+        /* --- Typography and Header --- */
+        h1 {
+            color: var(--text-primary);
+            margin-bottom: 0;
+            font-size: 3em; /* Larger, bolder title */
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            text-shadow: 0 0 15px rgba(0, 237, 100, 0.4);
+            position: relative;
+            z-index: 1;
+            /* Subtle title animation */
+            animation: fadeInDown 0.8s ease-out;
         }
 
-        a {
-            text-decoration: none;
-            color: var(--mongodb-green);
-            font-size: 1.2em;
-            font-weight: 600;
-            transition: color 0.3s ease, text-shadow 0.3s ease;
-        }
-
-        a:hover {
-            color: var(--mongodb-dark-green);
-            text-shadow: 0 0 8px rgba(0, 237, 100, 0.5);
-        }
-
-        p {
-            color: var(--text-secondary);
-            margin: 10px 0;
-        }
-
-        small {
-            color: var(--text-secondary);
-            font-size: 0.85em;
-        }
-
-        code {
-            background: var(--mongodb-dark-blue);
-            color: var(--mongodb-green);
-            padding: 3px 8px;
-            border-radius: 4px;
-            font-family: 'Monaco', 'Courier New', monospace;
-            border: 1px solid rgba(0, 237, 100, 0.2);
+        @keyframes fadeInDown {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         .header-nav {
             text-align: right;
             margin-bottom: 30px;
-            font-size: 0.9em;
+            font-size: 0.95em;
             position: relative;
-            z-index: 1;
+            z-index: 10;
+            animation: fadeIn 1s ease-out;
         }
 
         .header-nav a {
             color: var(--text-secondary);
             font-size: 1em;
-            margin-left: 10px;
-            transition: color 0.3s ease;
+            margin-left: 15px;
+            padding: 5px 0;
+            transition: color 0.3s ease, text-shadow 0.3s ease;
         }
 
         .header-nav a:hover {
             color: var(--mongodb-green);
+            text-shadow: 0 0 5px rgba(0, 237, 100, 0.6);
         }
 
         .header-nav strong {
-            color: var(--text-primary);
+            color: var(--mongodb-green);
+            font-weight: 700;
         }
 
-        /* --- STYLES FOR EXPORT BUTTON --- */
-        .experiment-actions {
-            margin-top: 15px;
+
+        /* --- List and Card Styling (The Core Magic) --- */
+        ul {
+            list-style-type: none;
+            padding: 0;
+            position: relative;
+            z-index: 5;
         }
 
-        .export-button {
-            background-color: var(--mongodb-green);
-            color: var(--mongodb-dark-blue);
-            padding: 10px 16px;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
+        li {
+            /* Glassmorphism/Neumorphism Hybrid */
+            background: var(--card-bg); 
+            backdrop-filter: blur(8px); /* Frosted glass effect */
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid var(--border-color);
+            border-radius: 16px; /* Slightly rounder corners */
+            margin-bottom: 25px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 25px rgba(0, 237, 100, 0.08);
+            transition: transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), box-shadow 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), border-color 0.4s ease;
+            position: relative;
+            overflow: hidden;
+            opacity: 0; /* For load animation */
+            transform: translateY(20px); /* For load animation */
+        }
+        
+        /* Load-in effect for list items */
+        li.loaded {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        li::before {
+            /* Subtle inner glow on hover preparation */
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at 100% 100%, transparent 50%, var(--mongodb-green) 150%);
+            opacity: 0;
+            mix-blend-mode: soft-light;
+            transition: opacity 0.5s ease;
+            pointer-events: none;
+        }
+        
+        /* Animated border/glow on hover */
+        li:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 15px 40px rgba(0, 0, 0, 0.6), 0 0 30px var(--glow-color);
+            border-image: linear-gradient(45deg, var(--mongodb-green), var(--mongodb-dark-green), #00ED64) 1;
+            border-width: 1px;
+            border-style: solid;
+        }
+
+        li:hover::before {
+            opacity: 0.1; /* Activate subtle inner glow on hover */
+        }
+
+        a {
             text-decoration: none;
-            font-size: 0.9em;
-            font-weight: 600;
-            display: inline-block;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(0, 237, 100, 0.3);
+            color: var(--mongodb-green);
+            font-size: 1.4em; /* Larger link */
+            font-weight: 700;
+            letter-spacing: -0.2px;
+            transition: color 0.3s ease, text-shadow 0.3s ease;
+            display: inline-block; /* Allows transform/shadow on hover */
         }
 
-        .export-button:hover {
-            background-color: var(--mongodb-dark-green);
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(0, 237, 100, 0.4);
+        a:hover {
+            color: var(--mongodb-dark-green);
+            text-shadow: 0 0 10px rgba(0, 237, 100, 0.7);
+            transform: translateX(3px); /* Subtle shift for movement */
         }
 
-        .export-button:disabled {
-            background-color: #444;
-            cursor: not-allowed;
-            box-shadow: none;
+        p {
+            color: var(--text-secondary);
+            margin: 12px 0;
+            font-size: 1.05em;
+            line-height: 1.5;
         }
 
-        /* --- STYLES FOR BADGES --- */
+        small {
+            color: var(--text-secondary);
+            opacity: 0.8;
+            font-size: 0.85em;
+            display: block; /* Ensure it's on its own line */
+            margin-top: 5px;
+        }
+
+        code {
+            background: rgba(0, 30, 43, 0.6); /* Slightly darker/more transparent */
+            color: var(--mongodb-green);
+            padding: 4px 8px;
+            border-radius: 5px;
+            font-family: 'Fira Code', 'Monaco', 'Courier New', monospace;
+            border: 1px solid rgba(0, 237, 100, 0.3);
+            font-weight: 500;
+        }
+        
+        /* --- BADGES --- */
         .badge {
-            display: inline-block;
             padding: 4px 10px;
             margin-left: 10px;
-            border-radius: 6px;
-            font-size: 0.75em;
-            font-weight: 700;
+            border-radius: 9999px; /* Pill shape */
+            font-size: 0.7em;
+            font-weight: 800;
             text-transform: uppercase;
             letter-spacing: 0.5px;
+            transition: transform 0.2s ease;
+            display: inline-block;
         }
 
         .badge-public {
             background-color: var(--mongodb-green);
             color: var(--mongodb-dark-blue);
-            box-shadow: 0 2px 8px rgba(0, 237, 100, 0.3);
+            box-shadow: 0 2px 10px rgba(0, 237, 100, 0.4);
         }
 
         .badge-auth {
             background-color: #DC143C;
             color: white;
-            box-shadow: 0 2px 8px rgba(220, 20, 60, 0.3);
+            box-shadow: 0 2px 10px rgba(220, 20, 60, 0.4);
         }
+        
+        .badge:hover {
+            transform: scale(1.05);
+        }
+
+        /* --- EXPORT BUTTON --- */
+        .experiment-actions {
+            margin-top: 20px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(42, 52, 65, 0.5); /* Subtle separator */
+        }
+
+        .export-button {
+            background: linear-gradient(90deg, var(--mongodb-green) 0%, var(--mongodb-dark-green) 100%);
+            color: var(--mongodb-dark-blue);
+            padding: 12px 20px; /* Slightly larger padding */
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 1em;
+            font-weight: 700;
+            display: inline-block;
+            transition: all 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
+            box-shadow: 0 6px 20px rgba(0, 237, 100, 0.5);
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* Hover effect: Glow and subtle lift */
+        .export-button:hover {
+            background: var(--mongodb-dark-green);
+            transform: translateY(-3px) scale(1.01);
+            box-shadow: 0 8px 30px rgba(0, 237, 100, 0.7), 0 0 5px var(--mongodb-green);
+        }
+        
+        /* Active/Click effect: Press down */
+        .export-button:active {
+            transform: translateY(0);
+            box-shadow: 0 3px 10px rgba(0, 237, 100, 0.3);
+        }
+
+        .export-button:disabled {
+            background-color: #444;
+            color: #ccc;
+            cursor: not-allowed;
+            box-shadow: none;
+            transform: none;
+        }
+        
+        /* Footer/GitHub link styling refinement */
+        .header-nav svg {
+            transition: transform 0.3s ease, fill 0.3s ease;
+            color: var(--text-secondary); /* Use color for SVG fill */
+        }
+        
+        .header-nav a:hover svg {
+            color: var(--mongodb-green);
+            transform: scale(1.1);
+        }
+
     </style>
     <script>
         async function downloadExport(url, slugId) {
@@ -343,8 +462,9 @@
             }
         }
 
-        // Add event listeners for export buttons using data attributes
+        // Add event listeners for export buttons AND for the list item load animation
         document.addEventListener('DOMContentLoaded', function() {
+            // 1. Export button listeners (original functionality)
             document.querySelectorAll('.export-button').forEach(function(button) {
                 button.addEventListener('click', function(e) {
                     e.preventDefault();
@@ -356,6 +476,15 @@
                     }
                 });
             });
+
+            // 2. Load-in animation for list items (Magical UX)
+            const listItems = document.querySelectorAll('ul > li');
+            listItems.forEach((item, index) => {
+                // Apply the 'loaded' class with a stagger delay
+                setTimeout(() => {
+                    item.classList.add('loaded');
+                }, index * 100); // 100ms stagger between items
+            });
         });
     </script>
 </head>
@@ -365,7 +494,7 @@
             Logged in as <strong>{{ current_user.email }}</strong>  
             {% if current_user.is_admin %}  
                 | <a href="{{ request.url_for('admin_dashboard') }}"  
-                     style="color: #dc3545; font-weight: 600;">  
+                     style="color: #dc3545; font-weight: 700; text-shadow: 0 0 5px rgba(220, 20, 60, 0.5);">  
                      Admin Panel  
                   </a>  
             {% endif %}  
@@ -384,11 +513,16 @@
         </a>
     </div>  
   
-    <h1>🔬 Active Experiments</h1>
+    <div class="logo-container">
+        <div class="logo">
+            <img src="https://github.com/ranfysvalle02/mdb-gnome/raw/main/gnome.png" alt="MDB Gnome Logo">
+        </div>
+        <h1>🔬 Active Experiments</h1>
+    </div>
     
     <ul>  
         {% for slug, meta in experiments.items() %}  
-            <li>  
+            <li style="animation-delay: {{ loop.index0 * 0.1 }}s;">  
                 <strong>  
                     <a href="{{ meta.url }}">{{ meta.name }}</a>  
                 </strong>  
