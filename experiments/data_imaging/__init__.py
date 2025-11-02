@@ -7,12 +7,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from starlette import status
 from typing import Any 
 
-from core_deps import get_scoped_db
-
-try:
-    from async_mongo_wrapper import ScopedMongoWrapper
-except ImportError:
-    from core_deps import ScopedMongoWrapper # Fallback import
+# Core dependencies
+# Note: We don't need database dependency here since routes only delegate to actors
+# If routes need direct database access, use ExperimentDB via get_experiment_db from core_deps
       
 # --- This is the *only* local import ---
 from .actor import ExperimentActor
@@ -20,17 +17,12 @@ from .actor import ExperimentActor
 logger = logging.getLogger(__name__)
 bp = APIRouter()
 
-# --- Actor Handle Dependency (FIXED) ---
-# This now matches the "working" pattern from click_tracker:
-# 1. It's an `async def` function, not a factory.
-# 2. It `Depends` on `get_scoped_db`.
-# 3. It keeps the superior dynamic slug_id logic.
+# --- Actor Handle Dependency ---
+# Routes only delegate to actors, so no database dependency needed here.
+# If routes need direct database access, use ExperimentDB via get_experiment_db from core_deps.
 
 async def get_actor_handle(
-    request: Request,
-    # This dependency is present in the working click_tracker.
-    # It ensures all platform dependencies are ready.
-    db: ScopedMongoWrapper = Depends(get_scoped_db) 
+    request: Request
 ) -> "ray.actor.ActorHandle":
     """
     FastAPI Dependency to get the handle for the experiment's

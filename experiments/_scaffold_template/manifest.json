@@ -1,8 +1,0 @@
-{  
-  "name": "Scaffold Template",  
-  "description": "A scaffold template for creating new experiments. This template is not a real experiment.",  
-  "status": "draft",  
-  "auth_required": false,  
-  "data_scope": ["self"]  
-}
-

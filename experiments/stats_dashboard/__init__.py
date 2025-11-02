@@ -19,9 +19,10 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from starlette import status # Import status for HTTP error codes
 
-# Core Dependencies for DB & Auth
-from core_deps import get_scoped_db, get_current_user
-from async_mongo_wrapper import ScopedMongoWrapper
+# Core Dependencies for Auth
+from core_deps import get_current_user
+# Note: We don't need get_scoped_db here since routes only delegate to actors
+# If routes need direct database access, use ExperimentDB via get_experiment_db from core_deps
 
 # IMPORTANT: Import the "ExperimentActor" (renamed from StatsDashboardActor)
 from .actor import ExperimentActor
@@ -36,15 +37,16 @@ bp = APIRouter()
 
 
 async def get_actor_handle(
-    request: Request,
-    db: ScopedMongoWrapper = Depends(get_scoped_db)
+    request: Request
 ) -> "ray.actor.ActorHandle":
     """
     FastAPI dependency to get the Stats Dashboard actor.
 
-    FIX: Added a gatekeeper check for Ray availability to prevent ConnectionError.
-    FIX: Removed the complex fallback creation, relying on main.py's
-         `reload_active_experiments` to ensure the actor is running.
+    Routes delegate all database operations to the actor, so no database
+    dependency is needed here. If routes need direct database access,
+    use ExperimentDB via get_experiment_db from core_deps.
+    
+    Note: Relies on main.py's `reload_active_experiments` to ensure the actor is running.
     """
     
     # 1. FIX: Check global Ray availability state set during main.py lifespan
@@ -77,7 +79,6 @@ async def get_actor_handle(
 @bp.get("/", response_class=HTMLResponse, name="stats-dashboard_index")
 async def index(
     request: Request,
-    db: ScopedMongoWrapper = Depends(get_scoped_db),
     current_user: Optional[Mapping] = Depends(get_current_user),
     actor: "ray.actor.ActorHandle" = Depends(get_actor_handle)
 ):

@@ -9,14 +9,9 @@ from pathlib import Path
 import ray
 from starlette import status # Import status for 503
 
-# Core dependencies and DB scoping
-from core_deps import get_scoped_db
-
-try:
-    # Import for type-hinting, though not strictly required
-    from async_mongo_wrapper import ScopedMongoWrapper
-except ImportError:
-    from core_deps import ScopedMongoWrapper # Fallback import
+# Core dependencies
+# Note: We don't need database dependency here since routes only delegate to actors
+# If routes need direct database access, use ExperimentDB via get_experiment_db from core_deps
       
 # Our Ray Actor definition for this experiment  
 from .actor import ExperimentActor
@@ -31,9 +26,7 @@ templates = Jinja2Templates(directory=str(EXPERIMENT_DIR / "templates"))
 bp = APIRouter()  
   
 async def get_actor_handle(  
-    request: Request,  
-    # We still need the scoped DB object to get the write/read scopes easily
-    db: ScopedMongoWrapper = Depends(get_scoped_db)  
+    request: Request
 ) -> "ray.actor.ActorHandle":  
     """  
     FastAPI dependency to return the handle to our Ray actor.

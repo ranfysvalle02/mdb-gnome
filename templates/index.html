@@ -86,53 +86,6 @@
             background-color: #dc3545; /* Red */
             color: white;
         }
-        /* --- STYLES FOR SCAFFOLD BUTTON --- */
-        .scaffold-section {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border-radius: 12px;
-            padding: 24px;
-            margin-bottom: 30px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            color: white;
-        }
-        .scaffold-section h2 {
-            color: white;
-            margin: 0 0 12px 0;
-            font-size: 1.3em;
-            font-weight: 600;
-        }
-        .scaffold-section p {
-            color: rgba(255, 255, 255, 0.9);
-            margin: 0 0 16px 0;
-            font-size: 0.95em;
-        }
-        .scaffold-button {
-            background-color: rgba(255, 255, 255, 0.95);
-            color: #667eea;
-            padding: 12px 24px;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 1em;
-            font-weight: 600;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            transition: all 0.2s ease;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        }
-        .scaffold-button:hover:not(:disabled) {
-            background-color: white;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-        }
-        .scaffold-button:disabled {
-            background-color: rgba(255, 255, 255, 0.6);
-            color: rgba(102, 126, 234, 0.6);
-            cursor: not-allowed;
-            transform: none;
-        }
-        /* ------------------------------------ */
     </style>
     <script>
         async function downloadExport(url, slugId) {
@@ -228,69 +181,6 @@
                 }, 3000);
             }
         }
-
-        async function generateScaffold(url) {
-            const button = event.target;
-            const originalText = button.innerHTML;
-            button.disabled = true;
-            button.innerHTML = '⏳ Generating scaffold...';
-            
-            try {
-                // Ensure absolute HTTPS URL
-                let fetchUrl = url;
-                if (url.startsWith('/')) {
-                    fetchUrl = window.location.origin + url;
-                    fetchUrl = fetchUrl.replace(/^http:/, 'https:');
-                } else if (url.startsWith('http://')) {
-                    fetchUrl = url.replace(/^http:/, 'https:');
-                }
-                
-                const response = await fetch(fetchUrl);
-                const contentType = response.headers.get('content-type') || '';
-                
-                if (contentType.includes('application/json')) {
-                    const data = await response.json();
-                    
-                    if (data.status === 'success' && data.download_url) {
-                        // Ensure download URL is absolute HTTPS
-                        let downloadUrl = data.download_url;
-                        if (downloadUrl.startsWith('/')) {
-                            downloadUrl = window.location.origin + downloadUrl;
-                            downloadUrl = downloadUrl.replace(/^http:/, 'https:');
-                        } else if (downloadUrl.startsWith('http://')) {
-                            downloadUrl = downloadUrl.replace(/^http:/, 'https:');
-                        }
-                        
-                        // Create a temporary link and trigger download
-                        const link = document.createElement('a');
-                        link.href = downloadUrl;
-                        link.download = data.filename || 'scaffold.zip';
-                        link.target = '_blank';
-                        document.body.appendChild(link);
-                        link.click();
-                        document.body.removeChild(link);
-                        
-                        button.innerHTML = '✅ Scaffold downloaded';
-                        setTimeout(() => {
-                            button.disabled = false;
-                            button.innerHTML = originalText;
-                        }, 3000);
-                    } else {
-                        throw new Error(data.message || 'Failed to generate scaffold');
-                    }
-                } else {
-                    throw new Error('Unexpected response type');
-                }
-            } catch (error) {
-                console.error('Scaffold generation error:', error);
-                button.innerHTML = '❌ Generation failed';
-                alert('Scaffold generation failed: ' + error.message);
-                setTimeout(() => {
-                    button.disabled = false;
-                    button.innerHTML = originalText;
-                }, 3000);
-            }
-        }
     </script>
 </head>  
 <body>  
@@ -313,15 +203,6 @@
     </div>  
   
     <h1>🔬 Active Experiments</h1>
-    
-    <div class="scaffold-section">
-        <h2>🚀 Start Building Your Experiment</h2>
-        <p>Generate a scaffold template to kickstart your new experiment project</p>
-        <button onclick="generateScaffold('{{ request.url_for('generate_scaffold') }}')"
-                class="scaffold-button">
-            📦 Generate Scaffold
-        </button>
-    </div>
     
     <ul>  
         {% for slug, meta in experiments.items() %}  

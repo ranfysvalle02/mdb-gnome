@@ -9,6 +9,14 @@ This is a clean, production-ready FastAPI application that:
 - REQUIRES Ray - Ray is a core component and must be available
 - Includes proper database initialization and index management
 - Supports experiment-specific routes and static files
+- Provides ExperimentDB database abstraction for MongoDB-style API access
+- Automatic experiment scoping and index management handled transparently
+
+Database Abstraction:
+- Routes can use ExperimentDB via get_experiment_db() dependency (recommended)
+- Actors use create_actor_database() for automatic database initialization
+- All database operations use MongoDB-style API with automatic experiment scoping
+- Index management is automatic - no manual index configuration needed!
 
 Environment Variables:
 - MONGO_URI: MongoDB connection string (default: mongodb://mongo:27017/)
@@ -35,9 +43,21 @@ from fastapi.templating import Jinja2Templates
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 # Import experiment-specific dependencies
-# Note: async_mongo_wrapper.py is included in the export package and should always be available
-# This wrapper provides ScopedMongoWrapper and AsyncAtlasIndexManager for standalone use
+# Note: async_mongo_wrapper.py and experiment_db.py are included in the export package and should always be available
+# These modules provide the magical database abstraction with automatic scoping and index management
 from async_mongo_wrapper import ScopedMongoWrapper, AsyncAtlasIndexManager
+
+# Import ExperimentDB for MongoDB-style API access
+try:
+    from experiment_db import ExperimentDB, get_experiment_db, create_actor_database
+    EXPERIMENT_DB_AVAILABLE = True
+except ImportError:
+    logger.warning("experiment_db.py not found - database abstraction may not work correctly")
+    EXPERIMENT_DB_AVAILABLE = False
+    ExperimentDB = None
+    get_experiment_db = None
+    create_actor_database = None
+
 MONGO_WRAPPER_AVAILABLE = True
 
 # --------------------------------------------------------------------------
@@ -312,13 +332,49 @@ async def get_scoped_db(request: Request) -> "ScopedMongoWrapper":
         auto_index=True  # Enable automatic index creation in standalone mode
     )
 
+async def get_experiment_db_standalone(request: Request) -> "ExperimentDB":
+    """
+    Provide ExperimentDB instance for standalone use.
+    This is the recommended way to access the database in routes.
+    Provides MongoDB-style API with automatic experiment scoping and index management.
+    """
+    if mongo_db is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database not available."
+        )
+    
+    if not EXPERIMENT_DB_AVAILABLE or ExperimentDB is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database abstraction not available. Ensure experiment_db.py is included in export."
+        )
+    
+    # Create scoped wrapper with experiment slug as scope
+    scoped_db = ScopedMongoWrapper(
+        real_db=mongo_db,
+        read_scopes=[SLUG],
+        write_scope=SLUG,
+        auto_index=True  # Enable automatic index creation in standalone mode
+    )
+    
+    # Return ExperimentDB instance (provides MongoDB-style API)
+    return ExperimentDB(scoped_db)
+
 # Create a minimal core_deps module
 import types
 core_deps = types.ModuleType("core_deps")
 core_deps.get_current_user = get_current_user
 core_deps.require_admin = require_admin
 core_deps.get_scoped_db = get_scoped_db
+core_deps.get_experiment_db = get_experiment_db_standalone
+core_deps.ExperimentDB = ExperimentDB if EXPERIMENT_DB_AVAILABLE else None
 sys.modules["core_deps"] = core_deps
+
+# Make ExperimentDB available at module level for imports
+if EXPERIMENT_DB_AVAILABLE:
+    # Export ExperimentDB for use in routes
+    __all__ = ["ExperimentDB", "get_experiment_db", "get_scoped_db"]
 
 # --------------------------------------------------------------------------
 # Ray Support - REQUIRED for standalone exports (Ray is a core component)
@@ -744,7 +800,10 @@ async def debug_db(request: Request):
         "db_name": DB_NAME,
         "collections": collections_info,
         "ray_initialized": ray.is_initialized() and getattr(request.app.state, "ray_is_available", False),
-        "ray_required": True
+        "ray_required": True,
+        "experiment_db_available": EXPERIMENT_DB_AVAILABLE,
+        "experiment_slug": SLUG,
+        "database_abstraction": "ExperimentDB (MongoDB-style API)" if EXPERIMENT_DB_AVAILABLE else "ScopedMongoWrapper only"
     }
 
 # --------------------------------------------------------------------------
@@ -830,7 +889,21 @@ try:
     # This ensures all routes use our version
     exp_mod.get_actor_handle = get_standalone_actor_handle_func
     
+    # Also inject ExperimentDB and get_experiment_db if available
+    # This ensures routes can use the recommended database abstraction
+    if EXPERIMENT_DB_AVAILABLE:
+        if hasattr(exp_mod, "get_experiment_db") or hasattr(exp_mod, "ExperimentDB"):
+            logger.debug(f"Module '{mod_name}' may use ExperimentDB - ensuring availability")
+        # Make ExperimentDB available in the module for imports
+        exp_mod.ExperimentDB = ExperimentDB
+        exp_mod.get_experiment_db = get_experiment_db_standalone
+        # Also make core_deps available if module imports from it
+        if not hasattr(exp_mod, "core_deps"):
+            exp_mod.core_deps = core_deps
+    
     logger.info(f"✅ Injected standalone get_actor_handle into module '{mod_name}'.")
+    if EXPERIMENT_DB_AVAILABLE:
+        logger.info(f"✅ ExperimentDB database abstraction available for routes in '{mod_name}'.")
     
     # Verify the router exists
     if not hasattr(exp_mod, "bp"):
