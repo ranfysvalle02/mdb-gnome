@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="{{ store.lang or 'en' }}" class="scroll-smooth">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <title>{{ item.name }} - {{ store.name }}</title>
+    <style>
+        body { 
+            background-color: {{ store.theme_background or '#111827' }};
+            color: {{ store.theme_text or '#f9fafb' }};
+        }
+        /* Responsive Menu Styles */
+        #mobile-menu {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100vh;
+            background-color: {{ store.theme_surface or '#1f2937' }};
+            z-index: 1000;
+            padding-top: 80px;
+            overflow-y: auto;
+        }
+        #mobile-menu.active {
+            display: block;
+        }
+        /* Ensure desktop nav shows by default on larger screens */
+        .desktop-nav {
+            display: flex;
+        }
+        #mobile-menu a {
+            display: block;
+            padding: 1rem 1.5rem;
+            color: {{ store.theme_text or '#f9fafb' }};
+            text-decoration: none;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            transition: background-color 0.3s ease;
+        }
+        #mobile-menu a:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+            color: {{ store.theme_secondary or '#f59e0b' }};
+        }
+        #mobile-menu-toggle {
+            display: none;
+            flex-direction: column;
+            cursor: pointer;
+            padding: 0.5rem;
+            z-index: 1001;
+        }
+        #mobile-menu-toggle span {
+            width: 25px;
+            height: 3px;
+            background-color: {{ store.theme_text or '#f9fafb' }};
+            margin: 3px 0;
+            transition: 0.3s;
+            border-radius: 2px;
+        }
+        #mobile-menu-toggle.active span:nth-child(1) {
+            transform: rotate(-45deg) translate(-5px, 6px);
+        }
+        #mobile-menu-toggle.active span:nth-child(2) {
+            opacity: 0;
+        }
+        #mobile-menu-toggle.active span:nth-child(3) {
+            transform: rotate(45deg) translate(-5px, -6px);
+        }
+        @media (max-width: 767px) {
+            #mobile-menu-toggle {
+                display: flex !important;
+            }
+            .desktop-nav {
+                display: none !important;
+            }
+            #mobile-menu.active {
+                display: block !important;
+            }
+        }
+        @media (min-width: 768px) {
+            #mobile-menu {
+                display: none !important;
+            }
+            #mobile-menu-toggle {
+                display: none !important;
+            }
+            .desktop-nav {
+                display: flex !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="shadow-lg sticky top-0 z-50" style="background-color: {{ store.theme_surface or '#1f2937' }}; border-bottom: 2px solid {{ store.theme_primary or '#3b82f6' }};">
+        <div class="container mx-auto px-6 py-3 flex justify-between items-center">
+            <a href="/experiments/store_factory/{{ store.slug_id }}" class="flex items-center space-x-3">
+                <img src="{{ store.logo_url or '/experiments/store_factory/static/img/logo.png' }}" alt="{{ store.name }} Logo" class="h-20 w-auto">
+                <span class="text-2xl font-bold text-white">{{ store.name }}</span>
+            </a>
+            <!-- Desktop Navigation -->
+            <nav class="desktop-nav flex items-center space-x-6">
+                <a href="/experiments/store_factory/{{ store.slug_id }}" class="nav-link text-white hover:text-yellow-400">Back to Store</a>
+                <a href="/experiments/store_factory/{{ store.slug_id }}#{{ business_config.section_label.lower().replace(' ', '-') }}" class="nav-link text-white hover:text-yellow-400">{{ business_config.section_label }}</a>
+                <a href="/experiments/store_factory/{{ store.slug_id }}#contact" class="nav-link text-white hover:text-yellow-400">Contact</a>
+                <a href="/experiments/store_factory/{{ store.slug_id }}/admin/login" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md">Login</a>
+            </nav>
+            <!-- Mobile Menu Toggle -->
+            <button id="mobile-menu-toggle" aria-label="Toggle mobile menu">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+        </div>
+        <!-- Mobile Navigation Menu -->
+        <nav id="mobile-menu">
+            <a href="/experiments/store_factory/{{ store.slug_id }}" class="nav-link">Back to Store</a>
+            <a href="/experiments/store_factory/{{ store.slug_id }}#{{ business_config.section_label.lower().replace(' ', '-') }}" class="nav-link">{{ business_config.section_label }}</a>
+            <a href="/experiments/store_factory/{{ store.slug_id }}#contact" class="nav-link">Contact</a>
+            <a href="/experiments/store_factory/{{ store.slug_id }}/admin/login" class="nav-link">Login</a>
+        </nav>
+    </header>
+    <main class="container mx-auto mt-10 px-4">
+        <div class="bg-gray-800 border border-gray-700 p-8 rounded-lg shadow-xl max-w-4xl mx-auto">
+            <a href="/experiments/store_factory/{{ store.slug_id }}" class="text-yellow-400 font-semibold hover:underline mb-6 inline-block">← Back to {{ business_config.section_label }}</a>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div>
+                    <img src="{{ item.image_url or 'https://placehold.co/600x400/cccccc/ffffff?text=Image+Not+Available' }}" alt="{{ item.name }}" class="w-full h-auto object-cover rounded-lg shadow-md">
+                </div>
+                <div>
+                    <h1 class="text-3xl md:text-4xl font-extrabold text-white">{{ item.name }}</h1>
+                    <p class="text-3xl font-bold text-green-400 mt-4">${{ "%.2f"|format(item.price) }}</p>
+                    {% if item.status %}
+                    <p class="mt-2">
+                        <span class="px-3 py-1 rounded-full {% if item.status == 'Available' %}bg-green-900 text-green-200{% else %}bg-red-900 text-red-200{% endif %}">{{ item.status }}</span>
+                    </p>
+                    {% endif %}
+                    <div class="mt-6 border-t border-gray-600 pt-6">
+                        <h2 class="text-xl font-semibold mb-3 text-white">Description</h2>
+                        <p class="text-gray-300 whitespace-pre-wrap">{{ item.description or business_config.default_description }}</p>
+                    </div>
+                    <div class="mt-6 border-t border-gray-600 pt-6">
+                        <h2 class="text-xl font-semibold mb-3 text-white">Details</h2>
+                        <ul class="space-y-2 text-gray-300">
+                            <li><strong class="text-white">{{ business_config.item_code_label }}:</strong> {{ item.item_code }}</li>
+                            {% for key, value in item.attributes.items() %}
+                            <li><strong class="text-white">{{ key }}:</strong> {{ value }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    <div id="contact-form" class="mt-8 border-t border-gray-600 pt-8 bg-gray-700 p-6 rounded-lg">
+                        <h2 class="text-2xl font-bold text-white mb-4">Have a Question?</h2>
+                        <form action="/experiments/store_factory/{{ store.slug_id }}/inquire/{{ item._id }}" method="post" class="space-y-4">
+                            <div>
+                                <label for="customer_name" class="block text-sm font-medium text-gray-300">Your Name</label>
+                                <input type="text" name="customer_name" id="customer_name" required
+                                       class="mt-1 block w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded-md">
+                            </div>
+                            <div>
+                                <label for="customer_contact" class="block text-sm font-medium text-gray-300">Phone or Email</label>
+                                <input type="text" name="customer_contact" id="customer_contact" required
+                                       class="mt-1 block w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded-md">
+                            </div>
+                            <div>
+                                <label for="message" class="block text-sm font-medium text-gray-300">Message (Optional)</label>
+                                <textarea name="message" id="message" rows="3"
+                                          class="mt-1 block w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded-md"></textarea>
+                            </div>
+                            <button type="submit" class="w-full bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-bold py-2 px-4 rounded-md">Submit Inquiry</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+    <script src="/experiments/store_factory/static/js/navigation.js"></script>
+</body>
+</html>
+

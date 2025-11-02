@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <title>Select Your Business Type - StoreFactory</title>
+    <style>
+        * { font-family: 'Poppins', sans-serif; }
+        body {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            background-size: 200% 200%;
+            animation: gradientShift 15s ease infinite;
+        }
+        @keyframes gradientShift {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+    <div class="container mx-auto px-6 py-16">
+        <div class="text-center mb-12">
+            <h1 class="text-5xl md:text-7xl lg:text-8xl font-extrabold text-white mb-6">
+                Welcome to <span class="bg-gradient-to-r from-yellow-300 via-orange-300 to-yellow-300 bg-clip-text text-transparent">StoreFactory</span>
+            </h1>
+            <p class="text-xl md:text-2xl text-gray-300 max-w-3xl mx-auto mb-10">
+                Create your store in minutes. No coding required.
+            </p>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8 max-w-7xl mx-auto">
+            {% for business_key, business_config in BUSINESS_TYPES.items() %}
+            <a href="/experiments/store_factory/select/{{ business_key }}" 
+               class="bg-gray-800 border border-gray-700 rounded-3xl shadow-2xl p-8 md:p-10 text-center block hover:border-indigo-400 transition-all">
+                <h3 class="text-2xl md:text-3xl font-bold text-white mb-3">{{ business_config.name }}</h3>
+                <p class="text-gray-400 mb-6">{{ business_config.item_plural }}</p>
+            </a>
+            {% endfor %}
+        </div>
+        <div class="text-center mt-12">
+            <a href="/experiments/store_factory/stores" 
+               class="inline-flex items-center gap-3 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white font-bold py-4 px-8 rounded-xl">
+                <span>View All Stores</span>
+            </a>
+        </div>
+    </div>
+</body>
+</html>

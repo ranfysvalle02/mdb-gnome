@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="{{ store.lang or 'en' }}" class="scroll-smooth">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <title>{{ store.name }} - {{ business_config.name }}</title>
+    <style>
+        body { 
+            background-color: {{ store.theme_background or '#111827' }};
+            color: {{ store.theme_text or '#f9fafb' }};
+        }
+        /* Responsive Menu Styles */
+        #mobile-menu {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100vh;
+            background-color: {{ store.theme_surface or '#1f2937' }};
+            z-index: 1000;
+            padding-top: 80px;
+            overflow-y: auto;
+        }
+        #mobile-menu.active {
+            display: block;
+        }
+        /* Ensure desktop nav shows by default on larger screens */
+        .desktop-nav {
+            display: flex;
+        }
+        #mobile-menu a {
+            display: block;
+            padding: 1rem 1.5rem;
+            color: {{ store.theme_text or '#f9fafb' }};
+            text-decoration: none;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            transition: background-color 0.3s ease;
+        }
+        #mobile-menu a:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+            color: {{ store.theme_secondary or '#f59e0b' }};
+        }
+        #mobile-menu-toggle {
+            display: none;
+            flex-direction: column;
+            cursor: pointer;
+            padding: 0.5rem;
+            z-index: 1001;
+        }
+        #mobile-menu-toggle span {
+            width: 25px;
+            height: 3px;
+            background-color: {{ store.theme_text or '#f9fafb' }};
+            margin: 3px 0;
+            transition: 0.3s;
+            border-radius: 2px;
+        }
+        #mobile-menu-toggle.active span:nth-child(1) {
+            transform: rotate(-45deg) translate(-5px, 6px);
+        }
+        #mobile-menu-toggle.active span:nth-child(2) {
+            opacity: 0;
+        }
+        #mobile-menu-toggle.active span:nth-child(3) {
+            transform: rotate(45deg) translate(-5px, -6px);
+        }
+        @media (max-width: 767px) {
+            #mobile-menu-toggle {
+                display: flex !important;
+            }
+            .desktop-nav {
+                display: none !important;
+            }
+            #mobile-menu.active {
+                display: block !important;
+            }
+        }
+        @media (min-width: 768px) {
+            #mobile-menu {
+                display: none !important;
+            }
+            #mobile-menu-toggle {
+                display: none !important;
+            }
+            .desktop-nav {
+                display: flex !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="shadow-lg sticky top-0 z-50" style="background-color: {{ store.theme_surface or '#1f2937' }}; border-bottom: 2px solid {{ store.theme_primary or '#3b82f6' }};">
+        <div class="container mx-auto px-6 py-3 flex justify-between items-center">
+            <a href="/experiments/store_factory/{{ store.slug_id }}" class="flex items-center space-x-3">
+                <img src="{{ store.logo_url or '/experiments/store_factory/static/img/logo.png' }}" alt="{{ store.name }} Logo" class="h-20 w-auto">
+                <span class="text-2xl font-bold">{{ store.name }}</span>
+            </a>
+            <!-- Desktop Navigation -->
+            <nav class="desktop-nav flex items-center space-x-6">
+                <a href="#hero" class="nav-link text-white hover:text-yellow-400">Home</a>
+                <a href="#{{ business_config.section_label.lower().replace(' ', '-') }}" class="nav-link text-white hover:text-yellow-400">{{ business_config.section_label }}</a>
+                {% if store.specials and store.specials|length > 0 %}
+                <a href="#specials" class="nav-link text-white hover:text-yellow-400">Specials</a>
+                {% endif %}
+                <a href="#contact" class="nav-link text-white hover:text-yellow-400">Contact</a>
+                <a href="/experiments/store_factory/{{ store.slug_id }}/admin/login" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md">Login</a>
+            </nav>
+            <!-- Mobile Menu Toggle -->
+            <button id="mobile-menu-toggle" aria-label="Toggle mobile menu">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+        </div>
+        <!-- Mobile Navigation Menu -->
+        <nav id="mobile-menu">
+            <a href="#hero" class="nav-link">Home</a>
+            <a href="#{{ business_config.section_label.lower().replace(' ', '-') }}" class="nav-link">{{ business_config.section_label }}</a>
+            {% if store.specials and store.specials|length > 0 %}
+            <a href="#specials" class="nav-link">Specials</a>
+            {% endif %}
+            <a href="#contact" class="nav-link">Contact</a>
+            <a href="/experiments/store_factory/{{ store.slug_id }}/admin/login" class="nav-link">Login</a>
+        </nav>
+    </header>
+    <main>
+        <section id="hero" class="h-screen bg-cover bg-center flex items-center justify-center text-white" style="background-image: linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)), url('{{ store.hero_image_url or 'https://images.pexels.com/photos/376464/pexels-photo-376464.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2' }}');">
+            <div class="text-center px-4">
+                <h1 class="text-4xl md:text-6xl font-extrabold">{{ store.tagline or business_config.hero_text }}</h1>
+                <p class="text-lg md:text-xl mt-4 max-w-2xl mx-auto">{{ store.about_text or 'Welcome to our store' }}</p>
+            </div>
+        </section>
+        <section id="{{ business_config.section_label.lower().replace(' ', '-') }}" class="py-16 bg-gray-800">
+            <div class="container mx-auto px-6 text-center">
+                <h2 class="text-4xl font-extrabold mb-4 text-white">{{ business_config.section_label }}</h2>
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+                    {% for item in items %}
+                    <div class="bg-gray-700 border border-gray-600 rounded-lg overflow-hidden shadow-lg">
+                        <a href="/experiments/store_factory/{{ store.slug_id }}/item/{{ item._id }}">
+                            <img src="{{ item.image_url or 'https://placehold.co/600x400/cccccc/ffffff?text=' + business_config.item_label }}" alt="{{ item.name }}" class="w-full h-56 object-cover">
+                        </a>
+                        <div class="p-6">
+                            <h3 class="text-2xl font-bold text-white">{{ item.name }}</h3>
+                            <p class="text-xl font-semibold text-green-400 mt-2">${{ "%.2f"|format(item.price) }}</p>
+                            {% if item.status %}
+                            <p class="text-sm mt-2">
+                                <span class="px-2 py-1 rounded {% if item.status == 'Available' %}bg-green-900 text-green-200{% else %}bg-red-900 text-red-200{% endif %}">{{ item.status }}</span>
+                            </p>
+                            {% endif %}
+                            <a href="/experiments/store_factory/{{ store.slug_id }}/item/{{ item._id }}" class="inline-block w-full text-center bg-gray-800 hover:bg-yellow-500 hover:text-gray-900 text-white font-bold py-2 px-4 rounded-md mt-4">View Details</a>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="col-span-full text-center text-gray-400 py-12">
+                        <p>No {{ business_config.item_plural.lower() }} available at this time.</p>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </section>
+        {% if store.specials and store.specials|length > 0 %}
+        <section id="specials" class="py-16 bg-gray-800 border-t border-gray-700">
+            <div class="container mx-auto px-6 text-center">
+                <h2 class="text-4xl font-extrabold mb-10 text-white">Specials & Announcements</h2>
+                <div class="space-y-6 max-w-3xl mx-auto">
+                    {% for special in store.specials[:3] %}
+                    <div class="bg-gray-700 border border-gray-600 p-6 rounded-lg shadow-md">
+                        <h3 class="text-2xl font-bold mb-2 text-white">{{ special.title }}</h3>
+                        <p class="text-gray-300 whitespace-pre-wrap">{{ special.content }}</p>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </section>
+        {% endif %}
+        <section id="contact" class="py-16 bg-gray-900">
+            <div class="container mx-auto px-6">
+                <h2 class="text-4xl font-extrabold text-center mb-10 text-white">Visit Us</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-12">
+                    <div class="bg-gray-800 border border-gray-700 p-8 rounded-lg shadow-lg">
+                        <div class="space-y-6 text-lg text-gray-200">
+                            {% if store.address %}
+                            <div class="flex items-center gap-4">
+                                <i class="fas fa-map-marker-alt text-yellow-500 text-2xl w-8 text-center"></i>
+                                <span>{{ store.address }}</span>
+                            </div>
+                            {% endif %}
+                            {% if store.hours %}
+                            <div class="flex items-center gap-4">
+                                <i class="fas fa-clock text-yellow-500 text-2xl w-8 text-center"></i>
+                                <span>{{ store.hours | replace('\n', '<br>') | safe }}</span>
+                            </div>
+                            {% endif %}
+                            {% if store.phone %}
+                            <div class="flex items-center gap-4">
+                                <i class="fas fa-phone text-yellow-500 text-2xl w-8 text-center"></i>
+                                <a href="tel:{{ store.phone }}" class="hover:underline text-yellow-400">{{ store.phone_display or store.phone }}</a>
+                            </div>
+                            {% endif %}
+                        </div>
+                        {% if store.socials %}
+                        <div class="mt-8 pt-6 border-t border-gray-600 flex justify-center space-x-6">
+                            {% for social in store.socials %}
+                            <a href="{{ social.url }}" target="_blank" rel="noopener noreferrer" class="text-gray-400 hover:text-yellow-500 text-3xl transition-transform transform hover:scale-110">
+                                <i class="fab fa-{{ social.icon }}"></i>
+                            </a>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% if store.google_maps_embed_html %}
+                    <div class="rounded-lg shadow-lg overflow-hidden">
+                        {{ store.google_maps_embed_html | safe }}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </section>
+    </main>
+    <footer style="background-color: {{ store.theme_surface or '#1f2937' }}; color: {{ store.theme_text or '#f9fafb' }};" class="mt-12 py-10">
+        <div class="container mx-auto px-6 text-center">
+            <img src="{{ store.logo_url or '/experiments/store_factory/static/img/logo.png' }}" alt="Logo" class="h-16 mx-auto mb-4">
+            <p>© {{ now.year }} {{ store.name }}.</p>
+            <p class="text-sm text-gray-400 mt-2">Powered by StoreFactory</p>
+        </div>
+    </footer>
+    <script src="/experiments/store_factory/static/js/navigation.js"></script>
+</body>
+</html>
+

@@ -1,0 +1,61 @@
+{
+  "slug": "store_factory",
+  "name": "Store Factory",
+  "description": "Multi-business-type store application supporting restaurants, auto sales, auto services, and generic stores",
+  "status": "active",
+  "auth_required": false,
+  "data_scope": ["self"],
+  "managed_indexes": {
+    "stores": [
+      {
+        "name": "stores_slug_id_index",
+        "type": "regular",
+        "keys": { "slug_id": 1 },
+        "options": { "unique": true }
+      }
+    ],
+    "users": [
+      {
+        "name": "users_email_store_id_index",
+        "type": "regular",
+        "keys": [
+          ["email", 1],
+          ["store_id", 1]
+        ],
+        "options": { "unique": true }
+      }
+    ],
+    "items": [
+      {
+        "name": "items_item_code_store_id_index",
+        "type": "regular",
+        "keys": [
+          ["item_code", 1],
+          ["store_id", 1]
+        ],
+        "options": { "unique": true }
+      }
+    ],
+    "specials": [
+      {
+        "name": "specials_store_id_date_created_index",
+        "type": "regular",
+        "keys": [
+          ["store_id", 1],
+          ["date_created", -1]
+        ]
+      }
+    ],
+    "inquiries": [
+      {
+        "name": "inquiries_store_id_date_submitted_index",
+        "type": "regular",
+        "keys": [
+          ["store_id", 1],
+          ["date_submitted", -1]
+        ]
+      }
+    ]
+  }
+}
+
