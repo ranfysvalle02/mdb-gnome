@@ -296,7 +296,7 @@ async def require_admin(current_user: Optional[Dict[str, Any]] = Depends(get_cur
     """Admin check - always allows in standalone mode."""
     return current_user or {"email": "admin@standalone", "is_admin": True}
 
-async def get_scoped_db(request: Request) -> ScopedMongoWrapper:
+async def get_scoped_db(request: Request) -> "ScopedMongoWrapper":
     """Provide scoped database wrapper."""
     if not MONGO_WRAPPER_AVAILABLE or mongo_db is None:
         raise HTTPException(

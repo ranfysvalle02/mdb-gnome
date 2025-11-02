@@ -1835,6 +1835,139 @@ async def package_standalone_experiment(
     raise HTTPException(500, "Unexpected server error during packaging.")
 
 
+@public_api_router.get("/generate_scaffold", name="generate_scaffold")
+async def generate_scaffold(
+  request: Request,
+  user: Optional[Mapping[str, Any]] = Depends(get_current_user) # Allows unauthenticated access
+):
+  """
+  Generate a standalone export of the 'hello_ray' experiment as a scaffold template.
+  This endpoint is specifically designed to generate a scaffold/boilerplate export of hello_ray.
+  """
+  db: AsyncIOMotorDatabase = request.app.state.mongo_db
+  slug_id = "hello_ray"  # Hardcoded to hello_ray experiment
+  
+  # 1. Check Experiment Configuration
+  config = await db.experiments_config.find_one({"slug": slug_id}, {"status": 1, "auth_required": 1})
+  if not config or config.get("status") != "active":
+    raise HTTPException(status_code=404, detail=f"Experiment '{slug_id}' not found or not active.")
+  
+  auth_required = config.get("auth_required", False)
+  
+  # 2. Enforce Authentication if required
+  if auth_required:
+    if not user:
+      # If auth is required and no user is logged in, redirect to login
+      current_path = quote(request.url.path)
+      login_url = request.url_for("login_get", next=current_path)
+      response = RedirectResponse(url=login_url, status_code=status.HTTP_302_FOUND)
+      return response
+  
+  # 3. Perform Intelligent Packaging
+  try:
+    templates = get_templates_from_request(request)
+    config_data, collections_data = await _dump_db_to_json(db, slug_id)
+    zip_buffer = _create_intelligent_export_zip(
+      slug_id=slug_id,
+      source_dir=BASE_DIR,
+      db_data=config_data,
+      db_collections=collections_data,
+      templates=templates
+    )
+    
+    user_email = user.get('email', 'Guest') if user else 'Guest'
+    file_name = f"{slug_id}_scaffold_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    file_size = zip_buffer.getbuffer().nbytes
+    
+    # Calculate checksum for deduplication
+    checksum = _calculate_export_checksum(zip_buffer)
+    
+    # Check for existing export with same checksum
+    existing_export = await _find_existing_export_by_checksum(db, checksum, slug_id)
+    
+    # Upload to B2 if enabled, otherwise save locally
+    b2_file_name = None
+    download_url = None
+    b2_bucket = getattr(request.app.state, "b2_bucket", None)
+    
+    # If we found an existing export with same checksum and it has B2 file, reuse it
+    if existing_export and existing_export.get("b2_file_name") and B2_ENABLED and b2_bucket:
+      try:
+        b2_file_name = existing_export["b2_file_name"]
+        # Generate new presigned URL (existing file in B2)
+        download_url = _generate_presigned_download_url(b2_bucket, b2_file_name, duration_seconds=86400)  # 24 hours
+        logger.info(f"[{slug_id}] Reusing existing B2 export with matching checksum: {b2_file_name}")
+      except Exception as e:
+        logger.warning(f"[{slug_id}] Failed to generate presigned URL for existing export, uploading new copy: {e}")
+        existing_export = None  # Fall through to upload new copy
+    
+    # If no existing export found, upload/save new one
+    export_file_path = None  # Track local file for cleanup
+    if not existing_export or not existing_export.get("b2_file_name"):
+      if B2_ENABLED and b2_bucket:
+        try:
+          # Upload to B2
+          b2_file_name = f"exports/{file_name}"
+          logger.info(f"[{slug_id}] Uploading scaffold export to B2: {b2_file_name}")
+          await _upload_export_to_b2(b2_bucket, zip_buffer, b2_file_name)
+          
+          # Generate presigned download URL from B2
+          download_url = _generate_presigned_download_url(b2_bucket, b2_file_name, duration_seconds=86400)  # 24 hours
+          logger.info(f"[{slug_id}] Scaffold export uploaded to B2. Generated presigned URL.")
+          
+          # Clean up any local files after successful B2 upload
+          local_file = EXPORTS_TEMP_DIR / file_name
+          if local_file.exists():
+            await _cleanup_local_export_file(local_file)
+        except Exception as e:
+          logger.error(f"[{slug_id}] B2 upload failed, falling back to local storage: {e}", exc_info=True)
+          # Fallback to local storage
+          export_file_path = await _save_export_locally(zip_buffer, file_name)
+          relative_url = str(request.url_for("exports", filename=file_name))
+          download_url = _build_absolute_https_url(request, relative_url)
+          logger.info(f"[{slug_id}] Scaffold export saved locally as fallback.")
+      else:
+        # Save to local temp directory (fallback if B2 not enabled)
+        logger.info(f"[{slug_id}] B2 not enabled, saving scaffold export locally: {file_name}")
+        export_file_path = await _save_export_locally(zip_buffer, file_name)
+        relative_url = str(request.url_for("exports", filename=file_name))
+        download_url = _build_absolute_https_url(request, relative_url)
+    
+    # Log export to database (only if we didn't reuse an existing export)
+    export_log_id = None
+    if not existing_export:
+      export_log_id = await _log_export(
+        db=db,
+        slug_id=slug_id,
+        export_type="scaffold",
+        user_email=user_email,
+        local_file_path=str(export_file_path.relative_to(BASE_DIR)) if export_file_path else None,
+        file_size=file_size,
+        b2_file_name=b2_file_name,
+        invalidated=False,
+        checksum=checksum
+      )
+    else:
+      logger.info(f"[{slug_id}] Reused existing export, skipping duplicate log entry")
+    
+    logger.info(f"[{slug_id}] Scaffold export created successfully. Download URL generated.")
+    # Return JSON with download URL
+    return JSONResponse({
+      "status": "success",
+      "download_url": str(download_url),
+      "filename": file_name,
+      "export_id": str(export_log_id) if export_log_id else None,
+      "message": "Scaffold export ready for download",
+      "experiment": slug_id
+    })
+  except ValueError as e:
+    logger.error(f"Error generating scaffold for '{slug_id}': {e}")
+    raise HTTPException(status_code=404, detail=str(e))
+  except Exception as e:
+    logger.error(f"Unexpected error generating scaffold for '{slug_id}': {e}", exc_info=True)
+    raise HTTPException(500, "Unexpected server error during scaffold generation.")
+
+
 @public_api_router.get("/package-docker/{slug_id}", name="package_docker")
 async def package_docker_experiment(
   request: Request,
