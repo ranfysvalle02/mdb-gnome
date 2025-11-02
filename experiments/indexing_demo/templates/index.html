@@ -16,10 +16,11 @@
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             padding: 20px;
+            line-height: 1.6;
         }
         
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
             background: white;
             border-radius: 12px;
@@ -31,6 +32,38 @@
             color: #333;
             margin-bottom: 10px;
             font-size: 2.5em;
+        }
+        
+        .hero {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 12px;
+            margin-bottom: 40px;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+        }
+        
+        .hero h2 {
+            font-size: 1.8em;
+            margin-bottom: 15px;
+        }
+        
+        .hero p {
+            font-size: 1.1em;
+            opacity: 0.95;
+            margin-bottom: 20px;
+        }
+        
+        .hero .value-prop {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        
+        .hero .value-prop h3 {
+            font-size: 1.2em;
+            margin-bottom: 10px;
         }
         
         .subtitle {
@@ -52,6 +85,11 @@
             padding: 20px;
             border-radius: 8px;
             text-align: center;
+            transition: transform 0.3s;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-5px);
         }
         
         .stat-card h3 {
@@ -111,6 +149,66 @@
             background: #c0392b;
         }
         
+        .seeding-progress {
+            background: #f9f9f9;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 30px;
+            display: none;
+        }
+        
+        .seeding-progress.show {
+            display: block;
+        }
+        
+        .seeding-progress h3 {
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+        
+        .progress-step {
+            background: white;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .progress-step.completed {
+            border-left-color: #27ae60;
+        }
+        
+        .progress-step.in_progress {
+            border-left-color: #f39c12;
+        }
+        
+        .progress-step h4 {
+            color: #333;
+            margin-bottom: 8px;
+        }
+        
+        .progress-step p {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+        }
+        
+        .progress-step .indexes {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        
+        .progress-step .index-badge {
+            background: #667eea;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.8em;
+        }
+        
         .index-types {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -123,6 +221,12 @@
             border-radius: 8px;
             padding: 20px;
             background: #f9f9f9;
+            transition: all 0.3s;
+        }
+        
+        .index-card:hover {
+            border-color: #667eea;
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.2);
         }
         
         .index-card h3 {
@@ -165,7 +269,7 @@
         
         .results {
             margin-top: 30px;
-            padding: 20px;
+            padding: 30px;
             background: #f9f9f9;
             border-radius: 8px;
             display: none;
@@ -177,16 +281,102 @@
         
         .results h3 {
             color: #333;
-            margin-bottom: 15px;
+            margin-bottom: 20px;
+            font-size: 1.5em;
         }
         
-        .results pre {
+        .results .index-type-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .results .index-type-header h4 {
+            font-size: 1.3em;
+            margin-bottom: 10px;
+        }
+        
+        .results .description {
+            background: white;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .results .value-box {
+            background: #e8f5e9;
+            border: 2px solid #27ae60;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        
+        .results .value-box h4 {
+            color: #27ae60;
+            margin-bottom: 8px;
+        }
+        
+        .test-result {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .test-result h4 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+        }
+        
+        .test-result .index-name {
+            background: #f0f0f0;
+            padding: 8px 12px;
+            border-radius: 4px;
+            display: inline-block;
+            margin-bottom: 10px;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+        
+        .test-result .query {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 12px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.9em;
+            margin: 10px 0;
+            overflow-x: auto;
+        }
+        
+        .test-result .explanation {
+            background: #e3f2fd;
+            padding: 12px;
+            border-radius: 4px;
+            margin: 15px 0;
+            border-left: 4px solid #2196f3;
+        }
+        
+        .test-result .result-data {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 15px;
+        }
+        
+        .test-result .result-data pre {
             background: #2d2d2d;
             color: #f8f8f2;
             padding: 15px;
             border-radius: 6px;
             overflow-x: auto;
             font-size: 0.9em;
+            margin-top: 10px;
         }
         
         .loading {
@@ -194,16 +384,29 @@
             text-align: center;
             padding: 20px;
             color: #667eea;
+            font-size: 1.1em;
         }
         
         .loading.show {
             display: block;
         }
         
+        .loading::after {
+            content: "...";
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+        
+        @keyframes dots {
+            0%, 20% { content: "."; }
+            40% { content: ".."; }
+            60%, 100% { content: "..."; }
+        }
+        
         .message {
             padding: 15px;
             border-radius: 6px;
             margin-bottom: 20px;
+            font-weight: 500;
         }
         
         .message.success {
@@ -217,12 +420,66 @@
             color: #721c24;
             border: 1px solid #f5c6cb;
         }
+        
+        .summary-box {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+        }
+        
+        .summary-box h3 {
+            margin-bottom: 15px;
+        }
+        
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .summary-item {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+        }
+        
+        .summary-item .label {
+            font-size: 0.9em;
+            opacity: 0.9;
+            margin-bottom: 5px;
+        }
+        
+        .summary-item .value {
+            font-size: 1.8em;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🔍 Indexing Demo</h1>
-        <p class="subtitle">Demonstrates all index types supported by g.nome's manifest.json system</p>
+        <p class="subtitle">An Educational Experience: Understanding MongoDB Indexes and Their Impact</p>
+        
+        <div class="hero">
+            <h2>Why Indexes Matter</h2>
+            <p>
+                Indexes are the foundation of database performance. Without indexes, MongoDB must scan every document 
+                in a collection to find matching queries—a process that becomes exponentially slower as your data grows. 
+                With proper indexes, query performance can improve by 100-1000x, transforming seconds into milliseconds.
+            </p>
+            <div class="value-prop">
+                <h3>📊 Performance Impact</h3>
+                <p>
+                    <strong>Without indexes:</strong> O(n) full collection scan — slow for large collections<br>
+                    <strong>With indexes:</strong> O(log n) index lookup — fast regardless of collection size<br>
+                    <strong>Real-world impact:</strong> A query taking 5 seconds can drop to 50 milliseconds with proper indexing
+                </p>
+            </div>
+        </div>
         
         <div id="message"></div>
         
@@ -245,6 +502,11 @@
             </div>
         </div>
         
+        <div class="seeding-progress" id="seeding-progress">
+            <h3>🌱 Seeding Process</h3>
+            <div id="progress-steps"></div>
+        </div>
+        
         <div class="actions">
             <button class="btn-primary" onclick="seedData()">🌱 Seed Sample Data</button>
             <button class="btn-secondary" onclick="testRegular()">Test Regular Index</button>
@@ -260,19 +522,21 @@
             <div class="index-card">
                 <span class="type">Regular</span>
                 <h3>Regular Indexes</h3>
-                <p>Standard MongoDB indexes including unique and compound indexes.</p>
+                <p>The foundation of query performance. Enable fast lookups, enforce uniqueness, and optimize compound queries.</p>
                 <ul>
-                    <li>Unique SKU index</li>
-                    <li>Compound category/price index</li>
+                    <li>Unique SKU index prevents duplicates</li>
+                    <li>Compound category/price index for multi-field queries</li>
+                    <li>100-1000x performance improvement</li>
                 </ul>
             </div>
             
             <div class="index-card">
                 <span class="type">Text</span>
                 <h3>Text Indexes</h3>
-                <p>Full-text search indexes for searching text fields.</p>
+                <p>Full-text search capabilities with natural language processing, word stemming, and relevance scoring.</p>
                 <ul>
                     <li>Weighted search on name/description</li>
+                    <li>Case-insensitive matching</li>
                     <li>Multi-field text search</li>
                 </ul>
             </div>
@@ -280,50 +544,51 @@
             <div class="index-card">
                 <span class="type">Geospatial</span>
                 <h3>Geospatial Indexes</h3>
-                <p>2dsphere indexes for location-based queries.</p>
+                <p>2dsphere indexes for location-based queries with spherical geometry calculations and distance sorting.</p>
                 <ul>
                     <li>Nearby location search</li>
                     <li>Distance-based queries</li>
+                    <li>Perfect for "find near me" features</li>
                 </ul>
             </div>
             
             <div class="index-card">
                 <span class="type">Partial</span>
                 <h3>Partial Indexes</h3>
-                <p>Indexes that only index documents matching a filter.</p>
+                <p>Index only documents matching a filter, reducing index size by 50-90% while maintaining full performance.</p>
                 <ul>
                     <li>Index only active sessions</li>
-                    <li>Reduced index size</li>
+                    <li>Reduced storage and maintenance</li>
+                    <li>Full performance for filtered queries</li>
                 </ul>
             </div>
             
             <div class="index-card">
                 <span class="type">TTL</span>
                 <h3>TTL Indexes</h3>
-                <p>Time-to-live indexes that automatically delete old documents.</p>
+                <p>Time-to-live indexes that automatically delete old documents—no application code needed.</p>
                 <ul>
-                    <li>Auto-expiring sessions</li>
-                    <li>1 hour expiration</li>
+                    <li>Auto-expiring sessions (1 hour)</li>
+                    <li>Automatic cleanup every 60 seconds</li>
+                    <li>Perfect for GDPR compliance</li>
                 </ul>
             </div>
             
             <div class="index-card">
                 <span class="type">Vector Search</span>
                 <h3>Vector Search</h3>
-                <p>Atlas Vector Search for semantic similarity queries.</p>
+                <p>Atlas Vector Search for semantic similarity queries using high-dimensional embeddings.</p>
                 <ul>
                     <li>384-dimensional vectors</li>
                     <li>Cosine similarity</li>
+                    <li>Powering AI applications</li>
                 </ul>
             </div>
         </div>
         
-        <div class="loading" id="loading">Loading...</div>
+        <div class="loading" id="loading">Processing</div>
         
-        <div class="results" id="results">
-            <h3>Test Results</h3>
-            <pre id="results-content"></pre>
-        </div>
+        <div class="results" id="results"></div>
     </div>
     
     <script>
@@ -344,27 +609,167 @@
         
         async function seedData() {
             showLoading(true);
+            hideResults();
+            const progressDiv = document.getElementById('seeding-progress');
+            progressDiv.classList.add('show');
+            const stepsDiv = document.getElementById('progress-steps');
+            stepsDiv.innerHTML = '<p>Starting seeding process...</p>';
+            
             try {
                 const response = await fetch('/experiments/indexing_demo/seed-data', {
                     method: 'POST'
                 });
                 const data = await response.json();
-                showMessage('Sample data seeded successfully!', 'success');
-                showResults(data);
+                
+                if (data.success && data.result && data.result.steps) {
+                    displaySeedingProgress(data.result);
+                    showMessage('Sample data seeded successfully!', 'success');
+                    
+                    if (data.result.summary) {
+                        showSummary(data.result.summary);
+                    }
+                } else {
+                    showMessage('Sample data seeded successfully!', 'success');
+                }
+                
                 setTimeout(updateStats, 1000);
             } catch (error) {
                 showMessage('Error seeding data: ' + error.message, 'error');
+                progressDiv.classList.remove('show');
             } finally {
                 showLoading(false);
             }
         }
         
+        function displaySeedingProgress(result) {
+            const stepsDiv = document.getElementById('progress-steps');
+            stepsDiv.innerHTML = '';
+            
+            if (result.steps) {
+                result.steps.forEach(step => {
+                    const stepDiv = document.createElement('div');
+                    stepDiv.className = `progress-step ${step.status}`;
+                    
+                    let indexesHtml = '';
+                    if (step.indexes && step.indexes.length > 0) {
+                        indexesHtml = '<div class="indexes">' +
+                            step.indexes.map(idx => `<span class="index-badge">${idx}</span>`).join('') +
+                            '</div>';
+                    }
+                    
+                    let countHtml = step.count ? `<strong>${step.count} documents created</strong>` : '';
+                    let noteHtml = step.note ? `<p style="color: #27ae60; font-weight: 500;">ℹ️ ${step.note}</p>` : '';
+                    
+                    stepDiv.innerHTML = `
+                        <h4>Step ${step.step}: ${step.name}</h4>
+                        <p>${step.description}</p>
+                        ${countHtml}
+                        ${noteHtml}
+                        ${indexesHtml}
+                    `;
+                    
+                    stepsDiv.appendChild(stepDiv);
+                });
+            }
+        }
+        
+        function showSummary(summary) {
+            const stepsDiv = document.getElementById('progress-steps');
+            const summaryDiv = document.createElement('div');
+            summaryDiv.className = 'summary-box';
+            summaryDiv.innerHTML = `
+                <h3>✅ Seeding Complete!</h3>
+                <div class="summary-grid">
+                    <div class="summary-item">
+                        <div class="label">Total Documents</div>
+                        <div class="value">${summary.total_documents || 0}</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="label">Collections</div>
+                        <div class="value">${summary.collections || 0}</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="label">Index Types</div>
+                        <div class="value">${summary.index_types_demonstrated || 0}</div>
+                    </div>
+                </div>
+            `;
+            stepsDiv.appendChild(summaryDiv);
+        }
+        
+        function displayTestResults(data) {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.classList.add('show');
+            
+            if (data.error) {
+                resultsDiv.innerHTML = `
+                    <div class="message error">
+                        <h3>Error</h3>
+                        <p>${data.error}</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            const result = data.result || data;
+            let html = '';
+            
+            if (result.index_type) {
+                html += `
+                    <div class="index-type-header">
+                        <h4>${result.index_type}</h4>
+                        <p>${result.description || ''}</p>
+                    </div>
+                `;
+            }
+            
+            if (result.value) {
+                html += `
+                    <div class="value-box">
+                        <h4>💡 Value & Impact</h4>
+                        <p>${result.value}</p>
+                    </div>
+                `;
+            }
+            
+            if (result.tests && result.tests.length > 0) {
+                result.tests.forEach(test => {
+                    html += `
+                        <div class="test-result">
+                            <h4>${test.name}</h4>
+                            <div class="index-name">Index: ${test.index}</div>
+                            <div class="query">Query: ${test.query || test.expiration || ''}</div>
+                            <div class="explanation">${test.explanation}</div>
+                            <div class="result-data">
+                                <strong>Results:</strong>
+                                <pre>${JSON.stringify(test.result, null, 2)}</pre>
+                            </div>
+                        </div>
+                    `;
+                });
+            } else if (result.text_search || result.geospatial_search || result.partial_index || result.vector_search || result.ttl_index) {
+                // Legacy format support
+                html += `<div class="test-result"><pre>${JSON.stringify(result, null, 2)}</pre></div>`;
+            }
+            
+            if (result.note) {
+                html += `
+                    <div class="message" style="background: #fff3cd; border-color: #ffc107; color: #856404;">
+                        <strong>Note:</strong> ${result.note}
+                    </div>
+                `;
+            }
+            
+            resultsDiv.innerHTML = html;
+        }
+        
         async function testRegular() {
             showLoading(true);
+            hideResults();
             try {
                 const response = await fetch('/experiments/indexing_demo/test-regular');
                 const data = await response.json();
-                showResults(data);
+                displayTestResults(data);
             } catch (error) {
                 showMessage('Error testing regular index: ' + error.message, 'error');
             } finally {
@@ -374,10 +779,11 @@
         
         async function testText() {
             showLoading(true);
+            hideResults();
             try {
                 const response = await fetch('/experiments/indexing_demo/test-text');
                 const data = await response.json();
-                showResults(data);
+                displayTestResults(data);
             } catch (error) {
                 showMessage('Error testing text index: ' + error.message, 'error');
             } finally {
@@ -387,10 +793,11 @@
         
         async function testGeospatial() {
             showLoading(true);
+            hideResults();
             try {
                 const response = await fetch('/experiments/indexing_demo/test-geospatial');
                 const data = await response.json();
-                showResults(data);
+                displayTestResults(data);
             } catch (error) {
                 showMessage('Error testing geospatial index: ' + error.message, 'error');
             } finally {
@@ -400,10 +807,11 @@
         
         async function testPartial() {
             showLoading(true);
+            hideResults();
             try {
                 const response = await fetch('/experiments/indexing_demo/test-partial');
                 const data = await response.json();
-                showResults(data);
+                displayTestResults(data);
             } catch (error) {
                 showMessage('Error testing partial index: ' + error.message, 'error');
             } finally {
@@ -413,10 +821,11 @@
         
         async function testVector() {
             showLoading(true);
+            hideResults();
             try {
                 const response = await fetch('/experiments/indexing_demo/test-vector');
                 const data = await response.json();
-                showResults(data);
+                displayTestResults(data);
             } catch (error) {
                 showMessage('Error testing vector index: ' + error.message, 'error');
             } finally {
@@ -426,10 +835,11 @@
         
         async function testTTL() {
             showLoading(true);
+            hideResults();
             try {
                 const response = await fetch('/experiments/indexing_demo/test-ttl');
                 const data = await response.json();
-                showResults(data);
+                displayTestResults(data);
             } catch (error) {
                 showMessage('Error testing TTL index: ' + error.message, 'error');
             } finally {
@@ -443,13 +853,14 @@
             }
             
             showLoading(true);
+            hideResults();
             try {
                 const response = await fetch('/experiments/indexing_demo/clear-data', {
                     method: 'DELETE'
                 });
                 const data = await response.json();
                 showMessage('All data cleared successfully!', 'success');
-                showResults(data);
+                document.getElementById('seeding-progress').classList.remove('show');
                 setTimeout(updateStats, 500);
             } catch (error) {
                 showMessage('Error clearing data: ' + error.message, 'error');
@@ -468,11 +879,9 @@
             }, 5000);
         }
         
-        function showResults(data) {
+        function hideResults() {
             const resultsDiv = document.getElementById('results');
-            const contentDiv = document.getElementById('results-content');
-            contentDiv.textContent = JSON.stringify(data, null, 2);
-            resultsDiv.classList.add('show');
+            resultsDiv.classList.remove('show');
         }
         
         function showLoading(show) {
@@ -497,4 +906,3 @@
     </script>
 </body>
 </html>
-

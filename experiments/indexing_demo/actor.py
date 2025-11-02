@@ -102,13 +102,23 @@ class ExperimentActor:
     
     async def seed_sample_data(self) -> Dict[str, Any]:
         """
-        Seed sample data for all index types.
+        Seed sample data for all index types with detailed progress information.
         """
         if not self.wrapped_db:
             return {"error": "Database not initialized"}
         
         try:
-            # Seed products (regular, text, geospatial indexes)
+            steps = []
+            
+            # Step 1: Seed products (regular, text, geospatial indexes)
+            steps.append({
+                "step": 1,
+                "name": "Creating Products Collection",
+                "description": "Seeding product data to demonstrate regular indexes (unique SKU), text indexes (searchable name/description), and geospatial indexes (location-based queries).",
+                "indexes": ["Unique SKU index", "Compound category/price index", "Text index on name/description", "2dsphere geospatial index"],
+                "status": "in_progress"
+            })
+            
             products = []
             categories = ["Electronics", "Clothing", "Food", "Books", "Tools"]
             
@@ -131,8 +141,18 @@ class ExperimentActor:
                 })
             
             await self.wrapped_db.products.insert_many(products)
+            steps[-1]["status"] = "completed"
+            steps[-1]["count"] = len(products)
             
-            # Seed sessions (TTL, partial indexes)
+            # Step 2: Seed sessions (TTL, partial indexes)
+            steps.append({
+                "step": 2,
+                "name": "Creating Sessions Collection",
+                "description": "Seeding session data to demonstrate TTL indexes (auto-expiring documents) and partial indexes (indexing only active sessions).",
+                "indexes": ["TTL index on created_at (1 hour expiration)", "Partial unique index on user_id/session_id (active sessions only)"],
+                "status": "in_progress"
+            })
+            
             sessions = []
             for i in range(10):
                 sessions.append({
@@ -144,8 +164,19 @@ class ExperimentActor:
                 })
             
             await self.wrapped_db.sessions.insert_many(sessions)
+            steps[-1]["status"] = "completed"
+            steps[-1]["count"] = len(sessions)
+            steps[-1]["note"] = f"{len([s for s in sessions if s['active']])} active sessions will be indexed by the partial index"
             
-            # Seed embeddings (vector search index)
+            # Step 3: Seed embeddings (vector search index)
+            steps.append({
+                "step": 3,
+                "name": "Creating Embeddings Collection",
+                "description": "Seeding vector embeddings to demonstrate Atlas Vector Search for semantic similarity queries.",
+                "indexes": ["Vector Search index (384 dimensions, cosine similarity)"],
+                "status": "in_progress"
+            })
+            
             embeddings = []
             for i in range(5):
                 # Generate a simple 384-dimensional vector (for demo purposes)
@@ -158,8 +189,18 @@ class ExperimentActor:
                 })
             
             await self.wrapped_db.embeddings.insert_many(embeddings)
+            steps[-1]["status"] = "completed"
+            steps[-1]["count"] = len(embeddings)
             
-            # Seed logs (regular, text indexes)
+            # Step 4: Seed logs (regular, text indexes)
+            steps.append({
+                "step": 4,
+                "name": "Creating Logs Collection",
+                "description": "Seeding log entries to demonstrate compound indexes and text search capabilities.",
+                "indexes": ["Compound index on timestamp/level", "Text index on message"],
+                "status": "in_progress"
+            })
+            
             logs = []
             levels = ["INFO", "WARNING", "ERROR", "DEBUG"]
             messages = [
@@ -180,17 +221,25 @@ class ExperimentActor:
                 })
             
             await self.wrapped_db.logs.insert_many(logs)
+            steps[-1]["status"] = "completed"
+            steps[-1]["count"] = len(logs)
             
             return {
                 "success": True,
                 "products": len(products),
                 "sessions": len(sessions),
                 "embeddings": len(embeddings),
-                "logs": len(logs)
+                "logs": len(logs),
+                "steps": steps,
+                "summary": {
+                    "total_documents": len(products) + len(sessions) + len(embeddings) + len(logs),
+                    "collections": 4,
+                    "index_types_demonstrated": 6
+                }
             }
         except Exception as e:
             logger.error(f"[IndexingDemo] Error seeding data: {e}", exc_info=True)
-            return {"error": str(e)}
+            return {"error": str(e), "steps": steps if 'steps' in locals() else []}
     
     async def test_regular_indexes(self) -> Dict[str, Any]:
         """
@@ -211,17 +260,35 @@ class ExperimentActor:
             
             return {
                 "success": True,
-                "unique_index": {
-                    "found": product_by_sku is not None,
-                    "sku": product_by_sku.get("sku") if product_by_sku else None
-                },
-                "compound_index": {
-                    "count": len(products_by_category),
-                    "products": [
-                        {"sku": p.get("sku"), "category": p.get("category"), "price": p.get("price")}
-                        for p in products_by_category
-                    ]
-                }
+                "index_type": "Regular Indexes",
+                "description": "Regular indexes are the foundation of MongoDB query performance. They enable fast lookups, enforce uniqueness, and optimize compound queries.",
+                "tests": [
+                    {
+                        "name": "Unique Index Lookup",
+                        "index": "product_sku_unique",
+                        "query": '{"sku": "SKU-0001"}',
+                        "explanation": "The unique index on SKU ensures fast O(log n) lookups and prevents duplicate SKUs. Without an index, MongoDB would scan every document.",
+                        "result": {
+                            "found": product_by_sku is not None,
+                            "sku": product_by_sku.get("sku") if product_by_sku else None,
+                            "name": product_by_sku.get("name") if product_by_sku else None
+                        }
+                    },
+                    {
+                        "name": "Compound Index Query",
+                        "index": "product_category_price",
+                        "query": '{"category": "Electronics", "price": {"$gte": 100.0}}',
+                        "explanation": "Compound indexes support efficient multi-field queries. The index order (category, price) optimizes queries that filter by category first, then by price. Sorting by price descending is also optimized.",
+                        "result": {
+                            "count": len(products_by_category),
+                            "products": [
+                                {"sku": p.get("sku"), "category": p.get("category"), "price": p.get("price")}
+                                for p in products_by_category
+                            ]
+                        }
+                    }
+                ],
+                "value": "Regular indexes can improve query performance from O(n) full collection scans to O(log n) index lookups, often delivering 100-1000x speed improvements."
             }
         except Exception as e:
             logger.error(f"[IndexingDemo] Error testing regular indexes: {e}", exc_info=True)
@@ -242,14 +309,25 @@ class ExperimentActor:
             
             return {
                 "success": True,
-                "text_search": {
-                    "query": "description keywords",
-                    "count": len(text_results),
-                    "products": [
-                        {"name": p.get("name"), "description": p.get("description")[:50]}
-                        for p in text_results
-                    ]
-                }
+                "index_type": "Text Index",
+                "description": "Text indexes enable full-text search capabilities, allowing you to search for words and phrases across multiple fields with relevance scoring.",
+                "tests": [
+                    {
+                        "name": "Full-Text Search",
+                        "index": "product_name_text",
+                        "query": '{"$text": {"$search": "description keywords"}}',
+                        "explanation": "Text indexes tokenize and stem words, enabling natural language search. Fields can have different weights (name: 10, description: 5) to prioritize matches in certain fields. The search uses word stemming and case-insensitive matching.",
+                        "result": {
+                            "query": "description keywords",
+                            "count": len(text_results),
+                            "products": [
+                                {"name": p.get("name"), "description": p.get("description")[:80] + "..." if len(p.get("description", "")) > 80 else p.get("description", "")}
+                                for p in text_results
+                            ]
+                        }
+                    }
+                ],
+                "value": "Text indexes enable powerful search functionality without requiring exact matches. They're essential for search engines, product catalogs, and content discovery features."
             }
         except Exception as e:
             logger.error(f"[IndexingDemo] Error testing text index: {e}", exc_info=True)
@@ -280,18 +358,31 @@ class ExperimentActor:
             
             return {
                 "success": True,
-                "geospatial_search": {
-                    "center": sf_coords,
-                    "max_distance_km": 50,
-                    "count": len(nearby_products),
-                    "products": [
-                        {
-                            "name": p.get("name"),
-                            "location": p.get("location", {}).get("coordinates")
+                "index_type": "Geospatial Index",
+                "description": "Geospatial indexes enable location-based queries using GeoJSON or legacy coordinate pairs. The 2dsphere index type supports spherical geometry calculations for accurate distance measurements.",
+                "tests": [
+                    {
+                        "name": "Nearby Location Search",
+                        "index": "product_location_2dsphere",
+                        "query": "$near query with 50km radius from San Francisco",
+                        "explanation": "The 2dsphere index uses spherical calculations to find documents within a specified distance from a point. Results are automatically sorted by distance. This is perfect for 'find stores near me' or 'find products in your area' features.",
+                        "result": {
+                            "center": sf_coords,
+                            "center_label": "San Francisco, CA",
+                            "max_distance_km": 50,
+                            "count": len(nearby_products),
+                            "products": [
+                                {
+                                    "name": p.get("name"),
+                                    "location": p.get("location", {}).get("coordinates"),
+                                    "sku": p.get("sku")
+                                }
+                                for p in nearby_products
+                            ]
                         }
-                        for p in nearby_products
-                    ]
-                }
+                    }
+                ],
+                "value": "Geospatial indexes power location-based features like finding nearby restaurants, delivery zones, ride-sharing matching, and IoT device tracking. They enable real-time spatial queries with sub-second response times."
             }
         except Exception as e:
             logger.error(f"[IndexingDemo] Error testing geospatial index: {e}", exc_info=True)
@@ -315,18 +406,31 @@ class ExperimentActor:
             
             return {
                 "success": True,
-                "partial_index": {
-                    "active_sessions_count": len(active_sessions),
-                    "total_sessions_count": len(all_sessions),
-                    "active_sessions": [
-                        {
-                            "user_id": s.get("user_id"),
-                            "session_id": s.get("session_id"),
-                            "active": s.get("active")
+                "index_type": "Partial Index",
+                "description": "Partial indexes only index documents that match a filter expression. This reduces index size and maintenance overhead while still optimizing queries that match the filter.",
+                "tests": [
+                    {
+                        "name": "Partial Index Query",
+                        "index": "session_user_active",
+                        "query": '{"active": true}',
+                        "explanation": "This partial index only indexes active sessions. It provides the same query performance as a full index for active sessions, but uses less storage and requires less maintenance. Inactive sessions are not indexed, saving space.",
+                        "result": {
+                            "active_sessions_count": len(active_sessions),
+                            "total_sessions_count": len(all_sessions),
+                            "indexed_documents": len(active_sessions),
+                            "non_indexed_documents": len(all_sessions) - len(active_sessions),
+                            "active_sessions": [
+                                {
+                                    "user_id": s.get("user_id"),
+                                    "session_id": s.get("session_id"),
+                                    "active": s.get("active")
+                                }
+                                for s in active_sessions
+                            ]
                         }
-                        for s in active_sessions
-                    ]
-                }
+                    }
+                ],
+                "value": "Partial indexes are perfect when you frequently query a subset of documents. They can reduce index size by 50-90% while maintaining full performance for filtered queries. This saves storage, reduces write overhead, and speeds up index maintenance."
             }
         except Exception as e:
             logger.error(f"[IndexingDemo] Error testing partial index: {e}", exc_info=True)
@@ -367,18 +471,30 @@ class ExperimentActor:
             
             return {
                 "success": True,
-                "vector_search": {
-                    "query_vector_dim": len(query_vector),
-                    "results_count": len(vector_results),
-                    "results": [
-                        {
-                            "document_id": r.get("document_id"),
-                            "text": r.get("text"),
-                            "score": r.get("score")
+                "index_type": "Vector Search Index",
+                "description": "Vector search indexes enable semantic similarity searches using high-dimensional embeddings. This powers AI features like similarity search, recommendation systems, and semantic retrieval.",
+                "tests": [
+                    {
+                        "name": "Semantic Similarity Search",
+                        "index": "embedding_vector_search",
+                        "query": "Cosine similarity search with 384-dimensional vectors",
+                        "explanation": "Vector search finds documents with similar meaning by comparing the cosine similarity between embedding vectors. Each document's text is converted to a 384-dimensional vector representing its semantic meaning. The search returns documents ranked by semantic similarity, not just keyword matches.",
+                        "result": {
+                            "query_vector_dim": len(query_vector),
+                            "similarity_metric": "cosine",
+                            "results_count": len(vector_results),
+                            "results": [
+                                {
+                                    "document_id": r.get("document_id"),
+                                    "text": r.get("text"),
+                                    "score": round(r.get("score", 0), 4) if r.get("score") else None
+                                }
+                                for r in vector_results
+                            ]
                         }
-                        for r in vector_results
-                    ]
-                }
+                    }
+                ],
+                "value": "Vector search enables AI-powered features like 'find similar items', intelligent recommendations, semantic search (finding documents by meaning, not just keywords), and RAG (Retrieval-Augmented Generation) for LLM applications. It's the foundation of modern AI applications."
             }
         except Exception as e:
             logger.error(f"[IndexingDemo] Error testing vector index: {e}", exc_info=True)
@@ -386,7 +502,10 @@ class ExperimentActor:
             return {
                 "success": False,
                 "error": str(e),
-                "note": "Vector search requires Atlas Vector Search. This may not be available in all environments."
+                "index_type": "Vector Search Index",
+                "description": "Vector search indexes enable semantic similarity searches using high-dimensional embeddings.",
+                "note": "Vector search requires Atlas Vector Search (MongoDB Atlas). This may not be available in all environments. Vector search is essential for AI applications like recommendation systems, semantic search, and RAG (Retrieval-Augmented Generation).",
+                "value": "Vector search enables AI-powered features by finding documents based on semantic meaning rather than exact keyword matches."
             }
     
     async def test_ttl_index(self) -> Dict[str, Any]:
@@ -419,12 +538,25 @@ class ExperimentActor:
             
             return {
                 "success": True,
-                "ttl_index": {
-                    "total_sessions": total_sessions,
-                    "old_session_inserted": True,
-                    "old_session_still_exists": old_session_check is not None,
-                    "note": "TTL indexes delete documents automatically. MongoDB runs cleanup every 60 seconds."
-                }
+                "index_type": "TTL Index",
+                "description": "TTL (Time-To-Live) indexes automatically delete documents after a specified expiration time. MongoDB's background task removes expired documents approximately every 60 seconds.",
+                "tests": [
+                    {
+                        "name": "Automatic Document Expiration",
+                        "index": "session_created_at_ttl",
+                        "expiration": "1 hour after created_at",
+                        "explanation": "TTL indexes monitor a date field and automatically remove documents when their expiration time is reached. This is perfect for session data, temporary caches, event logs, and any data that has a natural expiration. No application code needed - MongoDB handles it automatically.",
+                        "result": {
+                            "total_sessions": total_sessions,
+                            "old_session_inserted": True,
+                            "old_session_age_hours": 2,
+                            "old_session_still_exists": old_session_check is not None,
+                            "expiration_setting": "1 hour",
+                            "cleanup_note": "MongoDB runs TTL cleanup approximately every 60 seconds. The old session may not be deleted immediately, but will be removed in the next cleanup cycle."
+                        }
+                    }
+                ],
+                "value": "TTL indexes eliminate the need for application-level cleanup jobs, reduce storage costs, and ensure data retention policies are automatically enforced. They're essential for GDPR compliance, log rotation, and managing temporary data."
             }
         except Exception as e:
             logger.error(f"[IndexingDemo] Error testing TTL index: {e}", exc_info=True)
