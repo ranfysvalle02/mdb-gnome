@@ -327,12 +327,22 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     from fastapi.templating import Jinja2Templates
     templates = get_templates_from_request(request)
     if templates:
-        return templates.TemplateResponse(
-            "error.html" if Path(TEMPLATES_DIR / "error.html").exists() else None,
-            {"request": request, "status_code": exc.status_code, "detail": exc.detail},
-            status_code=exc.status_code
-        )
-    # Fallback to JSON if no template
+        # Check if error.html exists, otherwise use default_experiment.html as fallback
+        error_template_path = Path(TEMPLATES_DIR / "error.html")
+        default_template_path = Path(TEMPLATES_DIR / "default_experiment.html")
+        template_name = None
+        if error_template_path.exists():
+            template_name = "error.html"
+        elif default_template_path.exists():
+            template_name = "default_experiment.html"
+        
+        if template_name:
+            return templates.TemplateResponse(
+                template_name,
+                {"request": request, "status_code": exc.status_code, "detail": exc.detail},
+                status_code=exc.status_code
+            )
+    # Fallback to JSON if no template available
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail}
@@ -2694,7 +2704,8 @@ async def upload_experiment_zip(
           if member.filename.startswith(experiment_prefix):
             # Remove the experiments/{slug_id}/ prefix to get the relative path
             relative_path = member.filename[len(experiment_prefix):]
-            if not relative_path:  # Skip directory entries
+            # Skip empty paths or directory entries (those ending with /)
+            if not relative_path or relative_path.endswith('/'):
               continue
             
             # Skip excluded patterns (__pycache__, etc.)
