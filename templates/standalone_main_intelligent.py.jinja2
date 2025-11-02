@@ -388,6 +388,9 @@ except ImportError:
 
 # Initialize Ray early at module level so type annotations can be resolved
 # Ray MUST be initialized before importing experiment modules that use ray.actor.ActorHandle
+# Suppress Ray warning about RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO
+os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "0")
+
 RAY_CONNECTION_ADDRESS = os.getenv("RAY_CONNECTION_ADDRESS", None)
 try:
     if RAY_CONNECTION_ADDRESS:
@@ -450,20 +453,38 @@ async def lifespan(app: FastAPI):
             actor_cls = getattr(actor_mod, "ExperimentActor")
             actor_name = f"{SLUG}-actor"
             
-            actor_handle = actor_cls.options(
-                name=actor_name,
-                namespace="modular_labs",
-                lifetime="detached",
-                get_if_exists=True,
-                max_restarts=-1
-            ).remote(
-                mongo_uri=MONGO_URI,
-                db_name=DB_NAME,
-                write_scope=SLUG,
-                read_scopes=read_scopes
-            )
+            # Check if actor already exists first
+            try:
+                existing_actor = ray.get_actor(actor_name, namespace="modular_labs")
+                logger.info(f"Ray Actor '{actor_name}' already exists, reusing it.")
+                actor_handle = existing_actor
+            except ValueError:
+                # Actor doesn't exist, create it
+                logger.info(f"Creating new Ray Actor '{actor_name}'...")
+                actor_handle = actor_cls.options(
+                    name=actor_name,
+                    namespace="modular_labs",
+                    lifetime="detached",
+                    get_if_exists=True,
+                    max_restarts=-1
+                ).remote(
+                    mongo_uri=MONGO_URI,
+                    db_name=DB_NAME,
+                    write_scope=SLUG,
+                    read_scopes=read_scopes
+                )
+                # Wait for actor to be ready before proceeding
+                logger.info(f"Waiting for Ray Actor '{actor_name}' to be ready...")
+                # Verify actor is accessible by doing a test call
+                try:
+                    # Try to get actor handle to verify it's accessible
+                    test_handle = ray.get_actor(actor_name, namespace="modular_labs")
+                    logger.info(f"Ray Actor '{actor_name}' is accessible and ready.")
+                except Exception as e:
+                    logger.warning(f"Could not verify actor accessibility: {e}")
+            
             app.state.actor_handle = actor_handle
-            logger.info(f"Ray Actor '{actor_name}' started successfully.")
+            logger.info(f"Ray Actor '{actor_name}' started successfully and stored in app.state.")
         else:
             logger.error(f"CRITICAL: Experiment actor class 'ExperimentActor' not found in '{actor_mod_name}'.")
             raise RuntimeError(f"Required actor class 'ExperimentActor' not found in '{actor_mod_name}'.")
@@ -761,26 +782,21 @@ if static_dir.is_dir():
     )
     logger.info(f"Mounted static files from: {static_dir}")
 
-# Root route - serve experiment index.html
+# Root route - redirect to experiment route OR serve with actor call
 @app.get("/", response_class=HTMLResponse)
 async def standalone_index(request: Request):
-    """Serve index.html from the experiment templates."""
-    local_index = EXPERIMENT_DIR / "templates" / "index.html"
-    if local_index.is_file():
-        templates = Jinja2Templates(directory=str(EXPERIMENT_DIR / "templates"))
-        return templates.TemplateResponse("index.html", {"request": request})
+    """
+    Serve index.html from the experiment templates.
+    If the experiment has a root route that needs the actor, redirect to it.
+    Otherwise, serve the template directly.
+    """
+    # Check if experiment has a root route handler that needs the actor
+    # If so, redirect to the full experiment path
+    experiment_router_prefix = f"/experiments/{SLUG}"
     
-    # Fallback
-    return HTMLResponse(f"""
-    <html>
-        <head><title>Standalone: {SLUG}</title></head>
-        <body>
-            <h2>Standalone experiment: '{SLUG}'</h2>
-            <p>No local index.html found. Check templates directory.</p>
-            <p><a href="/docs">API Documentation</a></p>
-        </body>
-    </html>
-    """, status_code=200)
+    # Redirect to experiment route which will handle the actor call
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url=experiment_router_prefix, status_code=status.HTTP_302_FOUND)
 
 # Debug endpoint
 @app.get("/_debug/db", response_class=JSONResponse)
@@ -815,18 +831,42 @@ async def debug_db(request: Request):
 # get_actor_handle immediately and FastAPI stores that function reference.
 
 # Create a standalone get_actor_handle function that the experiment routes can use
-async def get_standalone_actor_handle(request: Request) -> "ray.actor.ActorHandle":
+# This needs to be SYNC for direct calls (like hello_ray does), but can also work with Depends
+def get_standalone_actor_handle(request: Request) -> "ray.actor.ActorHandle":
     """
     Standalone version of get_actor_handle that works with the standalone app setup.
     This replaces the platform's get_actor_handle dependency.
+    Returns the actor handle from app.state (synchronous - works for direct calls).
+    Matches the behavior expected by experiments/hello_ray/__init__.py.
     """
-    if not hasattr(request.app.state, "actor_handle"):
-        logger.error(f"[{SLUG}] Actor handle not found in app.state")
+    logger.info(f"[{SLUG}] get_standalone_actor_handle called")
+    
+    # First check if Ray is available (matches hello_ray route expectation)
+    if not getattr(request.app.state, "ray_is_available", False):
+        logger.error(f"[{SLUG}] Ray is not marked as available in app.state.")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Actor not initialized. Check server logs."
+            detail="Ray Service is unavailable. Check Ray cluster and logs."
         )
-    return request.app.state.actor_handle
+    
+    # Then check if actor handle exists
+    if hasattr(request.app.state, "actor_handle") and request.app.state.actor_handle is not None:
+        logger.info(f"[{SLUG}] Using actor handle from app.state: {request.app.state.actor_handle}")
+        return request.app.state.actor_handle
+    
+    # Try to get actor by name as fallback (matches hello_ray route behavior)
+    logger.info(f"[{SLUG}] Actor handle not in app.state, trying to get by name...")
+    try:
+        actor_name = f"{SLUG}-actor"
+        actor_handle = ray.get_actor(actor_name, namespace="modular_labs")
+        logger.info(f"[{SLUG}] Successfully got actor handle by name: {actor_handle}")
+        return actor_handle
+    except Exception as e:
+        logger.error(f"[{SLUG}] Failed to get actor handle '{actor_name}': {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error connecting to Ray actor '{actor_name}'."
+        )
 
 # Add the experiment directory to the path before importing
 sys.path.insert(0, str(BASE_DIR))
@@ -836,26 +876,8 @@ sys.path.insert(0, str(BASE_DIR))
 # get_actor_handle and FastAPI stores that function reference. So we need our version
 # to be in place BEFORE the decorators run.
 
-# Strategy: Use a class with __call__ that FastAPI can use as a dependency
-# This way, we can replace it in the module and FastAPI will call it at request time
-class StandaloneActorHandleDependency:
-    """Dependency class that FastAPI can use to get the actor handle."""
-    async def __call__(self, request: Request) -> "ray.actor.ActorHandle":
-        if not hasattr(request.app.state, "actor_handle"):
-            logger.error(f"[{SLUG}] Actor handle not found in app.state")
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Actor not initialized. Check server logs."
-            )
-        return request.app.state.actor_handle
-
-# Create an instance for FastAPI to use
-standalone_actor_handle_dep = StandaloneActorHandleDependency()
-
-# Also create a function version for compatibility
-async def get_standalone_actor_handle_func(request: Request) -> "ray.actor.ActorHandle":
-    """Function version of get_actor_handle for compatibility."""
-    return await standalone_actor_handle_dep(request)
+# Note: FastAPI Depends() can handle both sync and async functions,
+# so we use a sync function that works for both direct calls and Depends
 
 # Use importlib to load and patch the module
 import importlib.util
@@ -877,7 +899,8 @@ try:
     
     # Pre-inject our dependency BEFORE module code runs
     # When routes evaluate Depends(get_actor_handle), they'll get our version
-    exp_mod.get_actor_handle = get_standalone_actor_handle_func
+    # Use the sync version since routes may call it directly (not via Depends)
+    exp_mod.get_actor_handle = get_standalone_actor_handle
     
     # Store in sys.modules BEFORE executing so imports work
     sys.modules[mod_name] = exp_mod
@@ -887,7 +910,7 @@ try:
     
     # CRITICAL: Replace it again AFTER module execution in case module redefined it
     # This ensures all routes use our version
-    exp_mod.get_actor_handle = get_standalone_actor_handle_func
+    exp_mod.get_actor_handle = get_standalone_actor_handle
     
     # Also inject ExperimentDB and get_experiment_db if available
     # This ensures routes can use the recommended database abstraction
@@ -915,7 +938,7 @@ try:
     # The module may have defined its own version, but we need to use ours
     # Store the original if it exists (for debugging)
     original_get_actor_handle = getattr(exp_mod, "get_actor_handle", None)
-    exp_mod.get_actor_handle = get_standalone_actor_handle_func
+    exp_mod.get_actor_handle = get_standalone_actor_handle
     logger.info(f"✅ Replaced get_actor_handle in module '{mod_name}' (original: {original_get_actor_handle is not None})")
     
     # Now patch all routes to use our dependency
@@ -932,7 +955,8 @@ try:
                         # If it's the module's original get_actor_handle, replace it
                         if dep.call == original_get_actor_handle or (original_get_actor_handle is None and hasattr(exp_mod, "get_actor_handle") and dep.call == getattr(exp_mod, "get_actor_handle", None)):
                             # Replace the dependency's call with our version
-                            dep.call = get_standalone_actor_handle_func
+                            # FastAPI Depends can handle both sync and async functions
+                            dep.call = get_standalone_actor_handle
                             patched_routes += 1
                             logger.debug(f"Patched dependency on route: {getattr(route, 'path', '?')}")
         if patched_routes > 0:

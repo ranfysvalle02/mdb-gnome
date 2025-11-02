@@ -311,15 +311,6 @@ async def dump_db_to_json(db, slug_id: str) -> Tuple[Dict[str, Any], Dict[str, L
 
 
 # Template generation functions - templates should be passed as parameter
-def make_standalone_main_py(slug_id: str, templates) -> str:
-    """Generate standalone main.py from template."""
-    if not templates:
-        raise RuntimeError("Jinja2 templates object is not initialized.")
-    template = templates.get_template("standalone_main.py.jinja2")
-    standalone_main_source = template.render(slug_id=slug_id)
-    return standalone_main_source
-
-
 def make_intelligent_standalone_main_py(slug_id: str, templates) -> str:
     """Generate intelligent standalone main.py using real MongoDB."""
     if not templates:

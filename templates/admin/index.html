@@ -762,17 +762,64 @@
             }
         }
         
+        async function detectSlugFromFile(file) {
+            // Detect from ZIP structure (experiments/{slug}/) - ONLY method, no filename guessing
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                const baseUrl = window.location.origin;
+                const response = await fetch(`${baseUrl}/admin/api/detect-slug`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    return null;
+                }
+                
+                const data = await response.json();
+                
+                if (data.status === 'success' && data.slug) {
+                    return data.slug;
+                }
+            } catch (error) {
+                console.error('Error detecting slug from ZIP:', error);
+            }
+            
+            return null;
+        }
+        
+        // Auto-detect slug when file is selected - INSTANT detection
+        document.addEventListener('DOMContentLoaded', function() {
+            const zipFileInput = document.getElementById('zipFile');
+            
+            if (zipFileInput) {
+                zipFileInput.addEventListener('change', async function(event) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+                    
+                    // Show file info
+                    const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+                    showUploadStatus('info', `📦 Selected: ${file.name} (${fileSizeMB} MB) - Detecting slug from ZIP structure...`);
+                    
+                    // Detect slug from ZIP structure (experiments/{slug}/)
+                    const detectedSlug = await detectSlugFromFile(file);
+                    
+                    if (detectedSlug) {
+                        showUploadStatus('success', `✅ Auto-detected slug: <strong>${detectedSlug}</strong> from experiments/${detectedSlug}/ structure | 📦 ${file.name} (${fileSizeMB} MB)`);
+                    } else {
+                        showUploadStatus('error', `❌ Could not detect slug from ZIP structure. ZIP must contain experiments/{slug}/ with manifest.json, actor.py, and __init__.py. Only standalone export ZIPs are accepted.`);
+                    }
+                });
+            }
+        });
+        
         async function handleUpload(event) {
             event.preventDefault();
             
-            const slugId = document.getElementById('slugId').value.trim();
             const fileInput = document.getElementById('zipFile');
             const file = fileInput.files[0];
-            
-            if (!slugId) {
-                showUploadStatus('error', 'Please enter an experiment slug ID.');
-                return;
-            }
             
             if (!file) {
                 showUploadStatus('error', 'Please select a ZIP file to upload.');
@@ -782,6 +829,13 @@
             // Validate file type
             if (!file.name.endsWith('.zip') && file.type !== 'application/zip' && file.type !== 'application/x-zip-compressed') {
                 showUploadStatus('error', 'Please select a valid ZIP file.');
+                return;
+            }
+            
+            // Auto-detect slug from ZIP structure BEFORE uploading
+            const detectedSlug = await detectSlugFromFile(file);
+            if (!detectedSlug) {
+                showUploadStatus('error', '❌ Could not detect slug from ZIP structure. ZIP must contain experiments/{slug}/ with manifest.json, actor.py, and __init__.py. Only standalone export ZIPs are accepted.');
                 return;
             }
             
@@ -802,9 +856,9 @@
                 const formData = new FormData();
                 formData.append('file', file);
                 
-                // Get the upload URL
+                // Get the upload URL (no slug in path - auto-detected server-side)
                 const baseUrl = window.location.origin;
-                const uploadUrl = `${baseUrl}/admin/api/upload-experiment/${encodeURIComponent(slugId)}`;
+                const uploadUrl = `${baseUrl}/admin/api/upload-experiment`;
                 
                 // Simulate progress (since we can't track actual upload progress easily)
                 let progress = 0;
@@ -839,7 +893,7 @@
                 }
                 
                 if (response.ok && data.status === 'success') {
-                    showUploadStatus('success', `✅ Experiment "${slugId}" uploaded successfully! ${data.message || ''}`);
+                    showUploadStatus('success', `✅ Experiment uploaded successfully! ${data.message || ''}`);
                     
                     // Clear form after successful upload
                     setTimeout(() => {
@@ -879,19 +933,6 @@
             statusDiv.textContent = message;
         }
         
-        // File input change handler to show selected file
-        document.addEventListener('DOMContentLoaded', function() {
-            const fileInput = document.getElementById('zipFile');
-            if (fileInput) {
-                fileInput.addEventListener('change', function(e) {
-                    const file = e.target.files[0];
-                    if (file) {
-                        const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-                        showUploadStatus('info', `📦 Selected: ${file.name} (${fileSizeMB} MB)`);
-                    }
-                });
-            }
-        });
     </script>
 </head>
 <body>
@@ -975,20 +1016,6 @@
                 </p>
                 <form id="uploadForm" class="upload-form" onsubmit="handleUpload(event)">
                     <div class="form-group">
-                        <label for="slugId">Experiment Slug ID *</label>
-                        <input 
-                            type="text" 
-                            id="slugId" 
-                            name="slugId" 
-                            placeholder="e.g., data_imaging, click_tracker" 
-                            required 
-                            pattern="[a-z0-9\-_]+"
-                            title="Use lowercase letters, numbers, underscores, and hyphens only"
-                        />
-                        <small>The unique identifier for this experiment (lowercase, alphanumeric, underscores/hyphens only)</small>
-                    </div>
-                    
-                    <div class="form-group">
                         <label for="zipFile">Experiment ZIP File *</label>
                         <input 
                             type="file" 
@@ -998,7 +1025,8 @@
                             required
                         />
                         <small>
-                            <strong>Required files in ZIP:</strong> manifest.json, actor.py, __init__.py<br>
+                            <strong>Slug is auto-detected from ZIP structure:</strong> experiments/{slug}/<br>
+                            <strong>Required files in ZIP:</strong> experiments/{slug}/manifest.json, experiments/{slug}/actor.py, experiments/{slug}/__init__.py<br>
                             <strong>Optional:</strong> requirements.txt, static/, templates/, etc.
                         </small>
                     </div>

@@ -157,7 +157,6 @@ from export_helpers import (
     parse_requirements_file_sync as _parse_requirements_file_sync,
     parse_requirements_from_string as _parse_requirements_from_string,
     dump_db_to_json as _dump_db_to_json,
-    make_standalone_main_py as _make_standalone_main_py,
     make_intelligent_standalone_main_py as _make_intelligent_standalone_main_py,
     fix_static_paths as _fix_static_paths,
     create_zip_to_disk as _create_zip_to_disk,
@@ -760,234 +759,7 @@ def _create_zip_to_disk(
   return zip_path
 
 
-async def _create_standalone_zip(
-  slug_id: str,
-  source_dir: Path,
-  db_data: Dict[str, Any],
-  db_collections: Dict[str, List[Dict[str, Any]]],
-  templates
-) -> io.BytesIO | Path:
-  """
-  Creates a standalone ZIP package.
-  Uses disk streaming for large exports (>100MB) to avoid memory issues.
-  Returns either io.BytesIO (small exports) or Path (large exports).
-  """
-  logger.info(f"Starting creation of standalone package for '{slug_id}'.")
-  experiment_path = source_dir / "experiments" / slug_id
-  templates_dir = source_dir / "templates"
 
-  # --- 1. Check if we should use disk streaming ---
-  estimated_size = await _estimate_export_size(db_data, db_collections, source_dir, slug_id)
-  use_disk_streaming = _should_use_disk_streaming(estimated_size, max_size_mb=100)
-  
-  if use_disk_streaming:
-    logger.info(f"[{slug_id}] Large export detected ({estimated_size / (1024*1024):.1f} MB), using disk streaming")
-    timestamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    zip_path = EXPORTS_TEMP_DIR / f"{slug_id}_standalone_export_{timestamp}.zip"
-  else:
-    zip_path = None
-
-  # --- 2. Generate core files ---
-  standalone_main_source = _make_standalone_main_py(slug_id, templates)
-  # Note: No root template needed - standalone app serves experiment's own index.html
-
-  # --- 3. Determine local requirements to include ---
-  local_reqs_path = experiment_path / "requirements.txt"
-  if local_reqs_path.is_file():
-    local_requirements = _parse_requirements_file_sync(local_reqs_path)
-    # Exclude requirements already present in the master environment
-    master_pkg_names = {_extract_pkgname(req) for req in MASTER_REQUIREMENTS}
-    standalone_requirements = [
-      req for req in local_requirements
-      if _extract_pkgname(req) not in master_pkg_names
-    ]
-    requirements_content = "\n".join(standalone_requirements)
-  else:
-    requirements_content = ""
-
-  # --- 4. Generate README.md with instructions ---
-  readme_content = f"""# Standalone Experiment Package: {slug_id}
-
-This package contains a self-contained, single-file server (`standalone_main.py`)
-to run the experiment locally, independent of the main platform.
-
-## How to Run
-
-1. **Setup Environment:**
- We recommend using a fresh Python virtual environment.
- ```bash
- python3 -m venv venv
- source venv/bin/activate # or venv\\Scripts\\activate on Windows
- ```
-
-2. **Install Dependencies:**
- This experiment requires FastAPI, Uvicorn, Motor, and PyMongo.
- If a `requirements.txt` file is present in this directory, install those dependencies as well.
- ```bash
- # Base requirements
- pip install fastapi uvicorn 'motor[asyncio]' pymongo
-
- # Install experiment-specific requirements (if file exists)
- if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
- ```
-
-3. **Start the Server:**
- Run the standalone application. It will automatically load the snapshot data.
- ```bash
- python standalone_main.py
- ```
-
-4. **Access:**
- Open your browser and navigate to: http://127.0.0.1:8000/
-"""
-
-  # --- 5. Create ZIP archive (on disk or in memory) ---
-  if use_disk_streaming:
-    _create_zip_to_disk(
-      slug_id=slug_id,
-      source_dir=source_dir,
-      db_data=db_data,
-      db_collections=db_collections,
-      zip_path=zip_path,
-      experiment_path=experiment_path,
-      templates_dir=None,
-      standalone_main_source=standalone_main_source,
-      requirements_content=requirements_content,
-      readme_content=readme_content,
-      include_templates=False,
-      include_docker_files=False,
-      main_file_name="standalone_main.py"
-    )
-    logger.info(f"Standalone package created successfully on disk: {zip_path}")
-    return zip_path
-  else:
-    zip_buffer = io.BytesIO()
-    EXCLUSION_PATTERNS = [
-      "__pycache__", ".DS_Store", "*.pyc", "*.tmp", ".git", ".idea", ".vscode"
-    ]
-    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-      if experiment_path.is_dir():
-        logger.debug(f"Including thin client code from: {experiment_path}")
-        # Walk the experiment directory to include files
-        for folder_name, _, file_names in os.walk(experiment_path):
-          # Skip excluded folders
-          if Path(folder_name).name in EXCLUSION_PATTERNS:
-            continue
-
-          for file_name in file_names:
-            # Skip excluded files
-            if any(fnmatch.fnmatch(file_name, p) for p in EXCLUSION_PATTERNS):
-              continue
-
-            file_path = Path(folder_name) / file_name
-            # Archive name should be relative to the root of the experiment directory
-            try:
-              arcname = str(file_path.relative_to(experiment_path))
-            except ValueError:
-              logger.error(f"Failed to get relative path for {file_path}")
-              continue
-
-            # Rewrite paths in HTML files (using async file I/O for better concurrency)
-            if file_path.suffix in (".html", ".htm"):
-              original_html = await _read_file_async(file_path, encoding="utf-8")
-              fixed_html = _fix_static_paths(original_html, slug_id)
-              zf.writestr(arcname, fixed_html)
-            else:
-              # For binary files, still use synchronous write since zipfile requires it
-              # but we can read asynchronously if needed in the future
-              zf.write(file_path, arcname)
-
-      # --- 6. Add generated core files to the root of the ZIP ---
-      # No root template needed - standalone app serves experiment's own index.html directly
-
-      zf.writestr("db_config.json", json.dumps(db_data, indent=2))
-      zf.writestr("db_collections.json", json.dumps(db_collections, indent=2))
-      zf.writestr("standalone_main.py", standalone_main_source)
-      zf.writestr("README.md", readme_content)
-
-      # Conditionally add requirements.txt
-      if requirements_content:
-        zf.writestr("requirements.txt", requirements_content)
-
-    zip_buffer.seek(0)
-    logger.info(f"Standalone package created successfully in memory for '{slug_id}'.")
-    return zip_buffer
-
-
-def _create_dockerfile_for_experiment(slug_id: str, source_dir: Path, experiment_path: Path) -> str:
-  """
-  Generates a Dockerfile specifically for the data_imaging experiment.
-  Based on the root Dockerfile but customized for the experiment.
-  """
-  local_reqs_path = experiment_path / "requirements.txt"
-  
-  # Get combined requirements (root + experiment-specific)
-  all_requirements = MASTER_REQUIREMENTS.copy()
-  if local_reqs_path.is_file():
-    local_requirements = _parse_requirements_file_sync(local_reqs_path)
-    for req in local_requirements:
-      pkg_name = _extract_pkgname(req)
-      # Replace if exists, otherwise add
-      all_requirements = [r for r in all_requirements if _extract_pkgname(r) != pkg_name]
-      all_requirements.append(req)
-  
-  # Build Dockerfile with requirements written properly
-  dockerfile_lines = [
-    "# --- Stage 1: Build dependencies ---",
-    "FROM python:3.10-slim-bookworm as builder",
-    "WORKDIR /app",
-    "",
-    "# Install build deps",
-    "RUN apt-get update && apt-get install -y build-essential && rm -rf /var/lib/apt/lists/*",
-    "",
-    "# Create requirements file"
-  ]
-  
-  # Write requirements one by one
-  for req in all_requirements:
-    # Escape any single quotes in the requirement
-    escaped_req = req.replace("'", "'\"'\"'")
-    dockerfile_lines.append(f"RUN echo '{escaped_req}' >> /tmp/requirements.txt")
-  
-  dockerfile_lines.append("")
-  dockerfile_lines.append("# Install dependencies")
-  dockerfile_lines.append("RUN python -m venv /opt/venv && \\")
-  dockerfile_lines.append("    . /opt/venv/bin/activate && \\")
-  dockerfile_lines.append("    pip install --upgrade pip && \\")
-  dockerfile_lines.append("    pip install -r /tmp/requirements.txt")
-  dockerfile_lines.append("")
-  dockerfile_lines.append("# --- Stage 2: Final image ---")
-  dockerfile_lines.append("FROM python:3.10-slim-bookworm")
-  dockerfile_lines.append("WORKDIR /app")
-  dockerfile_lines.append("")
-  dockerfile_lines.append("# Copy venv from builder")
-  dockerfile_lines.append("COPY --from=builder /opt/venv /opt/venv")
-  dockerfile_lines.append('ENV PATH="/opt/venv/bin:$PATH"')
-  dockerfile_lines.append("")
-  dockerfile_lines.append("# Copy experiment code")
-  dockerfile_lines.append(f"COPY experiments/{slug_id} /app/experiments/{slug_id}")
-  dockerfile_lines.append("COPY experiments/__init__.py /app/experiments/__init__.py")
-  dockerfile_lines.append("COPY templates /app/templates")
-  dockerfile_lines.append("COPY db_config.json /app/db_config.json")
-  dockerfile_lines.append("COPY db_collections.json /app/db_collections.json")
-  dockerfile_lines.append("COPY main.py /app/main.py")
-  dockerfile_lines.append("")
-  dockerfile_lines.append("# Create non-root user")
-  dockerfile_lines.append("RUN addgroup --system app && adduser --system --group app")
-  dockerfile_lines.append("RUN chown -R app:app /app")
-  dockerfile_lines.append("USER app")
-  dockerfile_lines.append("")
-  dockerfile_lines.append("# Build ARG and ENV for port")
-  dockerfile_lines.append("ARG APP_PORT=8000")
-  dockerfile_lines.append("ENV PORT=$APP_PORT")
-  dockerfile_lines.append("")
-  dockerfile_lines.append("# Expose the port")
-  dockerfile_lines.append("EXPOSE ${APP_PORT}")
-  dockerfile_lines.append("")
-  dockerfile_lines.append("# Default command: Run the standalone server")
-  dockerfile_lines.append("CMD python main.py")
-  
-  return "\n".join(dockerfile_lines)
 
 
 def _create_intelligent_dockerfile(slug_id: str, source_dir: Path, experiment_path: Path) -> str:
@@ -1085,53 +857,6 @@ def _create_intelligent_dockerfile(slug_id: str, source_dir: Path, experiment_pa
   ])
   
   return "\n".join(dockerfile_lines)
-
-
-def _create_docker_compose_for_experiment(slug_id: str, source_dir: Path) -> str:
-  """
-  Generates a docker-compose.yml specifically for the data_imaging experiment.
-  Based on the root docker-compose.yml but customized for standalone experiment.
-  """
-  docker_compose_content = f"""services:
-  # --------------------------------------------------------------------------
-  # Experiment Application (data_imaging)
-  # --------------------------------------------------------------------------
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: {slug_id}-app
-    ports:
-      - "8000:8000"
-    environment:
-      - MONGO_URI=mongodb://mongo:27017/
-      - DB_NAME=labs_db
-      - PORT=8000
-    depends_on:
-      mongo:
-        condition: service_healthy
-
-  # --------------------------------------------------------------------------
-  # MongoDB Database
-  # --------------------------------------------------------------------------
-  mongo:
-    image: mongodb/mongodb-atlas-local:latest
-    container_name: {slug_id}-mongo
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo-data:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.hello()", "--quiet"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
-
-volumes:
-  mongo-data:
-"""
-  return docker_compose_content
 
 
 def _create_intelligent_docker_compose(slug_id: str) -> str:
@@ -1236,151 +961,6 @@ volumes:
   return docker_compose_content
 
 
-def _create_docker_zip(
-  slug_id: str,
-  source_dir: Path,
-  db_data: Dict[str, Any],
-  db_collections: Dict[str, List[Dict[str, Any]]],
-  templates
-) -> io.BytesIO:
-  """
-  Creates a Docker export package for data_imaging with Dockerfile and docker-compose.yml.
-  """
-  logger.info(f"Starting creation of Docker package for '{slug_id}'.")
-  zip_buffer = io.BytesIO()
-  experiment_path = source_dir / "experiments" / slug_id
-  templates_dir = source_dir / "templates"
-
-  # --- 1. Generate core files ---
-  standalone_main_source = _make_standalone_main_py(slug_id, templates)
-  # Note: No root template needed - standalone app serves experiment's own index.html
-
-  # --- 2. Get all requirements ---
-  local_reqs_path = experiment_path / "requirements.txt"
-  all_requirements = MASTER_REQUIREMENTS.copy()
-  if local_reqs_path.is_file():
-    local_requirements = _parse_requirements_file_sync(local_reqs_path)
-    for req in local_requirements:
-      pkg_name = _extract_pkgname(req)
-      all_requirements = [r for r in all_requirements if _extract_pkgname(r) != pkg_name]
-      all_requirements.append(req)
-  requirements_content = "\n".join(all_requirements)
-
-  # --- 3. Generate Docker files ---
-  dockerfile_content = _create_dockerfile_for_experiment(slug_id, source_dir, experiment_path)
-  docker_compose_content = _create_docker_compose_for_experiment(slug_id, source_dir)
-
-  # --- 4. Generate README.md with Docker instructions ---
-  readme_content = f"""# Docker Export Package: {slug_id}
-
-This package contains everything needed to run the experiment in Docker containers.
-
-## Prerequisites
-
-- Docker and Docker Compose installed on your system
-
-## How to Run
-
-1. **Extract the package:**
-   ```bash
-   unzip {slug_id}_docker_package_*.zip
-   cd {slug_id}_docker_package_*
-   ```
-
-2. **Build and start containers:**
-   ```bash
-   docker-compose up --build
-   ```
-
-3. **Access:**
-   Open your browser and navigate to: http://localhost:8000/
-
-## Docker Structure
-
-- **Dockerfile**: Builds the application container with all dependencies
-- **docker-compose.yml**: Orchestrates the app and MongoDB containers
-- **main.py**: Standalone server entry point
-- **experiments/{slug_id}/**: Experiment code
-- **db_config.json**: Experiment configuration snapshot
-- **db_collections.json**: Database collections snapshot
-
-## Stopping
-
-Press `Ctrl+C` to stop the containers, or run:
-```bash
-docker-compose down
-```
-
-To remove volumes (including MongoDB data):
-```bash
-docker-compose down -v
-```
-"""
-
-  # --- 5. Create ZIP archive ---
-  EXCLUSION_PATTERNS = [
-    "__pycache__", ".DS_Store", "*.pyc", "*.tmp", ".git", ".idea", ".vscode"
-  ]
-  with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-    # Include experiment directory
-    if experiment_path.is_dir():
-      logger.debug(f"Including experiment code from: {experiment_path}")
-      for folder_name, _, file_names in os.walk(experiment_path):
-        if Path(folder_name).name in EXCLUSION_PATTERNS:
-          continue
-
-        for file_name in file_names:
-          if any(fnmatch.fnmatch(file_name, p) for p in EXCLUSION_PATTERNS):
-            continue
-
-          file_path = Path(folder_name) / file_name
-          try:
-            arcname = f"experiments/{slug_id}/{file_path.relative_to(experiment_path)}"
-          except ValueError:
-            logger.error(f"Failed to get relative path for {file_path}")
-            continue
-
-          if file_path.suffix in (".html", ".htm"):
-            original_html = file_path.read_text(encoding="utf-8")
-            fixed_html = _fix_static_paths(original_html, slug_id)
-            zf.writestr(arcname, fixed_html)
-          else:
-            zf.write(file_path, arcname)
-
-    # Include templates directory
-    if templates_dir.is_dir():
-      for folder_name, _, file_names in os.walk(templates_dir):
-        if Path(folder_name).name in EXCLUSION_PATTERNS:
-          continue
-        for file_name in file_names:
-          if any(fnmatch.fnmatch(file_name, p) for p in EXCLUSION_PATTERNS):
-            continue
-          file_path = Path(folder_name) / file_name
-          try:
-            arcname = f"templates/{file_path.relative_to(templates_dir)}"
-          except ValueError:
-            continue
-          zf.write(file_path, arcname)
-
-    # Add __init__.py for experiments package
-    experiments_init = source_dir / "experiments" / "__init__.py"
-    if experiments_init.is_file():
-      zf.write(experiments_init, "experiments/__init__.py")
-
-    # Add generated files
-    # No root template needed - standalone app serves experiment's own index.html directly
-
-    zf.writestr("Dockerfile", dockerfile_content)
-    zf.writestr("docker-compose.yml", docker_compose_content)
-    zf.writestr("db_config.json", json.dumps(db_data, indent=2))
-    zf.writestr("db_collections.json", json.dumps(db_collections, indent=2))
-    zf.writestr("main.py", standalone_main_source)
-    zf.writestr("requirements.txt", requirements_content)
-    zf.writestr("README.md", readme_content)
-
-  zip_buffer.seek(0)
-  logger.info(f"Docker package created successfully for '{slug_id}'.")
-  return zip_buffer
 
 
 def _create_intelligent_readme(slug_id: str, experiment_name: str, description: str) -> str:
@@ -2850,40 +2430,166 @@ async def get_file_content(slug_id: str, path: str = Query(...), user: Dict[str,
     return JSONResponse({"error": "An unexpected error occurred."}, status_code=500)
 
 
-@admin_router.post("/api/upload-experiment/{slug_id}", response_class=JSONResponse)
-async def upload_experiment_zip(
+def _detect_slug_from_zip(zip_data: bytes) -> Optional[str]:
+  """
+  Detects the experiment slug from standalone export ZIP structure.
+  ONLY accepts standalone export format: experiments/{slug}/
+  
+  This is strict - the ZIP must follow the standalone export structure
+  with experiments/{slug}/ containing manifest.json, actor.py, and __init__.py
+  """
+  try:
+    with io.BytesIO(zip_data) as buff:
+      with zipfile.ZipFile(buff, "r") as zip_ref:
+        namelist = zip_ref.namelist()
+        
+        # PRIMARY METHOD: Look for experiments/{slug}/ structure
+        # This is the standalone export format - strict requirement
+        experiments_pattern = re.compile(r'^experiments/([a-z0-9\-_]+)/')
+        detected_slugs = set()
+        
+        for name in namelist:
+          # Skip macOS metadata and root-level files
+          if "MACOSX" in name or "__MACOSX" in name:
+            continue
+          
+          match = experiments_pattern.match(name)
+          if match:
+            detected_slugs.add(match.group(1))
+        
+        # Validate that we found exactly one experiment slug
+        if len(detected_slugs) == 1:
+          detected_slug = detected_slugs.pop()
+          
+          # Verify required files exist in experiments/{slug}/
+          required_files = {
+            f"experiments/{detected_slug}/manifest.json",
+            f"experiments/{detected_slug}/actor.py",
+            f"experiments/{detected_slug}/__init__.py"
+          }
+          
+          found_files = {f for f in required_files if any(p for p in namelist if p == f or p.startswith(f))}
+          
+          if found_files and len(found_files) >= 3:  # At least 3 required files found
+            logger.info(f"Detected slug '{detected_slug}' from standalone export structure (experiments/{detected_slug}/)")
+            return detected_slug
+          else:
+            logger.warning(f"Found experiments/{detected_slug}/ but missing required files. Found: {found_files}")
+        
+        elif len(detected_slugs) > 1:
+          logger.warning(f"Multiple experiment slugs detected: {detected_slugs}. This is not a valid standalone export.")
+        
+  except zipfile.BadZipFile:
+    logger.error("Invalid/corrupted .zip file during slug detection")
+    return None
+  except Exception as e:
+    logger.error(f"Error detecting slug from ZIP: {e}", exc_info=True)
+    return None
+  
+  logger.debug("Could not detect slug - ZIP does not match standalone export structure (experiments/{slug}/)")
+  return None
+
+
+@admin_router.post("/api/detect-slug", response_class=JSONResponse)
+async def detect_slug_from_zip(
   request: Request,
-  slug_id: str,
   file: UploadFile = File(...),
   user: Dict[str, Any] = Depends(require_admin)
 ):
+  """
+  Detects the experiment slug from a standalone export ZIP file.
+  Only accepts ZIP files with experiments/{slug}/ structure.
+  """
+  if file.content_type not in ("application/zip", "application/x-zip-compressed"):
+    return JSONResponse({"error": "Invalid file type; must be .zip."}, status_code=400)
+  
+  try:
+    zip_data = await file.read()
+    detected_slug = _detect_slug_from_zip(zip_data)
+    
+    if detected_slug:
+      return JSONResponse({
+        "status": "success",
+        "slug": detected_slug,
+        "message": f"Detected slug '{detected_slug}' from standalone export structure."
+      })
+    else:
+      return JSONResponse({
+        "status": "not_found",
+        "slug": None,
+        "message": "ZIP does not match standalone export structure. Expected: experiments/{slug}/ with manifest.json, actor.py, and __init__.py"
+      })
+  except Exception as e:
+    logger.error(f"Error detecting slug: {e}", exc_info=True)
+    return JSONResponse({
+      "status": "error",
+      "slug": None,
+      "error": str(e)
+    }, status_code=500)
+
+
+@admin_router.post("/api/upload-experiment", response_class=JSONResponse)
+async def upload_experiment_zip(
+  request: Request,
+  file: UploadFile = File(...),
+  user: Dict[str, Any] = Depends(require_admin)
+):
+  """
+  Upload an experiment ZIP file. Slug is automatically detected from experiments/{slug}/ structure.
+  Only standalone export ZIPs are accepted.
+  """
   admin_email = user.get('email', 'Unknown Admin')
-  logger.info(f"Admin '{admin_email}' initiated zip upload for '{slug_id}'.")
 
   b2_bucket = getattr(request.app.state, "b2_bucket", None)
 
   if file.content_type not in ("application/zip", "application/x-zip-compressed"):
     raise HTTPException(400, "Invalid file type; must be .zip.")
 
+  # Auto-detect slug from ZIP structure (read file once)
+  zip_data = await file.read()
+  slug_id = _detect_slug_from_zip(zip_data)
+  
+  if not slug_id:
+    raise HTTPException(400, "ZIP must follow standalone export structure: experiments/{slug}/ with manifest.json, actor.py, and __init__.py. Only standalone export ZIPs are accepted.")
+  
+  logger.info(f"Admin '{admin_email}' initiated zip upload. Auto-detected slug: '{slug_id}' from experiments/{slug_id}/ structure.")
+
   experiment_path = (EXPERIMENTS_DIR / slug_id).resolve()
   try:
-    zip_data = await file.read()
+    # Use the already-read zip_data (don't read file again)
     with io.BytesIO(zip_data) as buff:
       with zipfile.ZipFile(buff, "r") as zip_ref:
         namelist = zip_ref.namelist()
-        for member in zip_ref.infolist():
-          target_path = (experiment_path / member.filename).resolve()
-          if experiment_path not in target_path.parents and target_path != experiment_path:
-            logger.error(f"SECURITY ALERT: Zip Slip attempt in '{slug_id}'! '{member.filename}'")
-            raise HTTPException(400, f"Path traversal in zip member '{member.filename}'")
-
-        manifest_path_in_zip = next((p for p in namelist if p.endswith("manifest.json") and "MACOSX" not in p), None)
+        
+        # Validate required files exist in experiments/{slug}/
+        manifest_path_in_zip = next((p for p in namelist if p == f"experiments/{slug_id}/manifest.json" or p.endswith("experiments/{slug_id}/manifest.json")), None)
+        actor_path_in_zip = next((p for p in namelist if p == f"experiments/{slug_id}/actor.py" or p.endswith("experiments/{slug_id}/actor.py")), None)
+        init_path_in_zip = next((p for p in namelist if p == f"experiments/{slug_id}/__init__.py" or p.endswith("experiments/{slug_id}/__init__.py")), None)
+        
         if not manifest_path_in_zip:
-          raise HTTPException(400, "Zip must contain 'manifest.json'.")
-        if not any(p.endswith("actor.py") for p in namelist):
-          raise HTTPException(400, "Zip must contain an 'actor.py' file.")
-        if not any(p.endswith("__init__.py") for p in namelist):
-          raise HTTPException(400, "Zip must contain an '__init__.py'.")
+          raise HTTPException(400, f"Zip must contain 'experiments/{slug_id}/manifest.json'.")
+        if not actor_path_in_zip:
+          raise HTTPException(400, f"Zip must contain 'experiments/{slug_id}/actor.py'.")
+        if not init_path_in_zip:
+          raise HTTPException(400, f"Zip must contain 'experiments/{slug_id}/__init__.py'.")
+        
+        # Security check: Ensure all paths are within experiments/{slug}/ structure
+        for member in zip_ref.infolist():
+          member_path = member.filename
+          # Skip macOS metadata
+          if "MACOSX" in member_path or "__MACOSX" in member_path:
+            continue
+          
+          # Allow files from experiments/{slug}/ directory only
+          if not member_path.startswith(f"experiments/{slug_id}/"):
+            # Also allow root-level platform files that will be ignored
+            if member_path in ("README.md", "db_config.json", "db_collections.json", "standalone_main.py", "Dockerfile", "docker-compose.yml") or member_path.startswith("async_mongo_wrapper") or member_path.startswith("mongo_connection_pool") or member_path.startswith("experiment_db"):
+              continue
+          
+          target_path = (experiment_path / member_path.replace(f"experiments/{slug_id}/", "")).resolve()
+          if experiment_path not in target_path.parents and target_path != experiment_path:
+            logger.error(f"SECURITY ALERT: Zip Slip attempt in '{slug_id}'! '{member_path}'")
+            raise HTTPException(400, f"Path traversal in zip member '{member_path}'")
 
         with zip_ref.open(manifest_path_in_zip) as mf:
           parsed_manifest = json.load(mf)
@@ -2943,82 +2649,166 @@ async def upload_experiment_zip(
       raise HTTPException(500, f"Failed to save runtime zip: {e}")
 
   try:
+    # Robustly handle existing experiment directory
     if experiment_path.exists():
       logger.info(f"[{slug_id}] Deleting old directory at {experiment_path}")
-      shutil.rmtree(experiment_path)
-    experiment_path.mkdir(parents=True)
-    logger.info(f"[{slug_id}] Extracting local 'thin client' to {experiment_path}...")
+      try:
+        # Try to remove the directory
+        shutil.rmtree(experiment_path)
+      except OSError as e:
+        # If removal fails, try to remove files individually and then directory
+        logger.warning(f"[{slug_id}] Could not remove directory in one go: {e}. Attempting to clean up files...")
+        try:
+          # Remove files and subdirectories manually
+          for item in experiment_path.iterdir():
+            try:
+              if item.is_file():
+                item.unlink()
+              elif item.is_dir():
+                shutil.rmtree(item)
+            except OSError as file_error:
+              logger.warning(f"[{slug_id}] Could not remove {item.name}: {file_error}")
+          # Try to remove the directory again
+          experiment_path.rmdir()
+        except Exception as cleanup_error:
+          logger.error(f"[{slug_id}] Failed to clean up existing directory: {cleanup_error}")
+          raise HTTPException(500, f"Could not remove existing experiment directory. Please check permissions or try again later.")
+    
+    # Create fresh directory
+    experiment_path.mkdir(parents=True, exist_ok=True)
+    logger.info(f"[{slug_id}] Extracting standalone export from experiments/{slug_id}/ to {experiment_path}...")
+    
+    # Extract only files from experiments/{slug_id}/ directory (standalone export structure)
+    # Use synchronous extraction (zipfile operations are sync anyway)
     with io.BytesIO(zip_data) as buff:
       with zipfile.ZipFile(buff, "r") as zip_ref:
-        zip_ref.extractall(experiment_path)
+        experiment_prefix = f"experiments/{slug_id}/"
+        EXCLUSION_PATTERNS = ["__pycache__", "__MACOSX", ".DS_Store", "*.pyc", "*.pyo"]
+        
+        for member in zip_ref.infolist():
+          # Skip macOS metadata and non-experiment files
+          if "MACOSX" in member.filename or "__MACOSX" in member.filename:
+            continue
+          
+          # Only extract files from experiments/{slug_id}/
+          if member.filename.startswith(experiment_prefix):
+            # Remove the experiments/{slug_id}/ prefix to get the relative path
+            relative_path = member.filename[len(experiment_prefix):]
+            if not relative_path:  # Skip directory entries
+              continue
+            
+            # Skip excluded patterns (__pycache__, etc.)
+            path_parts = relative_path.split("/")
+            should_skip = False
+            for part in path_parts:
+              # Check exact matches and wildcard patterns
+              if part in EXCLUSION_PATTERNS:
+                should_skip = True
+                break
+              # Check wildcard patterns
+              for pattern in EXCLUSION_PATTERNS:
+                if "*" in pattern and fnmatch.fnmatch(part, pattern):
+                  should_skip = True
+                  break
+              if should_skip:
+                break
+            
+            if should_skip:
+              logger.debug(f"[{slug_id}] Skipping excluded file/directory: {relative_path}")
+              continue
+            
+            # Construct target path
+            target_path = experiment_path / relative_path
+            
+            try:
+              # Remove existing file/directory if it exists (robust handling)
+              if target_path.exists():
+                if target_path.is_file():
+                  target_path.unlink()
+                  logger.debug(f"[{slug_id}] Removed existing file before extraction: {relative_path}")
+                elif target_path.is_dir():
+                  shutil.rmtree(target_path)
+                  logger.debug(f"[{slug_id}] Removed existing directory before extraction: {relative_path}")
+              
+              # Ensure parent directory exists
+              target_path.parent.mkdir(parents=True, exist_ok=True)
+              
+              # Extract the file (synchronous file I/O - acceptable for extraction)
+              with zip_ref.open(member) as source:
+                # Read file content and write synchronously (extraction is typically synchronous)
+                content = source.read()
+                target_path.write_bytes(content)
+                
+            except OSError as e:
+              # Handle file system errors gracefully (permissions, etc.)
+              logger.warning(f"[{slug_id}] Error extracting {relative_path}: {e}. Skipping...")
+              continue
+            except Exception as e:
+              # Handle other errors gracefully
+              logger.error(f"[{slug_id}] Unexpected error extracting {relative_path}: {e}", exc_info=True)
+              continue
     
-    # Fix nested directory structures (common when zip files have wrapper directories)
-    # Look for __init__.py to find the actual experiment directory
-    init_py_files = list(experiment_path.rglob("__init__.py"))
-    # Filter out __MACOSX and __pycache__ directories
-    init_py_files = [f for f in init_py_files if "__MACOSX" not in str(f) and "__pycache__" not in str(f)]
+    # Verify extraction was successful - check for required files
+    required_files_exist = (
+      (experiment_path / "manifest.json").exists() and
+      (experiment_path / "actor.py").exists() and
+      (experiment_path / "__init__.py").exists()
+    )
     
-    if init_py_files:
-      # Find the most nested __init__.py that's part of the experiment (has actor.py nearby)
-      candidate_dirs = []
-      for init_py in init_py_files:
-        init_dir = init_py.parent
-        actor_py = init_dir / "actor.py"
-        if actor_py.exists():
-          candidate_dirs.append(init_dir)
+    if not required_files_exist:
+      logger.error(f"[{slug_id}] Extracted files are missing required files. Checking for nested structure...")
       
-      if candidate_dirs:
-        # Use the deepest directory (longest path) as the experiment root
-        experiment_root = max(candidate_dirs, key=lambda p: len(str(p).split(os.sep)))
+      # Look for nested structure (in case ZIP had experiments/{slug}/experiments/{slug}/)
+      init_py_files = list(experiment_path.rglob("__init__.py"))
+      init_py_files = [f for f in init_py_files if "__MACOSX" not in str(f) and "__pycache__" not in str(f)]
+      
+      if init_py_files:
+        candidate_dirs = []
+        for init_py in init_py_files:
+          init_dir = init_py.parent
+          if (init_dir / "actor.py").exists() and (init_dir / "manifest.json").exists():
+            candidate_dirs.append(init_dir)
         
-        # If the experiment_root is not the experiment_path itself, we need to flatten
-        # Check if experiment_root is a subdirectory of experiment_path (more compatible than is_relative_to)
-        try:
-          experiment_root_relative = experiment_root.relative_to(experiment_path)
-        except ValueError:
-          # experiment_root is not a subdirectory of experiment_path, skip flattening
-          experiment_root_relative = None
-        
-        if experiment_root != experiment_path and experiment_root_relative is not None:
-          logger.info(f"[{slug_id}] Detected nested structure. Flattening from '{experiment_root_relative}' to top level...")
-          # Create a temporary directory for the flattening operation
-          temp_dir = experiment_path.parent / f"{slug_id}_temp_flatten"
-          try:
-            # Move contents of experiment_root to temp_dir first
-            temp_dir.mkdir(parents=True, exist_ok=True)
-            for item in experiment_root.iterdir():
-              shutil.move(str(item), str(temp_dir / item.name))
-            
-            # Remove the old nested structure
-            shutil.rmtree(experiment_path)
-            experiment_path.mkdir(parents=True)
-            
-            # Move contents from temp_dir to experiment_path
-            for item in temp_dir.iterdir():
-              shutil.move(str(item), str(experiment_path / item.name))
-            
-            # Remove temp_dir
-            shutil.rmtree(temp_dir)
-            logger.info(f"[{slug_id}] Successfully flattened nested directory structure.")
-            
-            # Clear Python's module cache for this experiment to ensure fresh imports
-            module_name = f"experiments.{slug_id.replace('-', '_')}"
-            if module_name in sys.modules:
-              del sys.modules[module_name]
-            # Also clear any nested module imports (e.g., experiments.click_tracker_v2.actor)
-            modules_to_remove = [m for m in sys.modules.keys() if m.startswith(module_name + ".")]
-            for m in modules_to_remove:
-              del sys.modules[m]
-            logger.info(f"[{slug_id}] Cleared module cache for '{module_name}'.")
-          except Exception as e:
-            logger.error(f"[{slug_id}] Error during flattening: {e}", exc_info=True)
-            # Try to clean up
-            if temp_dir.exists():
-              try:
-                shutil.rmtree(temp_dir)
-              except:
-                pass
-            raise HTTPException(500, f"Failed to flatten nested directory structure: {e}")
+        if candidate_dirs:
+          experiment_root = max(candidate_dirs, key=lambda p: len(str(p).split(os.sep)))
+          
+          if experiment_root != experiment_path:
+            try:
+              experiment_root_relative = experiment_root.relative_to(experiment_path)
+              logger.info(f"[{slug_id}] Flattening nested structure from '{experiment_root_relative}'...")
+              temp_dir = experiment_path.parent / f"{slug_id}_temp_flatten"
+              temp_dir.mkdir(parents=True, exist_ok=True)
+              
+              for item in experiment_root.iterdir():
+                shutil.move(str(item), str(temp_dir / item.name))
+              
+              shutil.rmtree(experiment_path)
+              experiment_path.mkdir(parents=True)
+              
+              for item in temp_dir.iterdir():
+                shutil.move(str(item), str(experiment_path / item.name))
+              
+              shutil.rmtree(temp_dir)
+            except (ValueError, Exception) as e:
+              logger.error(f"[{slug_id}] Failed to flatten nested structure: {e}")
+              raise HTTPException(500, f"Failed to extract experiment files: {e}")
+      
+      # Final check - if still missing, error out
+      if not ((experiment_path / "manifest.json").exists() and 
+              (experiment_path / "actor.py").exists() and 
+              (experiment_path / "__init__.py").exists()):
+        raise HTTPException(500, f"Failed to extract required files. Check logs for details.")
+    
+    # Clear Python's module cache for this experiment to ensure fresh imports
+    module_name = f"experiments.{slug_id.replace('-', '_')}"
+    if module_name in sys.modules:
+      del sys.modules[module_name]
+    # Also clear any nested module imports (e.g., experiments.click_tracker_v2.actor)
+    modules_to_remove = [m for m in sys.modules.keys() if m.startswith(module_name + ".")]
+    for m in modules_to_remove:
+      del sys.modules[m]
+    logger.info(f"[{slug_id}] Cleared module cache for '{module_name}'.")
+    
   except Exception as e:
     logger.error(f"[{slug_id}] Extraction error: {e}", exc_info=True)
     raise HTTPException(500, f"Zip extraction error: {e}")
