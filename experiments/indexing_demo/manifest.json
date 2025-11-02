@@ -1,0 +1,116 @@
+{
+  "slug": "indexing_demo",
+  "name": "Indexing Demo",
+  "description": "Demonstrates all index types supported by g.nome: regular, TTL, partial, text, geospatial, vector search, and search indexes",
+  "status": "active",
+  "auth_required": false,
+  "data_scope": ["self"],
+  "managed_indexes": {
+    "products": [
+      {
+        "name": "product_sku_unique",
+        "type": "regular",
+        "keys": {
+          "sku": 1
+        },
+        "options": {
+          "unique": true
+        }
+      },
+      {
+        "name": "product_category_price",
+        "type": "regular",
+        "keys": [
+          ["category", 1],
+          ["price", -1]
+        ]
+      },
+      {
+        "name": "product_name_text",
+        "type": "text",
+        "keys": {
+          "name": "text",
+          "description": "text"
+        },
+        "options": {
+          "weights": {
+            "name": 10,
+            "description": 5
+          },
+          "default_language": "english"
+        }
+      },
+      {
+        "name": "product_location_2dsphere",
+        "type": "geospatial",
+        "keys": {
+          "location": "2dsphere"
+        }
+      }
+    ],
+    "sessions": [
+      {
+        "name": "session_created_at_ttl",
+        "type": "ttl",
+        "keys": {
+          "created_at": 1
+        },
+        "options": {
+          "expireAfterSeconds": 3600
+        }
+      },
+      {
+        "name": "session_user_active",
+        "type": "partial",
+        "keys": {
+          "user_id": 1,
+          "session_id": 1
+        },
+        "options": {
+          "unique": true,
+          "partialFilterExpression": {
+            "active": true
+          }
+        }
+      }
+    ],
+    "embeddings": [
+      {
+        "name": "embedding_vector_search",
+        "type": "vectorSearch",
+        "definition": {
+          "fields": [
+            {
+              "type": "vector",
+              "path": "embedding_vector",
+              "numDimensions": 384,
+              "similarity": "cosine"
+            },
+            {
+              "type": "filter",
+              "path": "experiment_id"
+            }
+          ]
+        }
+      }
+    ],
+    "logs": [
+      {
+        "name": "logs_timestamp_level",
+        "type": "regular",
+        "keys": [
+          ["timestamp", -1],
+          ["level", 1]
+        ]
+      },
+      {
+        "name": "logs_message_text",
+        "type": "text",
+        "keys": {
+          "message": "text"
+        }
+      }
+    ]
+  }
+}
+

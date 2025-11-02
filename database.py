@@ -14,6 +14,7 @@ from config import (
     ADMIN_PASSWORD_DEFAULT,
 )
 from utils import read_json_async
+from manifest_schema import validate_manifest, validate_managed_indexes
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +220,23 @@ async def seed_db_from_local_files(db: AsyncIOMotorDatabase):
                             if not isinstance(manifest_data, dict):
                                 logger.error(f"[{slug}] ❌ FAILED to seed: manifest.json is not valid JSON object.")
                                 continue
+                            
+                            # Validate manifest before seeding
+                            is_valid, validation_error, error_paths = validate_manifest(manifest_data)
+                            if not is_valid:
+                                error_path_str = f" (errors in: {', '.join(error_paths[:3])})" if error_paths else ""
+                                logger.error(
+                                    f"[{slug}] ❌ FAILED to seed: Manifest validation failed: {validation_error}{error_path_str}"
+                                )
+                                continue
+                            
+                            # Validate managed_indexes if present
+                            if "managed_indexes" in manifest_data:
+                                is_valid_indexes, index_error = validate_managed_indexes(manifest_data["managed_indexes"])
+                                if not is_valid_indexes:
+                                    logger.error(f"[{slug}] ❌ FAILED to seed: Index validation failed: {index_error}")
+                                    continue
+                            
                             manifest_data["slug"] = slug
                             if "status" not in manifest_data:
                                 manifest_data["status"] = "active"

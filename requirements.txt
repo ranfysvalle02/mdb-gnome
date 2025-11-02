@@ -18,3 +18,4 @@ numpy
 matplotlib
 aiofiles
 slowapi>=0.1.9
+jsonschema>=4.0.0

@@ -19,6 +19,7 @@ from index_management import (
     normalize_json_def as _normalize_json_def,
     run_index_creation_for_collection as _run_index_creation_for_collection,
 )
+from manifest_schema import validate_manifest, validate_managed_indexes
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,24 @@ async def _register_experiments(app: FastAPI, active_cfgs: List[Dict[str, Any]],
             logger.warning("Skipped config: missing 'slug'.")
             continue
         logger.debug(f"Registering experiment '{slug}'...")
+        
+        # Validate manifest schema before registration
+        try:
+            is_valid, validation_error, error_paths = validate_manifest(cfg)
+            if not is_valid:
+                error_path_str = f" (errors in: {', '.join(error_paths[:3])})" if error_paths else ""
+                logger.error(
+                    f"[{slug}] ❌ Registration BLOCKED: Manifest validation failed: {validation_error}{error_path_str}. "
+                    f"Please fix the manifest.json and reload the experiment."
+                )
+                continue  # Skip this experiment, continue with others
+        except Exception as validation_err:
+            logger.error(
+                f"[{slug}] ❌ Registration BLOCKED: Error during validation: {validation_err}. "
+                f"Skipping this experiment.",
+                exc_info=True
+            )
+            continue  # Skip this experiment, continue with others
 
         exp_path = EXPERIMENTS_DIR / slug
         runtime_s3_uri = cfg.get("runtime_s3_uri")
@@ -133,29 +152,45 @@ async def _register_experiments(app: FastAPI, active_cfgs: List[Dict[str, Any]],
         from config import INDEX_MANAGER_AVAILABLE
         if INDEX_MANAGER_AVAILABLE and "managed_indexes" in cfg:
             managed_indexes: Dict[str, List[Dict]] = cfg["managed_indexes"]
-            db: AsyncIOMotorDatabase = app.state.mongo_db
-            logger.debug(f"[{slug}] Managing indexes for {len(managed_indexes)} collection(s).")
-            for collection_base_name, indexes in managed_indexes.items():
-                if not collection_base_name or not isinstance(indexes, list):
-                    logger.warning(f"[{slug}] Invalid 'managed_indexes' for '{collection_base_name}'.")
-                    continue
-                prefixed_collection_name = f"{slug}_{collection_base_name}"
-                prefixed_defs = []
-                for idx_def in indexes:
-                    idx_n = idx_def.get("name")
-                    if not idx_n or not idx_def.get("type"):
-                        logger.warning(f"[{slug}] Skipping malformed index def in '{collection_base_name}'.")
-                        continue
-                    idx_copy = idx_def.copy()
-                    idx_copy["name"] = f"{slug}_{idx_n}"
-                    prefixed_defs.append(idx_copy)
+            
+            # Validate managed_indexes structure before processing (non-blocking)
+            try:
+                is_valid_indexes, index_error = validate_managed_indexes(managed_indexes)
+                if not is_valid_indexes:
+                    logger.warning(
+                        f"[{slug}] ⚠️ Invalid 'managed_indexes' configuration: {index_error}. "
+                        f"Skipping index creation for this experiment, but continuing with registration."
+                    )
+                    # Continue with experiment registration, just skip index creation
+                else:
+                    db: AsyncIOMotorDatabase = app.state.mongo_db
+                    logger.debug(f"[{slug}] Managing indexes for {len(managed_indexes)} collection(s).")
+                    for collection_base_name, indexes in managed_indexes.items():
+                        if not collection_base_name or not isinstance(indexes, list):
+                            logger.warning(f"[{slug}] Invalid 'managed_indexes' for '{collection_base_name}'.")
+                            continue
+                        prefixed_collection_name = f"{slug}_{collection_base_name}"
+                        prefixed_defs = []
+                        for idx_def in indexes:
+                            idx_n = idx_def.get("name")
+                            if not idx_n or not idx_def.get("type"):
+                                logger.warning(f"[{slug}] Skipping malformed index def in '{collection_base_name}'.")
+                                continue
+                            idx_copy = idx_def.copy()
+                            idx_copy["name"] = f"{slug}_{idx_n}"
+                            prefixed_defs.append(idx_copy)
 
-                if not prefixed_defs:
-                    continue
+                        if not prefixed_defs:
+                            continue
 
-                logger.info(f"[{slug}] Scheduling index creation for '{prefixed_collection_name}'.")
-                asyncio.create_task(
-                    _safe_background_task(_run_index_creation_for_collection(db, slug, prefixed_collection_name, prefixed_defs))
+                        logger.info(f"[{slug}] Scheduling index creation for '{prefixed_collection_name}'.")
+                        asyncio.create_task(
+                            _safe_background_task(_run_index_creation_for_collection(db, slug, prefixed_collection_name, prefixed_defs))
+                        )
+            except Exception as validation_err:
+                logger.warning(
+                    f"[{slug}] ⚠️ Error validating 'managed_indexes' (non-critical): {validation_err}. "
+                    f"Continuing with experiment registration without index validation."
                 )
         elif "managed_indexes" in cfg:
             logger.warning(f"[{slug}] 'managed_indexes' present but index manager not available.")

@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Indexing Demo - g.nome</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .stat-card h3 {
+            font-size: 0.9em;
+            text-transform: uppercase;
+            opacity: 0.9;
+            margin-bottom: 10px;
+        }
+        
+        .stat-card .value {
+            font-size: 2.5em;
+            font-weight: bold;
+        }
+        
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 30px;
+        }
+        
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+        
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+        
+        .btn-danger {
+            background: #e74c3c;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #c0392b;
+        }
+        
+        .index-types {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .index-card {
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            background: #f9f9f9;
+        }
+        
+        .index-card h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1.2em;
+        }
+        
+        .index-card .type {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            margin-bottom: 10px;
+        }
+        
+        .index-card p {
+            color: #666;
+            line-height: 1.6;
+            margin-bottom: 15px;
+        }
+        
+        .index-card ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        
+        .index-card li {
+            padding: 5px 0;
+            color: #555;
+        }
+        
+        .index-card li:before {
+            content: "✓ ";
+            color: #667eea;
+            font-weight: bold;
+        }
+        
+        .results {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f9f9f9;
+            border-radius: 8px;
+            display: none;
+        }
+        
+        .results.show {
+            display: block;
+        }
+        
+        .results h3 {
+            color: #333;
+            margin-bottom: 15px;
+        }
+        
+        .results pre {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 0.9em;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+            color: #667eea;
+        }
+        
+        .loading.show {
+            display: block;
+        }
+        
+        .message {
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        
+        .message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Indexing Demo</h1>
+        <p class="subtitle">Demonstrates all index types supported by g.nome's manifest.json system</p>
+        
+        <div id="message"></div>
+        
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>Products</h3>
+                <div class="value" id="products-count">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Sessions</h3>
+                <div class="value" id="sessions-count">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Embeddings</h3>
+                <div class="value" id="embeddings-count">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Logs</h3>
+                <div class="value" id="logs-count">-</div>
+            </div>
+        </div>
+        
+        <div class="actions">
+            <button class="btn-primary" onclick="seedData()">🌱 Seed Sample Data</button>
+            <button class="btn-secondary" onclick="testRegular()">Test Regular Index</button>
+            <button class="btn-secondary" onclick="testText()">Test Text Index</button>
+            <button class="btn-secondary" onclick="testGeospatial()">Test Geospatial Index</button>
+            <button class="btn-secondary" onclick="testPartial()">Test Partial Index</button>
+            <button class="btn-secondary" onclick="testVector()">Test Vector Search</button>
+            <button class="btn-secondary" onclick="testTTL()">Test TTL Index</button>
+            <button class="btn-danger" onclick="clearData()">🗑️ Clear All Data</button>
+        </div>
+        
+        <div class="index-types">
+            <div class="index-card">
+                <span class="type">Regular</span>
+                <h3>Regular Indexes</h3>
+                <p>Standard MongoDB indexes including unique and compound indexes.</p>
+                <ul>
+                    <li>Unique SKU index</li>
+                    <li>Compound category/price index</li>
+                </ul>
+            </div>
+            
+            <div class="index-card">
+                <span class="type">Text</span>
+                <h3>Text Indexes</h3>
+                <p>Full-text search indexes for searching text fields.</p>
+                <ul>
+                    <li>Weighted search on name/description</li>
+                    <li>Multi-field text search</li>
+                </ul>
+            </div>
+            
+            <div class="index-card">
+                <span class="type">Geospatial</span>
+                <h3>Geospatial Indexes</h3>
+                <p>2dsphere indexes for location-based queries.</p>
+                <ul>
+                    <li>Nearby location search</li>
+                    <li>Distance-based queries</li>
+                </ul>
+            </div>
+            
+            <div class="index-card">
+                <span class="type">Partial</span>
+                <h3>Partial Indexes</h3>
+                <p>Indexes that only index documents matching a filter.</p>
+                <ul>
+                    <li>Index only active sessions</li>
+                    <li>Reduced index size</li>
+                </ul>
+            </div>
+            
+            <div class="index-card">
+                <span class="type">TTL</span>
+                <h3>TTL Indexes</h3>
+                <p>Time-to-live indexes that automatically delete old documents.</p>
+                <ul>
+                    <li>Auto-expiring sessions</li>
+                    <li>1 hour expiration</li>
+                </ul>
+            </div>
+            
+            <div class="index-card">
+                <span class="type">Vector Search</span>
+                <h3>Vector Search</h3>
+                <p>Atlas Vector Search for semantic similarity queries.</p>
+                <ul>
+                    <li>384-dimensional vectors</li>
+                    <li>Cosine similarity</li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="loading" id="loading">Loading...</div>
+        
+        <div class="results" id="results">
+            <h3>Test Results</h3>
+            <pre id="results-content"></pre>
+        </div>
+    </div>
+    
+    <script>
+        async function updateStats() {
+            try {
+                const response = await fetch('/experiments/indexing_demo/');
+                const html = await response.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                
+                // Extract stats from the page or make a direct API call
+                // For now, we'll reload the page to get updated stats
+                location.reload();
+            } catch (error) {
+                console.error('Error updating stats:', error);
+            }
+        }
+        
+        async function seedData() {
+            showLoading(true);
+            try {
+                const response = await fetch('/experiments/indexing_demo/seed-data', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                showMessage('Sample data seeded successfully!', 'success');
+                showResults(data);
+                setTimeout(updateStats, 1000);
+            } catch (error) {
+                showMessage('Error seeding data: ' + error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        async function testRegular() {
+            showLoading(true);
+            try {
+                const response = await fetch('/experiments/indexing_demo/test-regular');
+                const data = await response.json();
+                showResults(data);
+            } catch (error) {
+                showMessage('Error testing regular index: ' + error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        async function testText() {
+            showLoading(true);
+            try {
+                const response = await fetch('/experiments/indexing_demo/test-text');
+                const data = await response.json();
+                showResults(data);
+            } catch (error) {
+                showMessage('Error testing text index: ' + error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        async function testGeospatial() {
+            showLoading(true);
+            try {
+                const response = await fetch('/experiments/indexing_demo/test-geospatial');
+                const data = await response.json();
+                showResults(data);
+            } catch (error) {
+                showMessage('Error testing geospatial index: ' + error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        async function testPartial() {
+            showLoading(true);
+            try {
+                const response = await fetch('/experiments/indexing_demo/test-partial');
+                const data = await response.json();
+                showResults(data);
+            } catch (error) {
+                showMessage('Error testing partial index: ' + error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        async function testVector() {
+            showLoading(true);
+            try {
+                const response = await fetch('/experiments/indexing_demo/test-vector');
+                const data = await response.json();
+                showResults(data);
+            } catch (error) {
+                showMessage('Error testing vector index: ' + error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        async function testTTL() {
+            showLoading(true);
+            try {
+                const response = await fetch('/experiments/indexing_demo/test-ttl');
+                const data = await response.json();
+                showResults(data);
+            } catch (error) {
+                showMessage('Error testing TTL index: ' + error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        async function clearData() {
+            if (!confirm('Are you sure you want to clear all demo data?')) {
+                return;
+            }
+            
+            showLoading(true);
+            try {
+                const response = await fetch('/experiments/indexing_demo/clear-data', {
+                    method: 'DELETE'
+                });
+                const data = await response.json();
+                showMessage('All data cleared successfully!', 'success');
+                showResults(data);
+                setTimeout(updateStats, 500);
+            } catch (error) {
+                showMessage('Error clearing data: ' + error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        function showMessage(message, type) {
+            const messageDiv = document.getElementById('message');
+            messageDiv.className = `message ${type}`;
+            messageDiv.textContent = message;
+            setTimeout(() => {
+                messageDiv.className = '';
+                messageDiv.textContent = '';
+            }, 5000);
+        }
+        
+        function showResults(data) {
+            const resultsDiv = document.getElementById('results');
+            const contentDiv = document.getElementById('results-content');
+            contentDiv.textContent = JSON.stringify(data, null, 2);
+            resultsDiv.classList.add('show');
+        }
+        
+        function showLoading(show) {
+            const loadingDiv = document.getElementById('loading');
+            if (show) {
+                loadingDiv.classList.add('show');
+            } else {
+                loadingDiv.classList.remove('show');
+            }
+        }
+        
+        // Load initial stats
+        window.addEventListener('DOMContentLoaded', () => {
+            const stats = {{ stats | tojson | safe }};
+            if (stats && !stats.error) {
+                document.getElementById('products-count').textContent = stats.collections?.products || stats.products || 0;
+                document.getElementById('sessions-count').textContent = stats.collections?.sessions || stats.sessions || 0;
+                document.getElementById('embeddings-count').textContent = stats.collections?.embeddings || stats.embeddings || 0;
+                document.getElementById('logs-count').textContent = stats.collections?.logs || stats.logs || 0;
+            }
+        });
+    </script>
+</body>
+</html>
+

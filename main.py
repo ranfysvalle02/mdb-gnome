@@ -146,6 +146,9 @@ from b2_utils import (
 # Lifespan management
 from lifespan import lifespan, get_templates
 
+# Manifest validation
+from manifest_schema import validate_manifest, validate_managed_indexes
+
 # Database initialization and seeding
 from database import (
     ensure_db_indices,
@@ -2278,6 +2281,22 @@ async def save_manifest(
     if not isinstance(new_manifest_data, dict):
       raise ValueError("Manifest must be a JSON object.")
 
+    # Validate manifest against schema
+    is_valid, validation_error, error_paths = validate_manifest(new_manifest_data)
+    if not is_valid:
+      error_msg = f"Manifest validation failed: {validation_error}"
+      if error_paths:
+        error_msg += f" (errors in: {', '.join(error_paths[:3])})"
+      logger.warning(f"Manifest validation failed for '{slug_id}': {validation_error}")
+      raise ValueError(error_msg)
+    
+    # Validate managed_indexes if present
+    if "managed_indexes" in new_manifest_data:
+      is_valid_indexes, index_error = validate_managed_indexes(new_manifest_data["managed_indexes"])
+      if not is_valid_indexes:
+        logger.warning(f"Index validation failed for '{slug_id}': {index_error}")
+        raise ValueError(f"Index validation failed: {index_error}")
+
     # Use cached config dependency to avoid duplicate fetches
     old_config = await get_experiment_config(request, slug_id)
     old_status = old_config.get("status", "draft") if old_config else "draft"
@@ -3004,6 +3023,27 @@ async def upload_experiment_zip(
 
         with zip_ref.open(manifest_path_in_zip) as mf:
           parsed_manifest = json.load(mf)
+        
+        # Validate manifest before processing
+        from manifest_schema import validate_manifest, validate_managed_indexes
+        is_valid, validation_error, error_paths = validate_manifest(parsed_manifest)
+        if not is_valid:
+          error_path_str = f" (errors in: {', '.join(error_paths[:3])})" if error_paths else ""
+          logger.error(f"[{slug_id}] ❌ Upload BLOCKED: Manifest validation failed: {validation_error}{error_path_str}")
+          raise HTTPException(
+            400,
+            detail=f"Manifest validation failed: {validation_error}{error_path_str}. Please fix manifest.json and try again."
+          )
+        
+        # Validate managed_indexes if present
+        if "managed_indexes" in parsed_manifest:
+          is_valid_indexes, index_error = validate_managed_indexes(parsed_manifest["managed_indexes"])
+          if not is_valid_indexes:
+            logger.error(f"[{slug_id}] ❌ Upload BLOCKED: Index validation failed: {index_error}")
+            raise HTTPException(
+              400,
+              detail=f"Index validation failed: {index_error}. Please fix managed_indexes in manifest.json and try again."
+            )
 
         # Find requirements.txt (could be at root or in experiments/{slug}/)
         reqs_path_in_zip = None
@@ -3444,6 +3484,25 @@ async def _register_experiments(app: FastAPI, active_cfgs: List[Dict[str, Any]],
       logger.warning("Skipped config: missing 'slug'.")
       continue
     logger.debug(f"Registering experiment '{slug}'...")
+    
+    # Validate manifest schema before registration
+    try:
+      from manifest_schema import validate_manifest
+      is_valid, validation_error, error_paths = validate_manifest(cfg)
+      if not is_valid:
+        error_path_str = f" (errors in: {', '.join(error_paths[:3])})" if error_paths else ""
+        logger.error(
+          f"[{slug}] ❌ Registration BLOCKED: Manifest validation failed: {validation_error}{error_path_str}. "
+          f"Please fix the manifest.json and reload the experiment."
+        )
+        continue  # Skip this experiment, continue with others
+    except Exception as validation_err:
+      logger.error(
+        f"[{slug}] ❌ Registration BLOCKED: Error during validation: {validation_err}. "
+        f"Skipping this experiment.",
+        exc_info=True
+      )
+      continue  # Skip this experiment, continue with others
 
     exp_path = EXPERIMENTS_DIR / slug
     runtime_s3_uri = cfg.get("runtime_s3_uri")
