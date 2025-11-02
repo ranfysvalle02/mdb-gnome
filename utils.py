@@ -140,9 +140,15 @@ def build_absolute_https_url(request, relative_url: str) -> str:
     
     Uses request.state values from ProxyAwareHTTPSMiddleware if available,
     falls back to checking proxy headers directly.
+    
+    When behind a proxy (like Render.com), excludes internal application ports
+    (e.g., port 10000) from URLs since the proxy handles port mapping externally.
     """
     import re
     from config import BASE_DIR
+    
+    # Get the default application port (used internally, not externally)
+    default_app_port = int(os.getenv("PORT", "10000"))
     
     # Handle absolute URLs
     if not relative_url.startswith("/"):
@@ -158,6 +164,16 @@ def build_absolute_https_url(request, relative_url: str) -> str:
                 return https_url
         return relative_url
     
+    # Detect if we're behind a proxy
+    is_localhost = request.url.hostname in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")
+    has_proxy_headers = any((
+        request.headers.get("X-Forwarded-Proto"),
+        request.headers.get("X-Forwarded-Host"),
+        request.headers.get("Forwarded"),
+        request.headers.get("X-Forwarded-Ssl")
+    ))
+    is_behind_proxy = has_proxy_headers and not is_localhost
+    
     # Use detected scheme/host from proxy middleware if available
     if hasattr(request.state, "detected_scheme") and hasattr(request.state, "detected_host"):
         scheme = request.state.detected_scheme
@@ -165,18 +181,15 @@ def build_absolute_https_url(request, relative_url: str) -> str:
         detected_port = getattr(request.state, "detected_port", None)
         if detected_port:
             default_port = 443 if scheme == "https" else 80
-            if detected_port != default_port:
+            # Exclude internal app port (10000) when behind a proxy
+            # Also exclude default ports (443/80) as they shouldn't be in URLs
+            if is_behind_proxy and detected_port == default_app_port:
+                logger.debug(f"Excluding internal app port {detected_port} from URL (behind proxy)")
+                # Don't include port in URL
+            elif detected_port != default_port:
                 host = f"{host}:{detected_port}"
     else:
         # Fallback: check proxy headers directly
-        is_localhost = request.url.hostname in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")
-        has_proxy_headers = any((
-            request.headers.get("X-Forwarded-Proto"),
-            request.headers.get("X-Forwarded-Host"),
-            request.headers.get("Forwarded"),
-            request.headers.get("X-Forwarded-Ssl")
-        ))
-        
         if is_localhost and not has_proxy_headers:
             if hasattr(request.state, "original_scheme"):
                 scheme = request.state.original_scheme
@@ -194,11 +207,30 @@ def build_absolute_https_url(request, relative_url: str) -> str:
             request.headers.get("Host") or 
             request.url.hostname
         )
-        if request.url.port:
+        
+        # Clean host (remove port if it's already in the host header)
+        if ":" in host and not is_localhost:
+            # If host header includes port, extract it
+            host_with_port = host
+            host = host.split(":")[0]
+            try:
+                port_from_host = int(host_with_port.split(":")[1])
+            except (ValueError, IndexError):
+                port_from_host = None
+        else:
+            port_from_host = None
+        
+        # Use port from request.url if not in host header
+        port_to_check = port_from_host or request.url.port
+        
+        if port_to_check:
             default_port = 443 if scheme == "https" else 80
-            if request.url.port != default_port:
-                host = host.split(":")[0] if ":" in host else host
-                host = f"{host}:{request.url.port}"
+            # Exclude internal app port (10000) when behind a proxy
+            if is_behind_proxy and port_to_check == default_app_port:
+                logger.debug(f"Excluding internal app port {port_to_check} from URL (behind proxy)")
+                # Don't include port in URL
+            elif port_to_check != default_port:
+                host = f"{host}:{port_to_check}"
     
     # Force HTTPS in production, but NOT on localhost
     G_NOME_ENV = os.getenv("G_NOME_ENV", "production").lower()

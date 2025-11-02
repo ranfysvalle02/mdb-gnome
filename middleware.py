@@ -62,6 +62,9 @@ class ProxyAwareHTTPSMiddleware(BaseHTTPMiddleware):
             if server and len(server) == 2:
                 detected_port = server[1]
         
+        # Get the default application port (used internally, not externally)
+        default_app_port = int(os.getenv("PORT", "10000"))
+        
         # On localhost without proxy headers, respect the original scheme
         if is_localhost and not has_proxy_headers:
             detected_scheme = original_scheme
@@ -105,6 +108,13 @@ class ProxyAwareHTTPSMiddleware(BaseHTTPMiddleware):
                 else:
                     detected_host = forwarded_host
                 logger.debug(f"Detected host from X-Forwarded-Host: {detected_host}")
+        
+        # When behind a proxy, exclude internal app port (10000) from detected_port
+        # since the proxy handles port mapping externally (clients use 443/80, not 10000)
+        if has_proxy_headers and not is_localhost:
+            if detected_port == default_app_port:
+                logger.debug(f"Excluding internal app port {detected_port} from detected_port (behind proxy)")
+                detected_port = None  # Let it default to standard port based on scheme
         
         # Force HTTPS in production when FORCE_HTTPS env var is set
         force_https = os.getenv("FORCE_HTTPS", "").lower() == "true"
