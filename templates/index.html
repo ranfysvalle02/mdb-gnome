@@ -4,92 +4,253 @@
     <meta charset="UTF-8">  
     <meta name="viewport" content="width=device-width, initial-scale=1.0">  
     <title>LABS Dashboard</title>  
-    <style>  
-        body {  
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,  
-                         "Helvetica Neue", Arial, sans-serif;  
-            margin: 40px;  
-            background: #f4f7f6;  
-        }  
-        h1 {  
-            color: #333;  
-        }  
-        ul {  
-            list-style-type: none;  
-            padding: 0;  
-        }  
-        li {  
-            background: #fff;  
-            border: 1px solid #ddd;  
-            border-radius: 8px;  
-            margin-bottom: 15px;  
-            padding: 20px;  
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);  
-        }  
-        a {  
-            text-decoration: none;  
-            color: #007bff;  
-            font-size: 1.2em;  
-            font-weight: 600;  
-        }  
-        p {  
-            color: #555;  
-        }  
-        code {  
-            background: #eee;  
-            padding: 2px 6px;  
-            border-radius: 4px;  
-        }  
-        .header-nav {  
-            text-align: right;  
-            margin-bottom: 20px;  
-            font-size: 0.9em;  
+    <style>
+        /* MongoDB Theme Colors */
+        :root {
+            --mongodb-green: #00ED64;
+            --mongodb-dark-green: #13AA52;
+            --mongodb-dark-blue: #001E2B;
+            --mongodb-medium-blue: #0F1419;
+            --mongodb-bg: #0A0E27;
+            --text-primary: #E8E8E8;
+            --text-secondary: #B0B0B0;
+            --card-bg: #1A1F35;
+            --border-color: #2A3441;
         }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 0;
+            padding: 40px;
+            background: var(--mongodb-bg);
+            color: var(--text-primary);
+            position: relative;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Particle Animation Background */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background: radial-gradient(ellipse at center, var(--mongodb-medium-blue) 0%, var(--mongodb-dark-blue) 100%);
+            animation: particle-float 20s ease-in-out infinite;
+        }
+
+        /* Particle effect using multiple pseudo-elements */
+        body::after {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background-image: 
+                radial-gradient(2px 2px at 20px 30px, var(--mongodb-green), transparent),
+                radial-gradient(2px 2px at 60px 70px, rgba(0, 237, 100, 0.3), transparent),
+                radial-gradient(1px 1px at 90px 40px, rgba(0, 237, 100, 0.4), transparent),
+                radial-gradient(1px 1px at 130px 80px, rgba(19, 170, 82, 0.3), transparent),
+                radial-gradient(2px 2px at 160px 30px, rgba(0, 237, 100, 0.2), transparent),
+                radial-gradient(1px 1px at 200px 60px, rgba(0, 237, 100, 0.3), transparent),
+                radial-gradient(2px 2px at 240px 90px, rgba(19, 170, 82, 0.4), transparent),
+                radial-gradient(1px 1px at 280px 50px, rgba(0, 237, 100, 0.2), transparent);
+            background-repeat: repeat;
+            background-size: 300px 200px;
+            animation: particle-drift 30s linear infinite;
+            opacity: 0.6;
+        }
+
+        @keyframes particle-float {
+            0%, 100% { transform: translateY(0px) scale(1); }
+            50% { transform: translateY(-20px) scale(1.05); }
+        }
+
+        @keyframes particle-drift {
+            0% { transform: translate(0, 0); }
+            100% { transform: translate(300px, 200px); }
+        }
+
+        /* Additional floating particles */
+        @keyframes float {
+            0%, 100% { transform: translateY(0px) translateX(0px); opacity: 0.3; }
+            25% { transform: translateY(-30px) translateX(10px); opacity: 0.6; }
+            50% { transform: translateY(-60px) translateX(-10px); opacity: 0.4; }
+            75% { transform: translateY(-30px) translateX(5px); opacity: 0.5; }
+        }
+
+        h1 {
+            color: var(--text-primary);
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 0 0 10px rgba(0, 237, 100, 0.3);
+        }
+
+        ul {
+            list-style-type: none;
+            padding: 0;
+            position: relative;
+            z-index: 1;
+        }
+
+        li {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            margin-bottom: 20px;
+            padding: 25px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), 0 0 10px rgba(0, 237, 100, 0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        li::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(0, 237, 100, 0.1), transparent);
+            transition: left 0.5s ease;
+        }
+
+        li:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4), 0 0 20px rgba(0, 237, 100, 0.2);
+            border-color: var(--mongodb-green);
+        }
+
+        li:hover::before {
+            left: 100%;
+        }
+
+        a {
+            text-decoration: none;
+            color: var(--mongodb-green);
+            font-size: 1.2em;
+            font-weight: 600;
+            transition: color 0.3s ease, text-shadow 0.3s ease;
+        }
+
+        a:hover {
+            color: var(--mongodb-dark-green);
+            text-shadow: 0 0 8px rgba(0, 237, 100, 0.5);
+        }
+
+        p {
+            color: var(--text-secondary);
+            margin: 10px 0;
+        }
+
+        small {
+            color: var(--text-secondary);
+            font-size: 0.85em;
+        }
+
+        code {
+            background: var(--mongodb-dark-blue);
+            color: var(--mongodb-green);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            border: 1px solid rgba(0, 237, 100, 0.2);
+        }
+
+        .header-nav {
+            text-align: right;
+            margin-bottom: 30px;
+            font-size: 0.9em;
+            position: relative;
+            z-index: 1;
+        }
+
+        .header-nav a {
+            color: var(--text-secondary);
+            font-size: 1em;
+            margin-left: 10px;
+            transition: color 0.3s ease;
+        }
+
+        .header-nav a:hover {
+            color: var(--mongodb-green);
+        }
+
+        .header-nav strong {
+            color: var(--text-primary);
+        }
+
         /* --- STYLES FOR EXPORT BUTTON --- */
         .experiment-actions {
-            margin-top: 10px;
+            margin-top: 15px;
         }
+
         .export-button {
-            background-color: #28a745;
-            color: white;
-            padding: 8px 12px;
+            background-color: var(--mongodb-green);
+            color: var(--mongodb-dark-blue);
+            padding: 10px 16px;
             border: none;
-            border-radius: 4px;
+            border-radius: 6px;
             cursor: pointer;
             text-decoration: none;
             font-size: 0.9em;
-            font-weight: 500;
+            font-weight: 600;
             display: inline-block;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 237, 100, 0.3);
         }
+
         .export-button:hover {
-            background-color: #218838;
+            background-color: var(--mongodb-dark-green);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 237, 100, 0.4);
         }
+
         .export-button:disabled {
-            background-color: #6c757d;
+            background-color: #444;
             cursor: not-allowed;
+            box-shadow: none;
         }
+
         /* --- STYLES FOR BADGES --- */
         .badge {
             display: inline-block;
-            padding: 3px 8px;
+            padding: 4px 10px;
             margin-left: 10px;
-            border-radius: 4px;
-            font-size: 0.8em;
+            border-radius: 6px;
+            font-size: 0.75em;
             font-weight: 700;
             text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
+
         .badge-public {
-            background-color: #007bff; /* Blue */
-            color: white;
+            background-color: var(--mongodb-green);
+            color: var(--mongodb-dark-blue);
+            box-shadow: 0 2px 8px rgba(0, 237, 100, 0.3);
         }
+
         .badge-auth {
-            background-color: #dc3545; /* Red */
+            background-color: #DC143C;
             color: white;
+            box-shadow: 0 2px 8px rgba(220, 20, 60, 0.3);
         }
     </style>
     <script>
         async function downloadExport(url, slugId) {
-            const button = event.target;
+            const button = event.target.closest('.export-button') || event.target;
             const originalText = button.innerHTML;
             button.disabled = true;
             button.innerHTML = '⏳ Preparing export...';
@@ -181,9 +342,24 @@
                 }, 3000);
             }
         }
+
+        // Add event listeners for export buttons using data attributes
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('.export-button').forEach(function(button) {
+                button.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const url = button.getAttribute('data-export-url');
+                    const slug = button.getAttribute('data-slug');
+                    if (url && slug) {
+                        const syntheticEvent = { target: button };
+                        downloadExport.call(syntheticEvent, url, slug);
+                    }
+                });
+            });
+        });
     </script>
-</head>  
-<body>  
+</head>
+<body>
     <div class="header-nav">  
         {% if current_user %}  
             Logged in as <strong>{{ current_user.email }}</strong>  
@@ -224,7 +400,7 @@
                 {# Export button now shows if (not auth_required) OR (auth_required AND current_user) #}
                 {% if not meta.auth_required or current_user %}
                 <div class="experiment-actions">
-                    <button onclick="downloadExport('{{ request.url_for('package_standalone', slug_id=slug) }}', '{{ slug }}')"
+                    <button data-export-url="{{ request.url_for('package_standalone', slug_id=slug) }}" data-slug="{{ slug }}"
                        class="export-button">
                        📦 Standalone Export
                     </button>

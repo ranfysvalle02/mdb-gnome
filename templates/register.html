@@ -5,18 +5,195 @@
     <title>Register</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; display: grid; place-items: center; min-height: 90vh; background-color: #f4f7f6; }
-        .login-box { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 30px; width: 320px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
-        .login-box h1 { font-size: 1.5em; margin-top: 0; text-align: center; }
-        .form-group { margin-bottom: 15px; }
-        .form-group label { display: block; margin-bottom: 5px; font-weight: 600; font-size: 0.9em; }
-        .form-group input[type="email"], .form-group input[type="password"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
-        .login-btn { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 4px; font-size: 1em; font-weight: 600; cursor: pointer; }
-        .login-btn:hover { background: #0056b3; }
-        .error { color: #dc3545; background: #f8d7da; border: 1px solid #f5c6cb; padding: 10px; border-radius: 4px; margin-bottom: 15px; font-size: 0.9em; }
-        .message { color: #155724; background: #d4edda; border: 1px solid #c3e6cb; padding: 10px; border-radius: 4px; margin-bottom: 15px; font-size: 0.9em; }
-        .sub-link { text-align: center; margin-top: 20px; font-size: 0.9em; }
-        .sub-link a { color: #007bff; text-decoration: none; }
+        /* MongoDB Theme Colors */
+        :root {
+            --mongodb-green: #00ED64;
+            --mongodb-dark-green: #13AA52;
+            --mongodb-dark-blue: #001E2B;
+            --mongodb-medium-blue: #0F1419;
+            --mongodb-bg: #0A0E27;
+            --text-primary: #E8E8E8;
+            --text-secondary: #B0B0B0;
+            --card-bg: #1A1F35;
+            --border-color: #2A3441;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            display: grid;
+            place-items: center;
+            min-height: 100vh;
+            background: var(--mongodb-bg);
+            color: var(--text-primary);
+            margin: 0;
+            padding: 40px;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        /* Particle Animation Background */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background: radial-gradient(ellipse at center, var(--mongodb-medium-blue) 0%, var(--mongodb-dark-blue) 100%);
+            animation: particle-float 20s ease-in-out infinite;
+        }
+
+        body::after {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background-image: 
+                radial-gradient(2px 2px at 20px 30px, var(--mongodb-green), transparent),
+                radial-gradient(2px 2px at 60px 70px, rgba(0, 237, 100, 0.3), transparent),
+                radial-gradient(1px 1px at 90px 40px, rgba(0, 237, 100, 0.4), transparent),
+                radial-gradient(1px 1px at 130px 80px, rgba(19, 170, 82, 0.3), transparent),
+                radial-gradient(2px 2px at 160px 30px, rgba(0, 237, 100, 0.2), transparent),
+                radial-gradient(1px 1px at 200px 60px, rgba(0, 237, 100, 0.3), transparent),
+                radial-gradient(2px 2px at 240px 90px, rgba(19, 170, 82, 0.4), transparent),
+                radial-gradient(1px 1px at 280px 50px, rgba(0, 237, 100, 0.2), transparent);
+            background-repeat: repeat;
+            background-size: 300px 200px;
+            animation: particle-drift 30s linear infinite;
+            opacity: 0.6;
+        }
+
+        @keyframes particle-float {
+            0%, 100% { transform: translateY(0px) scale(1); }
+            50% { transform: translateY(-20px) scale(1.05); }
+        }
+
+        @keyframes particle-drift {
+            0% { transform: translate(0, 0); }
+            100% { transform: translate(300px, 200px); }
+        }
+
+        .login-box {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 40px;
+            width: 100%;
+            max-width: 400px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4), 0 0 20px rgba(0, 237, 100, 0.2);
+            position: relative;
+            z-index: 1;
+        }
+
+        .login-box h1 {
+            font-size: 1.8em;
+            margin-top: 0;
+            margin-bottom: 25px;
+            text-align: center;
+            color: var(--text-primary);
+            text-shadow: 0 0 10px rgba(0, 237, 100, 0.3);
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            font-size: 0.95em;
+            color: var(--text-primary);
+        }
+
+        .form-group input[type="email"],
+        .form-group input[type="password"] {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            box-sizing: border-box;
+            background: var(--mongodb-dark-blue);
+            color: var(--text-primary);
+            font-size: 1em;
+            transition: border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .form-group input[type="email"]:focus,
+        .form-group input[type="password"]:focus {
+            outline: none;
+            border-color: var(--mongodb-green);
+            box-shadow: 0 0 10px rgba(0, 237, 100, 0.3);
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 12px;
+            background: var(--mongodb-green);
+            color: var(--mongodb-dark-blue);
+            border: none;
+            border-radius: 6px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 237, 100, 0.3);
+        }
+
+        .login-btn:hover {
+            background: var(--mongodb-dark-green);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 237, 100, 0.4);
+        }
+
+        .error {
+            color: #DC143C;
+            background: rgba(220, 20, 60, 0.2);
+            border: 1px solid rgba(220, 20, 60, 0.4);
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 0.9em;
+            font-weight: 500;
+        }
+
+        .message {
+            color: var(--mongodb-green);
+            background: rgba(0, 237, 100, 0.2);
+            border: 1px solid rgba(0, 237, 100, 0.4);
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 0.9em;
+            font-weight: 500;
+        }
+
+        .sub-link {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 0.9em;
+        }
+
+        .sub-link a {
+            color: var(--mongodb-green);
+            text-decoration: none;
+            transition: color 0.3s ease, text-shadow 0.3s ease;
+        }
+
+        .sub-link a:hover {
+            color: var(--mongodb-dark-green);
+            text-shadow: 0 0 8px rgba(0, 237, 100, 0.5);
+        }
     </style>
 </head>
 <body>

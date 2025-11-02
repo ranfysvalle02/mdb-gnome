@@ -4,98 +4,544 @@
     <meta charset="UTF-8">
     <title>Admin Dashboard</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 40px; background: #f9f9f9; }
-        h1, h2 { color: #333; border-bottom: 2px solid #eee; padding-bottom: 10px; }
-        a { text-decoration: none; color: #007bff; }
-        .exp-list { list-style-type: none; padding: 0; }
-        .exp-item { background: #fff; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 15px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-        .exp-item h3 { margin-top: 0; }
-        .exp-item p { margin-bottom: 15px; }
-        .exp-meta { font-size: 0.9em; color: #555; }
-        .status { padding: 3px 8px; border-radius: 12px; font-size: 0.8em; font-weight: 600; }
-        .status-active { background: #d4edda; color: #155724; }
-        .status-draft { background: #eee; color: #333; }
-        .status-archived { background: #f8d7da; color: #721c24; }
-        .action-btn { background: #007bff; color: white; padding: 8px 12px; border-radius: 5px; font-weight: 600; display: inline-block; margin-right: 10px; }
-        /* NEW STYLE for Export Button */
-        .export-btn { 
-            background: #28a745; 
-            color: white; 
-            padding: 8px 12px; 
-            border-radius: 5px; 
-            border: none;
-            font-weight: 600; 
-            display: inline-block;
-            cursor: pointer;
+        /* MongoDB Theme Colors */
+        :root {
+            --mongodb-green: #00ED64;
+            --mongodb-dark-green: #13AA52;
+            --mongodb-dark-blue: #001E2B;
+            --mongodb-medium-blue: #0F1419;
+            --mongodb-bg: #0A0E27;
+            --text-primary: #E8E8E8;
+            --text-secondary: #B0B0B0;
+            --card-bg: #1A1F35;
+            --border-color: #2A3441;
         }
-        .export-btn:hover {
-            background: #218838;
-        }
-        .export-btn:disabled {
-            background: #6c757d;
-            cursor: not-allowed;
-        }
-        .header-nav { margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
-        .flash-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; padding: 15px; margin-bottom: 20px; border-radius: 4px; }
-        
-        /* Modal styles */
-        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5); }
-        .modal-content { background-color: #fefefe; margin: 5% auto; padding: 20px; border: 1px solid #888; border-radius: 8px; width: 90%; max-width: 900px; max-height: 80vh; overflow-y: auto; }
-        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #eee; padding-bottom: 10px; }
-        .modal-header h2 { margin: 0; }
-        .close { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
-        .close:hover { color: #000; }
-        .export-item { background: #fff; border: 1px solid #ddd; border-radius: 5px; padding: 15px; margin-bottom: 10px; }
-        .export-item.invalidated { opacity: 0.6; background: #f8f8f8; }
-        .export-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-        .export-item-meta { font-size: 0.85em; color: #666; margin-bottom: 10px; }
-        .export-item-actions { display: flex; gap: 10px; }
-        .btn-invalidate { background: #dc3545; color: white; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9em; }
-        .btn-invalidate:hover { background: #c82333; }
-        .btn-invalidate:disabled { background: #6c757d; cursor: not-allowed; }
-        .invalidated-badge { background: #dc3545; color: white; padding: 3px 8px; border-radius: 12px; font-size: 0.75em; font-weight: 600; }
-        .manage-exports-btn { background: #17a2b8; color: white; padding: 10px 20px; border: none; border-radius: 5px; font-weight: 600; cursor: pointer; margin-bottom: 20px; }
-        .manage-exports-btn:hover { background: #138496; }
-        .loading { text-align: center; padding: 20px; color: #666; }
-        
-        /* Upload Experiment Styles */
-        .upload-section { background: #fff; border: 2px dashed #007bff; border-radius: 8px; padding: 30px; margin-bottom: 30px; text-align: center; }
-        .upload-section:hover { border-color: #0056b3; background: #f8f9fa; }
-        .upload-form { max-width: 600px; margin: 0 auto; }
-        .form-group { margin-bottom: 20px; text-align: left; }
-        .form-group label { display: block; margin-bottom: 8px; font-weight: 600; color: #333; }
-        .form-group input[type="text"], .form-group input[type="file"] { 
-            width: 100%; 
-            padding: 10px; 
-            border: 1px solid #ddd; 
-            border-radius: 5px; 
-            font-size: 14px;
+
+        * {
+            margin: 0;
+            padding: 0;
             box-sizing: border-box;
         }
-        .form-group input[type="file"] { padding: 8px; cursor: pointer; }
-        .form-group small { display: block; margin-top: 5px; color: #666; font-size: 0.9em; }
-        .upload-btn { 
-            background: #28a745; 
-            color: white; 
-            padding: 12px 30px; 
-            border: none; 
-            border-radius: 5px; 
-            font-weight: 600; 
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 0;
+            padding: 40px;
+            background: var(--mongodb-bg);
+            color: var(--text-primary);
+            position: relative;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Particle Animation Background */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background: radial-gradient(ellipse at center, var(--mongodb-medium-blue) 0%, var(--mongodb-dark-blue) 100%);
+            animation: particle-float 20s ease-in-out infinite;
+        }
+
+        body::after {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background-image: 
+                radial-gradient(2px 2px at 20px 30px, var(--mongodb-green), transparent),
+                radial-gradient(2px 2px at 60px 70px, rgba(0, 237, 100, 0.3), transparent),
+                radial-gradient(1px 1px at 90px 40px, rgba(0, 237, 100, 0.4), transparent),
+                radial-gradient(1px 1px at 130px 80px, rgba(19, 170, 82, 0.3), transparent),
+                radial-gradient(2px 2px at 160px 30px, rgba(0, 237, 100, 0.2), transparent),
+                radial-gradient(1px 1px at 200px 60px, rgba(0, 237, 100, 0.3), transparent),
+                radial-gradient(2px 2px at 240px 90px, rgba(19, 170, 82, 0.4), transparent),
+                radial-gradient(1px 1px at 280px 50px, rgba(0, 237, 100, 0.2), transparent);
+            background-repeat: repeat;
+            background-size: 300px 200px;
+            animation: particle-drift 30s linear infinite;
+            opacity: 0.6;
+        }
+
+        @keyframes particle-float {
+            0%, 100% { transform: translateY(0px) scale(1); }
+            50% { transform: translateY(-20px) scale(1.05); }
+        }
+
+        @keyframes particle-drift {
+            0% { transform: translate(0, 0); }
+            100% { transform: translate(300px, 200px); }
+        }
+
+        h1, h2 {
+            color: var(--text-primary);
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+            text-shadow: 0 0 10px rgba(0, 237, 100, 0.3);
+        }
+
+        a {
+            text-decoration: none;
+            color: var(--mongodb-green);
+            transition: color 0.3s ease, text-shadow 0.3s ease;
+        }
+
+        a:hover {
+            color: var(--mongodb-dark-green);
+            text-shadow: 0 0 8px rgba(0, 237, 100, 0.5);
+        }
+
+        .exp-list {
+            list-style-type: none;
+            padding: 0;
+            position: relative;
+            z-index: 1;
+        }
+
+        .exp-item {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            margin-bottom: 20px;
+            padding: 25px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), 0 0 10px rgba(0, 237, 100, 0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .exp-item::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(0, 237, 100, 0.1), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .exp-item:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4), 0 0 20px rgba(0, 237, 100, 0.2);
+            border-color: var(--mongodb-green);
+        }
+
+        .exp-item:hover::before {
+            left: 100%;
+        }
+
+        .exp-item h3 {
+            margin-top: 0;
+            color: var(--text-primary);
+        }
+
+        .exp-item p {
+            margin-bottom: 15px;
+            color: var(--text-secondary);
+        }
+
+        .exp-meta {
+            font-size: 0.9em;
+            color: var(--text-secondary);
+        }
+
+        .status {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: 600;
+        }
+
+        .status-active {
+            background: var(--mongodb-green);
+            color: var(--mongodb-dark-blue);
+            box-shadow: 0 2px 8px rgba(0, 237, 100, 0.3);
+        }
+
+        .status-draft {
+            background: var(--border-color);
+            color: var(--text-secondary);
+        }
+
+        .status-archived {
+            background: #DC143C;
+            color: white;
+            box-shadow: 0 2px 8px rgba(220, 20, 60, 0.3);
+        }
+
+        .action-btn {
+            background: var(--mongodb-green);
+            color: var(--mongodb-dark-blue);
+            padding: 10px 16px;
+            border-radius: 6px;
+            font-weight: 600;
+            display: inline-block;
+            margin-right: 10px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 237, 100, 0.3);
+        }
+
+        .action-btn:hover {
+            background: var(--mongodb-dark-green);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 237, 100, 0.4);
+        }
+
+        .export-btn {
+            background: var(--mongodb-green);
+            color: var(--mongodb-dark-blue);
+            padding: 10px 16px;
+            border-radius: 6px;
+            border: none;
+            font-weight: 600;
+            display: inline-block;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 237, 100, 0.3);
+        }
+
+        .export-btn:hover {
+            background: var(--mongodb-dark-green);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 237, 100, 0.4);
+        }
+
+        .export-btn:disabled {
+            background: #444;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        .header-nav {
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: relative;
+            z-index: 1;
+        }
+
+        .header-nav a {
+            color: var(--text-secondary);
+        }
+
+        .header-nav a:hover {
+            color: var(--mongodb-green);
+        }
+
+        .header-nav strong {
+            color: var(--text-primary);
+        }
+
+        .flash-success {
+            background: rgba(0, 237, 100, 0.2);
+            color: var(--mongodb-green);
+            border: 1px solid rgba(0, 237, 100, 0.4);
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 237, 100, 0.2);
+        }
+
+        /* Modal styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0, 0, 0, 0.7);
+        }
+
+        .modal-content {
+            background-color: var(--card-bg);
+            margin: 5% auto;
+            padding: 20px;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            width: 90%;
+            max-width: 900px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 10px;
+        }
+
+        .modal-header h2 {
+            margin: 0;
+            color: var(--text-primary);
+            border: none;
+        }
+
+        .close {
+            color: var(--text-secondary);
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: color 0.3s ease;
+        }
+
+        .close:hover {
+            color: var(--mongodb-green);
+        }
+
+        .export-item {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+        }
+
+        .export-item.invalidated {
+            opacity: 0.6;
+            background: var(--mongodb-dark-blue);
+        }
+
+        .export-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .export-item-meta {
+            font-size: 0.85em;
+            color: var(--text-secondary);
+            margin-bottom: 10px;
+        }
+
+        .export-item-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-invalidate {
+            background: #DC143C;
+            color: white;
+            padding: 6px 12px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: all 0.3s ease;
+        }
+
+        .btn-invalidate:hover {
+            background: #B8122E;
+            transform: translateY(-1px);
+        }
+
+        .btn-invalidate:disabled {
+            background: #444;
+            cursor: not-allowed;
+        }
+
+        .invalidated-badge {
+            background: #DC143C;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 0.75em;
+            font-weight: 600;
+        }
+
+        .manage-exports-btn {
+            background: var(--mongodb-green);
+            color: var(--mongodb-dark-blue);
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 237, 100, 0.3);
+        }
+
+        .manage-exports-btn:hover {
+            background: var(--mongodb-dark-green);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 237, 100, 0.4);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: var(--text-secondary);
+        }
+
+        /* Upload Experiment Styles */
+        .upload-section {
+            background: var(--card-bg);
+            border: 2px dashed var(--mongodb-green);
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .upload-section:hover {
+            border-color: var(--mongodb-dark-green);
+            background: var(--mongodb-dark-blue);
+            box-shadow: 0 0 20px rgba(0, 237, 100, 0.2);
+        }
+
+        .upload-form {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+            text-align: left;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .form-group input[type="text"],
+        .form-group input[type="file"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 14px;
+            box-sizing: border-box;
+            background: var(--mongodb-dark-blue);
+            color: var(--text-primary);
+        }
+
+        .form-group input[type="file"] {
+            padding: 8px;
+            cursor: pointer;
+        }
+
+        .form-group small {
+            display: block;
+            margin-top: 5px;
+            color: var(--text-secondary);
+            font-size: 0.9em;
+        }
+
+        .upload-btn {
+            background: var(--mongodb-green);
+            color: var(--mongodb-dark-blue);
+            padding: 12px 30px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
             font-size: 16px;
             cursor: pointer;
             width: 100%;
             margin-top: 10px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 237, 100, 0.3);
         }
-        .upload-btn:hover { background: #218838; }
-        .upload-btn:disabled { background: #6c757d; cursor: not-allowed; }
-        .upload-progress { margin-top: 20px; display: none; }
-        .upload-progress.active { display: block; }
-        .progress-bar { width: 100%; height: 25px; background: #e9ecef; border-radius: 13px; overflow: hidden; margin-top: 10px; }
-        .progress-fill { height: 100%; background: #28a745; transition: width 0.3s ease; width: 0%; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: 600; }
-        .upload-status { margin-top: 15px; padding: 12px; border-radius: 5px; font-weight: 500; }
-        .upload-status.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-        .upload-status.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-        .upload-status.info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+
+        .upload-btn:hover {
+            background: var(--mongodb-dark-green);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 237, 100, 0.4);
+        }
+
+        .upload-btn:disabled {
+            background: #444;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        .upload-progress {
+            margin-top: 20px;
+            display: none;
+        }
+
+        .upload-progress.active {
+            display: block;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 25px;
+            background: var(--mongodb-dark-blue);
+            border-radius: 13px;
+            overflow: hidden;
+            margin-top: 10px;
+            border: 1px solid var(--border-color);
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--mongodb-green);
+            transition: width 0.3s ease;
+            width: 0%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--mongodb-dark-blue);
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .upload-status {
+            margin-top: 15px;
+            padding: 12px;
+            border-radius: 8px;
+            font-weight: 500;
+        }
+
+        .upload-status.success {
+            background: rgba(0, 237, 100, 0.2);
+            color: var(--mongodb-green);
+            border: 1px solid rgba(0, 237, 100, 0.4);
+        }
+
+        .upload-status.error {
+            background: rgba(220, 20, 60, 0.2);
+            color: #DC143C;
+            border: 1px solid rgba(220, 20, 60, 0.4);
+        }
+
+        .upload-status.info {
+            background: rgba(0, 237, 100, 0.1);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+        }
+
+        code {
+            background: var(--mongodb-dark-blue);
+            color: var(--mongodb-green);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            border: 1px solid rgba(0, 237, 100, 0.2);
+        }
     </style>
     <script>
         async function downloadExport(url, slugId) {
