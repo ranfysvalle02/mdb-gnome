@@ -29,6 +29,72 @@
         }
       },
       {
+        "name": "workout_vector_power_cadence_hr_index",
+        "type": "vectorSearch",
+        "definition": {
+          "fields": [
+            {
+              "type": "vector",
+              "path": "workout_vector_power_cadence_hr",
+              "numDimensions": 192,
+              "similarity": "cosine"
+            },
+            {
+              "type": "filter",
+              "path": "experiment_id"
+            },
+            {
+              "type": "filter",
+              "path": "_id"
+            }
+          ]
+        }
+      },
+      {
+        "name": "workout_vector_power_speed_hr_index",
+        "type": "vectorSearch",
+        "definition": {
+          "fields": [
+            {
+              "type": "vector",
+              "path": "workout_vector_power_speed_hr",
+              "numDimensions": 192,
+              "similarity": "cosine"
+            },
+            {
+              "type": "filter",
+              "path": "experiment_id"
+            },
+            {
+              "type": "filter",
+              "path": "_id"
+            }
+          ]
+        }
+      },
+      {
+        "name": "workout_vector_speed_cadence_hr_index",
+        "type": "vectorSearch",
+        "definition": {
+          "fields": [
+            {
+              "type": "vector",
+              "path": "workout_vector_speed_cadence_hr",
+              "numDimensions": 192,
+              "similarity": "cosine"
+            },
+            {
+              "type": "filter",
+              "path": "experiment_id"
+            },
+            {
+              "type": "filter",
+              "path": "_id"
+            }
+          ]
+        }
+      },
+      {
         "name": "id_regular_index",
         "type": "regular",
         "keys": { "_id": 1 }

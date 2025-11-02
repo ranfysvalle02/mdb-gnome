@@ -128,6 +128,38 @@ async def get_viz_data(
 # --- END NEW ---
 
 
+# ---
+# --- NEW: API endpoint to find similar workouts using custom RGB channels
+# ---
+@bp.get("/workout/{workout_id}/similar", response_class=JSONResponse)
+async def find_similar_workouts(
+    request: Request,
+    workout_id: int,
+    actor: "ray.actor.ActorHandle" = Depends(get_actor_handle),
+    r_key: str = Query(...),
+    g_key: str = Query(...),
+    b_key: str = Query(...),
+    limit: int = Query(3, ge=1, le=10)
+):
+    """
+    Finds similar workouts using custom RGB channel assignments.
+    Generates vectors on-the-fly for the current view and computes similarity in-memory.
+    """
+    try:
+        similar = await actor.find_similar_workouts_custom.remote(
+            workout_id,
+            r_key=r_key,
+            g_key=g_key,
+            b_key=b_key,
+            limit=limit
+        )
+        return JSONResponse(content={"similar": similar})
+    except Exception as e:
+        logger.error(f"Actor call failed for find_similar_workouts_custom: {e}", exc_info=True)
+        raise HTTPException(500, f"Actor similarity search failed: {e}")
+# --- END NEW ---
+
+
 @bp.post("/workout/{workout_id}/analyze")
 async def analyze_workout(
     request: Request, 

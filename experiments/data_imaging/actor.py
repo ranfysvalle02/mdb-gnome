@@ -318,6 +318,20 @@ class ExperimentActor:
         )
         return arrays["rgb_combined"].reshape(-1)
 
+    def _get_feature_vector_custom(self, doc: dict, r_key: str, g_key: str, b_key: str):
+        """
+        Generates a 192-element vector using custom RGB channel assignments.
+        This allows finding similar workouts from different perspectives.
+        """
+        arrays = self._generate_workout_viz_arrays(
+            doc,
+            size=8,
+            r_key=r_key,
+            g_key=g_key,
+            b_key=b_key
+        )
+        return arrays["rgb_combined"].reshape(-1)
+
 
     def _encode_png_b64(
         self,
@@ -508,6 +522,12 @@ class ExperimentActor:
             title = key.replace('_', ' ').title()
             return f"<strong>{title}</strong> data provides the pixel values for the <strong class=\"{color_class}\">{channel_name} channel</strong>."
 
+        # Convert NumPy arrays to lists for JSON serialization
+        raw_data_serializable = {
+            key: arr.tolist() if hasattr(arr, 'tolist') else arr 
+            for key, arr in arrays["raw_data"].items()
+        }
+        
         return {
             "b64_combined": b64_combined,
             "b64_r": b64_r,
@@ -519,8 +539,225 @@ class ExperimentActor:
             "label_r_short_html": format_short_label(r_key, "red-label", "Red"),
             "label_g_short_html": format_short_label(g_key, "green-label", "Green"),
             "label_b_short_html": format_short_label(b_key, "blue-label", "Blue"),
-            "raw_data": arrays["raw_data"]
+            "raw_data": raw_data_serializable
         }
+
+    # ---
+    # --- Find similar workouts using custom RGB channels (MongoDB Vector Search)
+    # ---
+    async def find_similar_workouts_custom(
+        self, 
+        workout_id: int, 
+        r_key: str, 
+        g_key: str, 
+        b_key: str,
+        limit: int = 3
+    ) -> list[dict]:
+        """
+        Finds similar workouts using custom RGB channel assignments.
+        Intelligently leverages MongoDB Atlas Vector Search:
+        1. Generates query vector on-the-fly with custom channels
+        2. Uses $vectorSearch aggregation with the dynamically generated query vector
+        3. Computes custom channel vectors for candidates and scores in-memory
+        
+        This approach balances MongoDB's indexed vector search performance with
+        the flexibility of custom channel combinations.
+        """
+        self._check_ready()
+        doc_id = f"workout_rad_{workout_id}"
+        query_doc = await self.db.workouts.find_one({"_id": doc_id})
+        if not query_doc:
+            raise RuntimeError(f"Doc {doc_id} not found")
+        
+        # Generate query vector with custom channels
+        query_vector = self._get_feature_vector_custom(query_doc, r_key, g_key, b_key)
+        query_vector_list = query_vector.tolist()  # Convert NumPy array to list
+        
+        # Check if we're using indexed channel combinations (can leverage vector search directly)
+        is_canonical = (
+            r_key == "heart_rate" and 
+            g_key == "calories_per_min" and 
+            b_key == "speed_kph"
+        )
+        is_power_cadence_hr = (
+            r_key == "power" and 
+            g_key == "cadence" and 
+            b_key == "heart_rate"
+        )
+        is_power_speed_hr = (
+            r_key == "power" and 
+            g_key == "speed_kph" and 
+            b_key == "heart_rate"
+        )
+        is_speed_cadence_hr = (
+            r_key == "speed_kph" and 
+            g_key == "cadence" and 
+            b_key == "heart_rate"
+        )
+        
+        # Determine which index and vector field to use
+        if is_canonical and isinstance(query_doc.get("workout_vector"), list):
+            index_name = self.vector_index_name
+            vector_field = "workout_vector"
+            query_vec = query_doc["workout_vector"]
+        elif is_power_cadence_hr and isinstance(query_doc.get("workout_vector_power_cadence_hr"), list):
+            index_name = f"{self.write_scope}_workout_vector_power_cadence_hr_index"
+            vector_field = "workout_vector_power_cadence_hr"
+            query_vec = query_doc["workout_vector_power_cadence_hr"]
+        elif is_power_speed_hr and isinstance(query_doc.get("workout_vector_power_speed_hr"), list):
+            index_name = f"{self.write_scope}_workout_vector_power_speed_hr_index"
+            vector_field = "workout_vector_power_speed_hr"
+            query_vec = query_doc["workout_vector_power_speed_hr"]
+        elif is_speed_cadence_hr and isinstance(query_doc.get("workout_vector_speed_cadence_hr"), list):
+            index_name = f"{self.write_scope}_workout_vector_speed_cadence_hr_index"
+            vector_field = "workout_vector_speed_cadence_hr"
+            query_vec = query_doc["workout_vector_speed_cadence_hr"]
+        else:
+            # Not an indexed combination, fall back to hybrid approach
+            index_name = None
+        
+        # Use indexed vector search if we have an indexed combination
+        if index_name and query_vec:
+            # Use MongoDB Vector Search with indexed vectors
+            try:
+                pipeline = [
+                    {
+                        "$vectorSearch": {
+                            "index": index_name,
+                            "path": vector_field,
+                            "queryVector": query_vec,
+                            "filter": {"_id": {"$ne": doc_id}},
+                            "numCandidates": max(50, limit * 10),
+                            "limit": limit * 3
+                        }
+                    },
+                    {
+                        "$project": {
+                            "_id": 1,
+                            "score": {"$meta": "vectorSearchScore"},
+                            "workout_type": 1,
+                            "session_tag": 1,
+                            "ai_classification": 1
+                        }
+                    }
+                ]
+                
+                cur = self.db.raw.workouts.aggregate(pipeline)
+                candidates = await cur.to_list(length=None)
+                
+                # Vector search scores are valid for indexed combinations
+                results = []
+                for cand in candidates:
+                    suffix = cand["_id"].split("_")[-1]
+                    results.append({
+                        "_id": cand["_id"],
+                        "workout_id": int(suffix),
+                        "score": float(cand.get("score", 0.0)),
+                        "workout_type": cand.get("workout_type", "?"),
+                        "session_tag": cand.get("session_tag"),
+                        "ai_classification": cand.get("ai_classification")
+                    })
+                
+                # Already sorted by vector search score, just take top N
+                return results[:limit]
+                
+            except self.OperationFailure as oe:
+                err_msg = oe.details.get('errmsg', str(oe))
+                logger.warning(f"Vector search failed, falling back to in-memory: {err_msg}")
+                # Fall through to in-memory computation
+            except Exception as e:
+                logger.warning(f"Vector search error, falling back to in-memory: {e}")
+                # Fall through to in-memory computation
+        
+        # For non-canonical channels OR if vector search fails:
+        # Use MongoDB to efficiently fetch candidates, then compute custom similarity
+        # This leverages MongoDB for filtering/fetching but computes similarity with custom vectors
+        try:
+            # First, try to get a smart candidate set using canonical vector search
+            # as a pre-filter, then re-rank with custom vectors
+            if isinstance(query_doc.get("workout_vector"), list):
+                # Use canonical vector search as a pre-filter to get likely candidates
+                prefilter_pipeline = [
+                    {
+                        "$vectorSearch": {
+                            "index": self.vector_index_name,
+                            "path": "workout_vector",
+                            "queryVector": query_doc["workout_vector"],
+                            "filter": {"_id": {"$ne": doc_id}},
+                            "numCandidates": 200,  # Get more candidates
+                            "limit": 100  # Pre-filter to top 100
+                        }
+                    },
+                    {
+                        "$project": {
+                            "_id": 1,
+                            "workout_type": 1,
+                            "session_tag": 1,
+                            "ai_classification": 1,
+                            "time_series": 1
+                        }
+                    }
+                ]
+                
+                cur = self.db.raw.workouts.aggregate(prefilter_pipeline)
+                candidate_docs = await cur.to_list(length=None)
+                
+                # If we got good candidates, use them; otherwise fetch all
+                if not candidate_docs or len(candidate_docs) < limit:
+                    # Fallback: fetch a reasonable subset
+                    candidate_docs = await self.db.workouts.find(
+                        {"_id": {"$ne": doc_id}},
+                        {"_id": 1, "time_series": 1, "workout_type": 1, "session_tag": 1, "ai_classification": 1}
+                    ).limit(500).to_list(length=None)
+            else:
+                # No canonical vector available, fetch candidates directly
+                candidate_docs = await self.db.workouts.find(
+                    {"_id": {"$ne": doc_id}},
+                    {"_id": 1, "time_series": 1, "workout_type": 1, "session_tag": 1, "ai_classification": 1}
+                ).limit(500).to_list(length=None)
+            
+            if not candidate_docs:
+                return []
+            
+            # Compute cosine similarity with custom channel vectors
+            similarities = []
+            query_vec_norm = self.np.linalg.norm(query_vector)
+            
+            for doc in candidate_docs:
+                try:
+                    # Generate vector for this doc using the same custom channels
+                    candidate_vector = self._get_feature_vector_custom(doc, r_key, g_key, b_key)
+                    
+                    # Compute cosine similarity
+                    candidate_vec_norm = self.np.linalg.norm(candidate_vector)
+                    if candidate_vec_norm == 0 or query_vec_norm == 0:
+                        similarity = 0.0
+                    else:
+                        dot_product = float(self.np.dot(query_vector, candidate_vector))
+                        similarity = dot_product / (query_vec_norm * candidate_vec_norm)
+                    
+                    # Extract workout ID suffix for display
+                    suffix = doc["_id"].split("_")[-1]
+                    
+                    similarities.append({
+                        "_id": doc["_id"],
+                        "workout_id": int(suffix),
+                        "score": similarity,
+                        "workout_type": doc.get("workout_type", "?"),
+                        "session_tag": doc.get("session_tag"),
+                        "ai_classification": doc.get("ai_classification")
+                    })
+                except Exception as e:
+                    logger.warning(f"Error computing similarity for {doc.get('_id')}: {e}")
+                    continue
+            
+            # Sort by similarity (descending) and return top N
+            similarities.sort(key=lambda x: x["score"], reverse=True)
+            return similarities[:limit]
+            
+        except Exception as e:
+            logger.error(f"Error in find_similar_workouts_custom: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to find similar workouts: {e}")
 
     # ---
     # --- Endpoint for client-side JS (returns JSON)
@@ -779,11 +1016,27 @@ class ExperimentActor:
         for attempt in range(5):
             # --- Must call internal methods ---
             doc = self._create_synthetic_apple_watch_data(new_suffix)
+            
+            # Generate canonical vector (HR, Calories, Speed)
             feature_vec = self._get_feature_vector(doc)
             doc["workout_vector"] = feature_vec.tolist()
+            
+            # Generate common custom vectors for indexed combinations
+            # Power, Cadence, Heart Rate (cycling-focused)
+            vec_power_cadence_hr = self._get_feature_vector_custom(doc, "power", "cadence", "heart_rate")
+            doc["workout_vector_power_cadence_hr"] = vec_power_cadence_hr.tolist()
+            
+            # Power, Speed, Heart Rate (performance-focused)
+            vec_power_speed_hr = self._get_feature_vector_custom(doc, "power", "speed_kph", "heart_rate")
+            doc["workout_vector_power_speed_hr"] = vec_power_speed_hr.tolist()
+            
+            # Speed, Cadence, Heart Rate (cycling-specific)
+            vec_speed_cadence_hr = self._get_feature_vector_custom(doc, "speed_kph", "cadence", "heart_rate")
+            doc["workout_vector_speed_cadence_hr"] = vec_speed_cadence_hr.tolist()
+            
             try:
                 await self.db.workouts.insert_one(doc)
-                logger.info(f"[{self.write_scope}-Actor] Inserted new doc {doc['_id']}")
+                logger.info(f"[{self.write_scope}-Actor] Inserted new doc {doc['_id']} with indexed vectors")
                 return new_suffix
             except Exception as e:
                 if "duplicate" in str(e).lower() or "E11000" in str(e):

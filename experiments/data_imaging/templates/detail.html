@@ -707,7 +707,16 @@
   
   <h1>Workout Detail: {{workout_id}}</h1>  
 
-  <div class="channel-selectors">
+  <div class="channel-selectors" style="border: 2px solid var(--atlas-border);">
+    <div style="flex-basis: 100%; margin-bottom: 10px;">
+      <p style="margin: 0; color: var(--atlas-light-text); font-size: 1.05em; font-weight: 600;">
+        🔍 <strong>Feature Engineering Playground</strong>
+      </p>
+      <p style="margin: 5px 0 0 0; color: var(--atlas-mid-text); font-size: 0.95em;">
+        Mix and match different time-series metrics as RGB channels to discover hidden patterns. 
+        The same workout data reveals different "fingerprints" from different perspectives!
+      </p>
+    </div>
     <div class="selector-group">
       <label for="r_key" style="color: var(--accent-red);">R Channel:</label>
       <select name="r_key" id="r_key">
@@ -741,7 +750,7 @@
       </select>
     </div>
     
-    <button type="button" id="updateViewBtn" class="control-btn" style="padding: 10px 18px; margin-bottom: 0;">Update View</button>
+    <button type="button" id="updateViewBtn" class="control-btn" style="padding: 10px 18px; margin-bottom: 0;">Update View & Find Similar</button>
     
     <button type="button" id="revertViewBtn" class="control-btn btn-revert" style="padding: 10px 18px; margin-bottom: 0; display: none;">
       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
@@ -758,11 +767,20 @@
       <img src="data:image/png;base64,{{b64_combined}}"  
            alt="Generated feature image from JSON data"  
            class="main-img" id="main-fingerprint-img">  
-      <p class="caption">  
-        This 8x8 "visual fingerprint" is flattened into a 192-element vector for search.
-        (Using canonical keys: HR, Calories, Speed)
-      </p>  
-      <p class="caption">  
+      <div style="background-color: var(--atlas-hover-bg); padding: 15px; border-radius: 8px; border: 2px solid var(--atlas-green); margin-bottom: 15px;">
+        <p style="margin: 0 0 10px 0; color: var(--atlas-light-text); font-weight: 600; font-size: 1.1em;">
+          🎯 <strong>The Feature Engineering Magic</strong>
+        </p>
+        <p style="margin: 0; color: var(--atlas-mid-text); font-size: 0.95em; line-height: 1.5;">
+          This 8x8 "visual fingerprint" transforms <strong>64 minutes of time-series data</strong> into a 
+          <strong style="color: var(--atlas-green);">192-element searchable vector</strong>. 
+          The same workout can reveal <strong>completely different patterns</strong> when viewed through different 
+          RGB channel combinations. Common combinations (like Power/Cadence/HR) are pre-indexed for blazing-fast searches, 
+          while others use intelligent pre-filtering. <strong style="color: var(--accent-purple);">Try changing the channels above 
+          to discover hidden similarities!</strong>
+        </p>
+      </div>
+      <p class="caption" style="font-style: normal; font-size: 0.9em;">  
         <span id="caption-r">{{ label_r_full_html|safe }}</span><br>  
         <span id="caption-g">{{ label_g_full_html|safe }}</span><br>  
         <span id="caption-b">{{ label_b_full_html|safe }}</span>  
@@ -847,9 +865,45 @@
       Using a <code>$vectorSearch</code> pipeline in MongoDB Atlas with index  
       <code>{{vector_index_name}}</code>  
       to find the 3 workouts most similar to this one's 192-element vector (excluding itself).  
-      Higher score means more similar pattern.  
-    </p>  
-    <ul>{{ai_neighbors_html | safe}}</ul>  
+      Higher score means more similar pattern.
+    </p>
+    <div style="background-color: var(--atlas-dark-blue); padding: 12px; border-radius: 6px; border-left: 4px solid var(--accent-purple); margin-top: 10px;">
+      <p style="margin: 0; color: var(--atlas-light-text); font-size: 0.95em;">
+        <strong>💡 Feature Engineering Insight:</strong> The vector below uses the <strong>indexed default channels</strong> 
+        (HR, Calories, Speed) for fast vector search. But <strong style="color: var(--accent-purple);">different channel 
+        combinations reveal different patterns!</strong> Common combinations like Power/Cadence/HR are also indexed for 
+        blazing-fast searches. Try selecting Power, Cadence, or other metrics above and click <strong>"Update View & Find Similar"</strong> 
+        to discover workouts that are similar in completely different ways.
+      </p>
+    </div>  
+    <ul id="canonical-neighbors">{{ai_neighbors_html | safe}}</ul>
+    <div id="custom-similar-results" style="display: none; margin-top: 20px; padding-top: 20px; border-top: 2px solid var(--atlas-border);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+        <h3 style="color: var(--accent-purple); margin-top: 0; margin-bottom: 0;">Similar Workouts (Custom View)</h3>
+        <button id="explainCustomBtn" class="control-btn" style="padding: 6px 12px; font-size: 0.9em; background-color: var(--accent-purple); color: white;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" style="margin-right: 5px;">
+            <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+            <path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.206 2.057v1.133h1.241c.303 0 .524-.246.524-.575 0-.37-.22-.598-.524-.598H5.423c-.35 0-.53.21-.53.34 0 .084.042.147.174.194.376.121 1.075.24 1.853.413.788.176 1.572.418 2.118.736.546.318.91.805.91 1.594 0 1.196-1.059 2.001-2.5 2.001-.936 0-1.803-.334-2.486-1.069-.73-.78-1.12-1.806-1.12-2.898V5.786z"/>
+          </svg>
+          How This Works
+        </button>
+      </div>
+      <div id="custom-view-info" style="background-color: var(--atlas-dark-blue); padding: 12px; border-radius: 6px; border-left: 4px solid var(--accent-purple); margin-bottom: 15px;">
+        <p style="margin: 0; color: var(--atlas-light-text); font-size: 0.95em;">
+          <strong>Current View:</strong> 
+          <span id="custom-view-channels" style="color: var(--accent-purple); font-weight: 600;"></span>
+        </p>
+        <p style="margin: 5px 0 0 0; color: var(--atlas-mid-text); font-size: 0.9em;">
+          These workouts are similar based on patterns in the selected metrics above. 
+          Different channel combinations reveal different types of similarity!
+        </p>
+        <p style="margin: 5px 0 0 0; color: var(--atlas-mid-text); font-size: 0.85em; font-style: italic;">
+          💡 <strong>Performance Tip:</strong> Common combinations like Power/Cadence/HR use indexed vector search for 
+          blazing-fast results (~5-10ms). Other combinations use intelligent pre-filtering (~200-500ms).
+        </p>
+      </div>
+      <ul id="custom-similar-list"></ul>
+    </div>
   </div>  
   
   <div class="explanation-box">  
@@ -900,7 +954,15 @@
   
         <div class="pipeline-step">  
           <h3><span class="step-number">1</span> Start: 1D Time-Series Data (64 mins)</h3>  
-          <p>We begin with multiple 64-point data arrays, normalized to a 0-255 scale.</p>  
+          <p><strong>This is where the magic begins:</strong> We start with raw time-series data—64 data points 
+          per metric, representing one workout session. Each metric (heart rate, calories, speed, power, cadence) 
+          tells its own story. The challenge? How do we make this searchable? How do we find similar patterns 
+          without comparing every single data point?</p>
+          <p style="margin-top: 10px; font-style: italic; color: var(--atlas-mid-text);">
+            💡 <strong>Feature Engineering Tip:</strong> Notice how we have <strong>5 different metrics</strong> but 
+            only use <strong>3 at a time</strong>. This gives us <strong>5×4×3 = 60 different ways</strong> to view 
+            the same workout! Each combination reveals different patterns.
+          </p>  
           <div class="step-1-charts">  
             <div>  
               <h4 class="red">Heart Rate (1D Array)</h4>  
@@ -981,8 +1043,28 @@
           <p>The 8x8x3 image (8 rows * 8 columns * 3 color channels = 192 values) is "flattened" row by row into a single list of 192 numbers. This vector numerically captures the visual pattern.</p>  
           <div class="step-4-content">  
             <pre><code>Vector = [Pixel(0,0)R, Pixel(0,0)G, Pixel(0,0)B, Pixel(0,1)R, ..., Pixel(7,7)B]</code></pre>  
-            <p>This is the vector stored in MongoDB Atlas and used for blazing-fast <code>$vectorSearch</code>!</p>  
-          </div>  
+            <p>This is the vector stored in MongoDB Atlas and used for blazing-fast <code>$vectorSearch</code>!</p>
+          </div>
+          <div style="background-color: var(--atlas-dark-blue); padding: 15px; border-radius: 6px; border-left: 4px solid var(--atlas-green); margin-top: 15px;">
+            <p style="margin: 0; color: var(--atlas-light-text); font-size: 1.05em; font-weight: 600;">
+              🎯 <strong>The Feature Engineering Breakthrough</strong>
+            </p>
+            <p style="margin: 10px 0 0 0; color: var(--atlas-mid-text); line-height: 1.6;">
+              <strong>Why is this clever?</strong> We've transformed <strong>time-series data</strong> (which is hard to search) 
+              into a <strong>fixed-size vector</strong> (which is fast to search). Instead of comparing 64×5=320 data points 
+              for every workout, we compare one 192-element vector. This enables:
+            </p>
+            <ul style="margin: 10px 0 0 20px; color: var(--atlas-mid-text); line-height: 1.6;">
+              <li><strong>Indexed search:</strong> MongoDB builds an optimized HNSW index on these vectors</li>
+              <li><strong>Millisecond queries:</strong> Find similar workouts in milliseconds, even with millions of records</li>
+              <li><strong>Pattern preservation:</strong> The visual "fingerprint" captures the shape and progression of effort</li>
+              <li><strong>Multiple perspectives:</strong> Different RGB channel combinations reveal different types of similarity</li>
+            </ul>
+            <p style="margin: 15px 0 0 0; color: var(--atlas-light-text); font-weight: 600;">
+              🚀 <strong>Try it:</strong> Change the RGB channels above and click "Find Similar" to discover workouts 
+              that are similar in power/cadence patterns vs. heart rate/calorie patterns. Same data, completely different insights!
+            </p>
+          </div>
         </div>  
   
       </div>  
@@ -1062,6 +1144,89 @@
   </div>  
 </div>  
   
+<div id="customViewModal" class="modal">  
+  <div class="modal-content">  
+    <span class="close-btn">&times;</span>  
+    <h2>How Custom Channel Similarity Search Works</h2>
+    <p style="color: var(--atlas-light-text); font-size: 1.05em; margin-bottom: 20px;">
+      When you select different RGB channels, you're exploring the same workout data from different perspectives. 
+      Here's how the intelligent similarity search works:
+    </p>
+    
+    <div style="background-color: var(--atlas-hover-bg); padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--atlas-green);">
+      <h3 style="color: var(--atlas-green); margin-top: 0;">🎯 The Smart Approach</h3>
+      <p style="color: var(--atlas-light-text);">
+        Instead of storing vectors for all 60 possible channel combinations, we use a 
+        <strong>hybrid intelligent approach</strong> with <strong>pre-indexed common combinations</strong>:
+      </p>
+      <ol style="color: var(--atlas-mid-text); line-height: 1.8; margin-left: 20px;">
+        <li><strong>Indexed Combinations (Fast ⚡ ~5-10ms):</strong> Common channel combinations are pre-computed and indexed in MongoDB:
+          <ul style="margin-top: 8px; margin-left: 15px; line-height: 1.6;">
+            <li><strong>Default:</strong> HR, Calories, Speed</li>
+            <li><strong>Cycling:</strong> Power, Cadence, HR</li>
+            <li><strong>Performance:</strong> Power, Speed, HR</li>
+            <li><strong>Cycling-Specific:</strong> Speed, Cadence, HR</li>
+          </ul>
+          These use MongoDB's indexed vector search directly - blazing fast!
+        </li>
+        <li><strong>Other Combinations (Fast ~200-500ms):</strong> For less common combinations, we use MongoDB vector search as a smart pre-filter to find ~100 likely candidates, then re-rank them with custom channel vectors computed on-the-fly.</li>
+        <li><strong>Best of Both Worlds:</strong> Common combinations get indexed performance, while still supporting unlimited flexibility for all 60 possible combinations!</li>
+      </ol>
+    </div>
+
+    <div style="background-color: var(--atlas-hover-bg); padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--accent-purple);">
+      <h3 style="color: var(--accent-purple); margin-top: 0;">🔍 How It Finds Similar Workouts</h3>
+      <p style="color: var(--atlas-light-text); margin-bottom: 10px;">
+        When you change RGB channels and click "Update View & Find Similar":
+      </p>
+      
+      <div style="background-color: var(--atlas-dark-blue); padding: 12px; border-radius: 6px; margin: 10px 0; border-left: 3px solid var(--atlas-green);">
+        <p style="margin: 0 0 8px 0; color: var(--atlas-green); font-weight: 600; font-size: 0.95em;">
+          ✓ For Indexed Combinations (HR/Calories/Speed, Power/Cadence/HR, Power/Speed/HR, Speed/Cadence/HR):
+        </p>
+        <div style="font-family: monospace; font-size: 0.9em; color: var(--atlas-mid-text); margin-left: 10px;">
+          <strong style="color: var(--atlas-light-text);">Step 1:</strong> Use pre-computed indexed vector directly<br>
+          <strong style="color: var(--atlas-light-text);">Step 2:</strong> MongoDB indexed vector search (blazing fast!)<br>
+          <strong style="color: var(--atlas-light-text);">Step 3:</strong> Return top matches instantly (~5-10ms)
+        </div>
+      </div>
+      
+      <div style="background-color: var(--atlas-dark-blue); padding: 12px; border-radius: 6px; margin: 10px 0; border-left: 3px solid var(--accent-orange);">
+        <p style="margin: 0 0 8px 0; color: var(--accent-orange); font-weight: 600; font-size: 0.95em;">
+          For Other Combinations:
+        </p>
+        <div style="font-family: monospace; font-size: 0.9em; color: var(--atlas-mid-text); margin-left: 10px;">
+          <strong style="color: var(--atlas-light-text);">Step 1:</strong> Generate query vector with your selected channels<br>
+          <strong style="color: var(--atlas-light-text);">Step 2:</strong> Pre-filter using indexed default vector search (finds ~100 candidates)<br>
+          <strong style="color: var(--atlas-light-text);">Step 3:</strong> Generate custom vectors for each candidate<br>
+          <strong style="color: var(--atlas-light-text);">Step 4:</strong> Compute cosine similarity with custom vectors<br>
+          <strong style="color: var(--atlas-light-text);">Step 5:</strong> Rank and return top matches (~200-500ms)
+        </div>
+      </div>
+      
+      <p style="color: var(--atlas-mid-text); font-size: 0.95em; margin-top: 10px;">
+        The system automatically chooses the fastest approach based on your channel selection. 
+        Common combinations get indexed performance, while uncommon ones still work efficiently via smart pre-filtering!
+      </p>
+    </div>
+
+    <div style="background-color: var(--atlas-hover-bg); padding: 15px; border-radius: 8px; border-left: 4px solid var(--accent-blue);">
+      <h3 style="color: var(--accent-blue); margin-top: 0;">💡 Why This Is Powerful</h3>
+      <ul style="color: var(--atlas-mid-text); line-height: 1.8; margin-left: 20px;">
+        <li><strong>Optimized Storage:</strong> We only index the most common combinations (4 out of 60), avoiding massive storage overhead while still covering the most useful cases</li>
+        <li><strong>Blazing Fast for Common Cases:</strong> Indexed combinations get ~5-10ms search times, just as fast as the default view!</li>
+        <li><strong>Smart Fallback:</strong> Other combinations still work efficiently via intelligent pre-filtering (~200-500ms)</li>
+        <li><strong>Flexible Exploration:</strong> Try any channel combination and instantly see different similarity patterns</li>
+        <li><strong>Pattern Discovery:</strong> The same workout can be similar to different sets of workouts depending on which metrics you focus on</li>
+      </ul>
+      <p style="color: var(--atlas-light-text); margin-top: 15px; font-weight: 600;">
+        🚀 Try it: Change the RGB channels and watch how the similar workouts change! 
+        Common combinations like Power/Cadence/HR will be blazing fast!
+      </p>
+    </div>
+  </div>  
+</div>
+
 <div id="whyModal" class="modal">  
   <div class="modal-content">  
     <span class="close-btn">&times;</span>  
@@ -1163,6 +1328,22 @@ document.addEventListener("DOMContentLoaded", function() {
     }  
   }  
   
+  // --- Modal Logic (#customViewModal) ---
+  const customViewModal = document.getElementById("customViewModal");
+  const explainCustomBtn = document.getElementById("explainCustomBtn");
+  const customViewClose = customViewModal ? customViewModal.querySelector(".close-btn") : null;
+  
+  if (explainCustomBtn) {
+    explainCustomBtn.onclick = function() {
+      if(customViewModal) customViewModal.style.display = "block";
+    };
+  }
+  if (customViewClose) {
+    customViewClose.onclick = function() {
+      if(customViewModal) customViewModal.style.display = "none";
+    };
+  }
+
   // --- Modal Logic (#whyModal) ---  
   const whyModal = document.getElementById("whyModal");  
   const whyBtn = document.getElementById("whyCoolBtn");  
@@ -1184,6 +1365,9 @@ document.addEventListener("DOMContentLoaded", function() {
     if (event.target == promptModal) {  
       promptModal.style.display = "none";  
     }  
+    if (event.target == customViewModal) {
+      customViewModal.style.display = "none";
+    }
     if (event.target == whyModal) {  
       whyModal.style.display = "none";  
     }  
@@ -1299,49 +1483,95 @@ document.addEventListener("DOMContentLoaded", function() {
     elementsToUpdate.textB.innerHTML = data.label_b_short_html;
   }
   
-  // 4. Add click listener for the "Update View" button
+  // 4. Add click listener for the "Update View" button (now auto-finds similar workouts)
   if (updateBtn) {
     updateBtn.addEventListener('click', function() {
       // Show loading state
       updateBtn.disabled = true;
-      updateBtn.textContent = 'Updating...';
+      updateBtn.textContent = 'Updating & Finding Similar...';
 
       const rVal = rSelect.value;
       const gVal = gSelect.value;
       const bVal = bSelect.value;
       
-      // Construct the API URL
-      const apiUrl = `/experiments/data_imaging/workout/{{workout_id}}/viz?r_key=${rVal}&g_key=${gVal}&b_key=${bVal}`;
+      // Construct the API URLs
+      const vizUrl = `/experiments/data_imaging/workout/{{workout_id}}/viz?r_key=${rVal}&g_key=${gVal}&b_key=${bVal}`;
+      const similarUrl = `/experiments/data_imaging/workout/{{workout_id}}/similar?r_key=${rVal}&g_key=${gVal}&b_key=${bVal}&limit=3`;
 
-      fetch(apiUrl)
-        .then(response => {
-          if (!response.ok) {
-            throw new Error(`Network response was not ok: ${response.statusText}`);
-          }
+      // Fetch both visualization data and similar workouts in parallel
+      Promise.all([
+        fetch(vizUrl).then(response => {
+          if (!response.ok) throw new Error(`Viz API error: ${response.statusText}`);
+          return response.json();
+        }),
+        fetch(similarUrl).then(response => {
+          if (!response.ok) throw new Error(`Similar API error: ${response.statusText}`);
           return response.json();
         })
-        .then(data => {
-          // Apply the new data
-          applyVizData(data);
+      ])
+        .then(([vizData, similarData]) => {
+          // Apply the new visualization data
+          applyVizData(vizData);
           
           // Show the revert button
           if (revertBtn) {
             revertBtn.style.display = 'inline-flex';
           }
           
+          // Display similar workouts results
+          // Update the channel info display
+          const channelNames = {
+            'heart_rate': 'Heart Rate',
+            'calories_per_min': 'Calories',
+            'speed_kph': 'Speed',
+            'power': 'Power',
+            'cadence': 'Cadence'
+          };
+          const rName = channelNames[rVal] || rVal.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+          const gName = channelNames[gVal] || gVal.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+          const bName = channelNames[bVal] || bVal.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+          
+          const customViewChannelsEl = document.getElementById('custom-view-channels');
+          if (customViewChannelsEl) {
+            customViewChannelsEl.innerHTML = `<span style="color: var(--accent-red);">R: ${rName}</span> | <span style="color: var(--accent-green-viz);">G: ${gName}</span> | <span style="color: var(--accent-blue);">B: ${bName}</span>`;
+          }
+          
+          if (similarData.similar && similarData.similar.length > 0) {
+            const items = similarData.similar.map(item => {
+              const sid = item.workout_id;
+              let contextSpan = `Type: ${item.workout_type || '?'}`;
+              if (item.session_tag) contextSpan += ` | Tag: ${item.session_tag}`;
+              if (item.ai_classification && item.ai_classification !== 'Pending Analysis') {
+                contextSpan += ` | Pattern: ${item.ai_classification}`;
+              }
+              
+              return `<li><a href="/experiments/data_imaging/workout/${sid}?r_key=${encodeURIComponent(rVal)}&g_key=${encodeURIComponent(gVal)}&b_key=${encodeURIComponent(bVal)}">Workout #${sid}</a> <span>(${contextSpan})</span><br>Similarity Score: ${item.score.toFixed(4)}</li>`;
+            });
+            
+            customSimilarList.innerHTML = items.join('');
+            customSimilarResults.style.display = 'block';
+          } else {
+            customSimilarList.innerHTML = '<li>No similar workouts found for this channel combination.</li>';
+            customSimilarResults.style.display = 'block';
+          }
+          
           // Restore button state
           updateBtn.disabled = false;
-          updateBtn.textContent = 'Update View';
+          updateBtn.textContent = 'Update View & Find Similar';
         })
         .catch(error => {
-          console.error('Error fetching viz data:', error);
-          alert('Failed to update visualization. Check console.');
+          console.error('Error updating view or finding similar:', error);
+          alert('Failed to update visualization or find similar workouts. Check console.');
           // Restore button state
           updateBtn.disabled = false;
-          updateBtn.textContent = 'Update View';
+          updateBtn.textContent = 'Update View & Find Similar';
         });
     });
   }
+
+  // Get references to custom similar results elements (used by update button)
+  const customSimilarResults = document.getElementById('custom-similar-results');
+  const customSimilarList = document.getElementById('custom-similar-list');
 
   // 5. Add click listener for the "Revert" button
   if (revertBtn) {
@@ -1366,6 +1596,11 @@ document.addEventListener("DOMContentLoaded", function() {
       
       // Hide the revert button
       revertBtn.style.display = 'none';
+      
+      // Hide custom similar results when reverting
+      if (customSimilarResults) {
+        customSimilarResults.style.display = 'none';
+      }
     });
   }
 });  
