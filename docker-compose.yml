@@ -22,6 +22,7 @@ services:
       # Tell the Ray Client (api) where the Ray Server (ray-head) is.
       # "ray-head" is the service name, "10001" is the client port.
       - RAY_ADDRESS=ray://ray-head:10001
+      # Backblaze B2 Configuration - loaded from .env via env_file above
     command: >
       uvicorn main:app --host 0.0.0.0 --port 10000 --reload
       --ssl-keyfile=/app/localhost.key
@@ -56,9 +57,11 @@ services:
       # and code IS /app. This aligns with our volume mount.
       - RAY_RUNTIME_ENV_WORKING_DIR=/app
       - RAY_NAMESPACE=modular_labs
-      - AWS_ENDPOINT_URL=${B2_ENDPOINT_URL}
-      - AWS_ACCESS_KEY_ID=${B2_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${B2_SECRET_ACCESS_KEY}
+      # AWS/B2 credentials - loaded from .env via env_file above
+      # Mapping B2 env vars to AWS env vars for Ray compatibility
+      - AWS_ENDPOINT_URL=${B2_ENDPOINT_URL:-}
+      - AWS_ACCESS_KEY_ID=${B2_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${B2_SECRET_ACCESS_KEY:-}
     command: [
       "ray", "start", "--head",
       "--port=6379",

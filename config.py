@@ -38,7 +38,7 @@ if ADMIN_PASSWORD_DEFAULT == "password123":
 # Backblaze B2 Configuration
 try:
     from b2sdk.v2 import InMemoryAccountInfo, B2Api
-    from b2sdk.exception import B2Error, B2SimpleError
+    from b2sdk.v2.exception import B2Error, B2SimpleError
     B2SDK_AVAILABLE = True
 except ImportError:
     B2SDK_AVAILABLE = False
@@ -62,6 +62,17 @@ elif B2_ENABLED:
 else:
     logger.warning("Backblaze B2 integration DISABLED. Missing one or more B2_... env vars.")
     logger.warning("Dynamic experiment uploads via /api/upload-experiment will FAIL.")
+    # Diagnostic logging to help debug configuration issues
+    missing = []
+    if not B2_APPLICATION_KEY_ID:
+        missing.append("B2_APPLICATION_KEY_ID or B2_ACCESS_KEY_ID")
+    if not B2_APPLICATION_KEY:
+        missing.append("B2_APPLICATION_KEY or B2_SECRET_ACCESS_KEY")
+    if not B2_BUCKET_NAME:
+        missing.append("B2_BUCKET_NAME")
+    if not B2SDK_AVAILABLE:
+        missing.append("b2sdk library (install via: pip install b2sdk)")
+    logger.warning(f"Missing B2 configuration: {', '.join(missing) if missing else 'Unknown'}")
 
 # Optional Dependencies
 try:

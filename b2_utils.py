@@ -11,13 +11,16 @@ logger = logging.getLogger(__name__)
 
 def generate_presigned_download_url(b2_bucket, file_name: str, duration_seconds: int = 3600) -> str:
     """
-    Generates a secure, time-limited HTTPS download URL using native B2 SDK.
+    Generates a secure HTTPS download URL using native B2 SDK.
     B2 SDK always returns HTTPS URLs, avoiding mixed content warnings.
+    
+    Note: B2 presigned URLs don't expire like S3. The duration_seconds parameter
+    is kept for API compatibility but is ignored by the B2 SDK.
     
     Args:
         b2_bucket: B2 bucket instance from B2Api
         file_name: Object key in the bucket
-        duration_seconds: URL expiration time (default: 1 hour)
+        duration_seconds: URL expiration time (ignored - kept for API compatibility)
         
     Returns:
         HTTPS presigned download URL
@@ -27,7 +30,9 @@ def generate_presigned_download_url(b2_bucket, file_name: str, duration_seconds:
     
     try:
         # B2 SDK generates HTTPS URLs by default
-        url = b2_bucket.get_download_url(file_name, duration_seconds)
+        # Note: B2 SDK's get_download_url() only takes file_name, not duration_seconds
+        # B2 presigned URLs don't expire like S3 - they're permanent for authorized files
+        url = b2_bucket.get_download_url(file_name)
         
         # Verify it's HTTPS (B2 SDK should always return HTTPS, but be defensive)
         if not url.startswith('https://'):

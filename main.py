@@ -313,6 +313,50 @@ app = FastAPI(
 )
 app.router.redirect_slashes = True
 
+# Exception handler to ensure HTTPException returns JSON for API routes
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Ensure HTTPException returns JSON instead of HTML for API routes."""
+    # Check if this is an API route (starts with /admin/api or /api)
+    if request.url.path.startswith("/admin/api/") or request.url.path.startswith("/api/"):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail, "status": "error"}
+        )
+    # For non-API routes, use default HTML response
+    from fastapi.responses import HTMLResponse
+    from fastapi.templating import Jinja2Templates
+    templates = get_templates_from_request(request)
+    if templates:
+        return templates.TemplateResponse(
+            "error.html" if Path(TEMPLATES_DIR / "error.html").exists() else None,
+            {"request": request, "status_code": exc.status_code, "detail": exc.detail},
+            status_code=exc.status_code
+        )
+    # Fallback to JSON if no template
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail}
+    )
+
+# General exception handler for unhandled exceptions
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Catch all unhandled exceptions and return JSON for API routes."""
+    logger.error(f"Unhandled exception in {request.url.path}: {exc}", exc_info=True)
+    # Check if this is an API route
+    if request.url.path.startswith("/admin/api/") or request.url.path.startswith("/api/"):
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": str(exc) if not isinstance(exc, HTTPException) else exc.detail,
+                "status": "error",
+                "type": type(exc).__name__
+            }
+        )
+    # For non-API routes, re-raise to use default FastAPI handler
+    raise exc
+
 
 # ============================================================================
 # Middleware Setup
@@ -1584,6 +1628,133 @@ Same license as the original MDB-Gnome platform.
   return readme_content
 
 
+def _create_upload_ready_zip(
+  slug_id: str,
+  source_dir: Path,
+  experiment_path: Path
+) -> io.BytesIO:
+  """
+  Creates an upload-ready ZIP package for iterative development.
+  This zip can be:
+  1. Downloaded and edited locally
+  2. Tested locally (with modifications)
+  3. Re-uploaded via admin endpoint to wire up the experiment
+  
+  The zip contains only the experiment files needed for upload:
+  - manifest.json, actor.py, __init__.py (required)
+  - requirements.txt (optional)
+  - templates/, static/ directories (if present)
+  - Other experiment-specific files
+  """
+  logger.info(f"Creating upload-ready package for '{slug_id}'.")
+  zip_buffer = io.BytesIO()
+  
+  # Read experiment requirements if present
+  local_reqs_path = experiment_path / "requirements.txt"
+  requirements_content = ""
+  if local_reqs_path.is_file():
+    local_requirements = _parse_requirements_file_sync(local_reqs_path)
+    # Include all experiment requirements (they'll be merged with master on upload)
+    requirements_content = "\n".join(local_requirements)
+  
+  # Generate README with workflow instructions
+  experiment_name = slug_id.replace('-', ' ').title()
+  readme_content = f"""# Experiment Package: {slug_id}
+
+This package contains the experiment files ready for local development and re-upload.
+
+## Workflow
+
+### 1. Edit & Test Locally
+- Modify any files as needed (actor.py, __init__.py, templates/, static/, etc.)
+- Test your changes locally
+- All files in this zip can be modified
+
+### 2. Re-upload to Platform
+Once you're satisfied with your changes:
+
+1. **Admin Access Required**: Only admins can upload experiments
+2. **Navigate**: Go to Admin → Configure Experiment → Upload ZIP
+3. **Upload**: Select this modified zip file
+4. **Auto-wiring**: The platform will automatically:
+   - Extract files to the experiment directory
+   - Upload runtime zip to B2
+   - Update experiment configuration
+   - Reload and wire up the experiment
+
+## What's Included
+
+- `manifest.json` - Experiment metadata and configuration
+- `actor.py` - Ray actor with business logic
+- `__init__.py` - FastAPI router (thin client)
+- `requirements.txt` - Python dependencies (if present)
+- `templates/` - Jinja2 HTML templates (if present)
+- `static/` - Static assets (JS, CSS, images) (if present)
+- Other experiment-specific files
+
+## Requirements
+
+The experiment requires these base dependencies (installed on platform):
+- FastAPI
+- Ray >=2.9.0
+- Motor/PyMongo
+- Jinja2
+
+Your `requirements.txt` should only include experiment-specific dependencies
+not already in the master environment.
+
+## Notes
+
+- The platform automatically handles static file mounting and template serving
+- Ray actors are automatically started when the experiment is uploaded
+- Database collections are automatically scoped to the experiment slug
+- The experiment will be available at `/experiments/{slug_id}` after upload
+"""
+  
+  # Create ZIP archive
+  EXCLUSION_PATTERNS = [
+    "__pycache__", ".DS_Store", "*.pyc", "*.tmp", ".git", ".idea", ".vscode"
+  ]
+  
+  with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+    if experiment_path.is_dir():
+      logger.debug(f"Including experiment files from: {experiment_path}")
+      for folder_name, _, file_names in os.walk(experiment_path):
+        if Path(folder_name).name in EXCLUSION_PATTERNS:
+          continue
+        
+        for file_name in file_names:
+          if any(fnmatch.fnmatch(file_name, p) for p in EXCLUSION_PATTERNS):
+            continue
+          
+          file_path = Path(folder_name) / file_name
+          try:
+            # Files go directly at root (not under experiments/{slug}/)
+            arcname = str(file_path.relative_to(experiment_path))
+          except ValueError:
+            logger.error(f"Failed to get relative path for {file_path}")
+            continue
+          
+          # For HTML files, fix static paths (though they may need re-fixing on upload)
+          if file_path.suffix in (".html", ".htm"):
+            original_html = file_path.read_text(encoding="utf-8")
+            # Keep paths as-is or fix them - upload will handle it
+            zf.writestr(arcname, original_html)
+          else:
+            zf.write(file_path, arcname)
+    
+    # Add README
+    zf.writestr("README.md", readme_content)
+    
+    # Add requirements.txt if present (keep at root)
+    if requirements_content:
+      zf.writestr("requirements.txt", requirements_content)
+  
+  zip_buffer.seek(0)
+  logger.info(f"Upload-ready package created successfully for '{slug_id}'.")
+  return zip_buffer
+
+
 def _create_intelligent_export_zip(
   slug_id: str,
   source_dir: Path,
@@ -1826,7 +1997,7 @@ async def package_standalone_experiment(
         slug_id=slug_id,
         export_type="intelligent",
         user_email=user_email,
-        local_file_path=str(export_file_path.relative_to(BASE_DIR)) if 'export_file_path' in locals() else None,
+        local_file_path=str(export_file_path.relative_to(BASE_DIR)) if export_file_path is not None else None,
         file_size=file_size,
         b2_file_name=b2_file_name,
         invalidated=False,
@@ -1850,6 +2021,67 @@ async def package_standalone_experiment(
   except Exception as e:
     logger.error(f"Unexpected error packaging '{slug_id}': {e}", exc_info=True)
     raise HTTPException(500, "Unexpected server error during packaging.")
+
+
+@public_api_router.get("/package-upload-ready/{slug_id}", name="package_upload_ready")
+async def package_upload_ready_experiment(
+  request: Request,
+  slug_id: str,
+  user: Optional[Mapping[str, Any]] = Depends(get_current_user) # Allows unauthenticated access
+):
+  """
+  Export experiment as upload-ready ZIP for iterative development.
+  This creates a minimal zip containing only experiment files needed for upload.
+  Users can download, edit locally, test, and then re-upload via admin endpoint.
+  """
+  db: AsyncIOMotorDatabase = request.app.state.mongo_db
+
+  # 1. Check Experiment Configuration
+  config = await db.experiments_config.find_one({"slug": slug_id}, {"status": 1, "auth_required": 1})
+  if not config or config.get("status") != "active":
+    raise HTTPException(status_code=404, detail="Experiment not found or not active.")
+
+  auth_required = config.get("auth_required", False)
+
+  # 2. Enforce Authentication if required
+  if auth_required:
+    if not user:
+      current_path = quote(request.url.path)
+      login_url = request.url_for("login_get", next=current_path)
+      response = RedirectResponse(url=login_url, status_code=status.HTTP_302_FOUND)
+      return response
+
+  # 3. Create upload-ready zip
+  try:
+    experiment_path = BASE_DIR / "experiments" / slug_id
+    if not experiment_path.is_dir():
+      raise HTTPException(status_code=404, detail=f"Experiment directory not found: {slug_id}")
+    
+    zip_buffer = _create_upload_ready_zip(
+      slug_id=slug_id,
+      source_dir=BASE_DIR,
+      experiment_path=experiment_path
+    )
+    
+    user_email = user.get('email', 'Guest') if user else 'Guest'
+    file_name = f"{slug_id}_upload-ready_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    
+    logger.info(f"[{slug_id}] Upload-ready export created by {user_email}")
+    
+    # Return zip file directly for download
+    return Response(
+      content=zip_buffer.getvalue(),
+      media_type="application/zip",
+      headers={
+        "Content-Disposition": f'attachment; filename="{file_name}"',
+        "X-Export-Type": "upload-ready"
+      }
+    )
+  except HTTPException:
+    raise
+  except Exception as e:
+    logger.error(f"Error creating upload-ready export for '{slug_id}': {e}", exc_info=True)
+    raise HTTPException(500, f"Error creating export: {e}")
 
 
 @public_api_router.get("/package-docker/{slug_id}", name="package_docker")
@@ -1884,12 +2116,14 @@ async def package_docker_experiment(
 
   # 3. Perform Intelligent Packaging (Docker-enabled)
   try:
+    templates = get_templates_from_request(request)
     config_data, collections_data = await _dump_db_to_json(db, slug_id)
     zip_buffer = _create_intelligent_export_zip(
       slug_id=slug_id,
       source_dir=BASE_DIR,
       db_data=config_data,
-      db_collections=collections_data
+      db_collections=collections_data,
+      templates=templates
     )
 
     user_email = user.get('email', 'Guest') if user else 'Guest'
@@ -1933,7 +2167,7 @@ async def package_docker_experiment(
       slug_id=slug_id,
       export_type="intelligent",
       user_email=user_email,
-      local_file_path=str(export_file_path.relative_to(BASE_DIR)) if 'export_file_path' in locals() else None,
+      local_file_path=str(export_file_path.relative_to(BASE_DIR)) if export_file_path is not None else None,
       file_size=file_size,
       b2_file_name=b2_file_name,
       invalidated=False
@@ -2024,12 +2258,14 @@ async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any
   """
   db: AsyncIOMotorDatabase = request.app.state.mongo_db
   try:
+    templates = get_templates_from_request(request)
     config_data, collections_data = await _dump_db_to_json(db, slug_id)
     zip_buffer = _create_intelligent_export_zip(
       slug_id=slug_id,
       source_dir=BASE_DIR,
       db_data=config_data,
-      db_collections=collections_data
+      db_collections=collections_data,
+      templates=templates
     )
     
     user_email = user.get('email', 'Unknown')
@@ -2101,7 +2337,7 @@ async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any
         slug_id=slug_id,
         export_type="intelligent",
         user_email=user_email,
-        local_file_path=str(export_file_path.relative_to(BASE_DIR)) if 'export_file_path' in locals() else None,
+        local_file_path=str(export_file_path.relative_to(BASE_DIR)) if export_file_path is not None else None,
         file_size=file_size,
         b2_file_name=b2_file_name,
         invalidated=False,
@@ -2625,9 +2861,6 @@ async def upload_experiment_zip(
   logger.info(f"Admin '{admin_email}' initiated zip upload for '{slug_id}'.")
 
   b2_bucket = getattr(request.app.state, "b2_bucket", None)
-  if not B2_ENABLED or not b2_bucket:
-    logger.error(f"Cannot upload '{slug_id}': B2 not configured or no B2 bucket.")
-    raise HTTPException(501, "B2 not configured; upload impossible.")
 
   if file.content_type not in ("application/zip", "application/x-zip-compressed"):
     raise HTTPException(400, "Invalid file type; must be .zip.")
@@ -2670,23 +2903,44 @@ async def upload_experiment_zip(
 
   timestamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
   b2_object_key = f"{slug_id}/runtime-{timestamp}.zip"
-  try:
-    logger.info(f"[{slug_id}] Uploading runtime zip to B2 object '{b2_object_key}'...")
-    # Upload using B2 SDK (native client always uses HTTPS)
-    b2_bucket_instance = getattr(request.app.state, "b2_bucket", None)
-    if not b2_bucket_instance:
-      raise ValueError("B2 bucket not available")
-    # Offload to thread pool to avoid blocking event loop
-    await asyncio.to_thread(b2_bucket_instance.upload_bytes, zip_data, b2_object_key)
-    logger.info(f"[{slug_id}] B2 upload successful. Generating presigned URL...")
-    # B2 SDK always returns HTTPS URLs
-    b2_final_uri = _generate_presigned_download_url(b2_bucket_instance, b2_object_key)
-  except B2Error as e:
-    logger.error(f"[{slug_id}] B2 upload failed: {e}", exc_info=True)
-    raise HTTPException(500, f"Failed to upload runtime: {e}")
-  except Exception as e:
-    logger.error(f"[{slug_id}] B2 upload unknown error: {e}", exc_info=True)
-    raise HTTPException(500, f"Unexpected B2 upload error: {e}")
+  runtime_uri = None  # Will be set to either B2 URI or local file URL
+  using_b2 = False  # Track if we successfully used B2
+  
+  # Try to upload to B2 if enabled
+  if B2_ENABLED and b2_bucket:
+    try:
+      logger.info(f"[{slug_id}] Uploading runtime zip to B2 object '{b2_object_key}'...")
+      # Upload using B2 SDK (native client always uses HTTPS)
+      b2_bucket_instance = getattr(request.app.state, "b2_bucket", None)
+      if not b2_bucket_instance:
+        raise ValueError("B2 bucket not available")
+      # Offload to thread pool to avoid blocking event loop
+      await asyncio.to_thread(b2_bucket_instance.upload_bytes, zip_data, b2_object_key)
+      logger.info(f"[{slug_id}] B2 upload successful. Generating presigned URL...")
+      # B2 SDK always returns HTTPS URLs
+      runtime_uri = _generate_presigned_download_url(b2_bucket_instance, b2_object_key)
+      using_b2 = True
+      logger.info(f"[{slug_id}] Uploaded to B2 successfully.")
+    except Exception as e:
+      logger.error(f"[{slug_id}] B2 upload failed, falling back to local storage: {e}", exc_info=True)
+      # Fall through to local storage fallback
+      runtime_uri = None
+  
+  # Fallback to local storage if B2 is not enabled or upload failed
+  if not runtime_uri:
+    try:
+      file_name = f"{slug_id}_runtime-{timestamp}.zip"
+      logger.info(f"[{slug_id}] Saving runtime zip to local storage: {file_name}")
+      # Save zip file locally
+      zip_buffer = io.BytesIO(zip_data)
+      await _save_export_locally(zip_buffer, file_name)
+      # Generate URL to serve the file
+      relative_url = str(request.url_for("exports", filename=file_name))
+      runtime_uri = _build_absolute_https_url(request, relative_url)
+      logger.info(f"[{slug_id}] Saved runtime zip locally. Using URL: {runtime_uri}")
+    except Exception as e:
+      logger.error(f"[{slug_id}] Failed to save runtime zip locally: {e}", exc_info=True)
+      raise HTTPException(500, f"Failed to save runtime zip: {e}")
 
   try:
     if experiment_path.exists():
@@ -2697,6 +2951,74 @@ async def upload_experiment_zip(
     with io.BytesIO(zip_data) as buff:
       with zipfile.ZipFile(buff, "r") as zip_ref:
         zip_ref.extractall(experiment_path)
+    
+    # Fix nested directory structures (common when zip files have wrapper directories)
+    # Look for __init__.py to find the actual experiment directory
+    init_py_files = list(experiment_path.rglob("__init__.py"))
+    # Filter out __MACOSX and __pycache__ directories
+    init_py_files = [f for f in init_py_files if "__MACOSX" not in str(f) and "__pycache__" not in str(f)]
+    
+    if init_py_files:
+      # Find the most nested __init__.py that's part of the experiment (has actor.py nearby)
+      candidate_dirs = []
+      for init_py in init_py_files:
+        init_dir = init_py.parent
+        actor_py = init_dir / "actor.py"
+        if actor_py.exists():
+          candidate_dirs.append(init_dir)
+      
+      if candidate_dirs:
+        # Use the deepest directory (longest path) as the experiment root
+        experiment_root = max(candidate_dirs, key=lambda p: len(str(p).split(os.sep)))
+        
+        # If the experiment_root is not the experiment_path itself, we need to flatten
+        # Check if experiment_root is a subdirectory of experiment_path (more compatible than is_relative_to)
+        try:
+          experiment_root_relative = experiment_root.relative_to(experiment_path)
+        except ValueError:
+          # experiment_root is not a subdirectory of experiment_path, skip flattening
+          experiment_root_relative = None
+        
+        if experiment_root != experiment_path and experiment_root_relative is not None:
+          logger.info(f"[{slug_id}] Detected nested structure. Flattening from '{experiment_root_relative}' to top level...")
+          # Create a temporary directory for the flattening operation
+          temp_dir = experiment_path.parent / f"{slug_id}_temp_flatten"
+          try:
+            # Move contents of experiment_root to temp_dir first
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            for item in experiment_root.iterdir():
+              shutil.move(str(item), str(temp_dir / item.name))
+            
+            # Remove the old nested structure
+            shutil.rmtree(experiment_path)
+            experiment_path.mkdir(parents=True)
+            
+            # Move contents from temp_dir to experiment_path
+            for item in temp_dir.iterdir():
+              shutil.move(str(item), str(experiment_path / item.name))
+            
+            # Remove temp_dir
+            shutil.rmtree(temp_dir)
+            logger.info(f"[{slug_id}] Successfully flattened nested directory structure.")
+            
+            # Clear Python's module cache for this experiment to ensure fresh imports
+            module_name = f"experiments.{slug_id.replace('-', '_')}"
+            if module_name in sys.modules:
+              del sys.modules[module_name]
+            # Also clear any nested module imports (e.g., experiments.click_tracker_v2.actor)
+            modules_to_remove = [m for m in sys.modules.keys() if m.startswith(module_name + ".")]
+            for m in modules_to_remove:
+              del sys.modules[m]
+            logger.info(f"[{slug_id}] Cleared module cache for '{module_name}'.")
+          except Exception as e:
+            logger.error(f"[{slug_id}] Error during flattening: {e}", exc_info=True)
+            # Try to clean up
+            if temp_dir.exists():
+              try:
+                shutil.rmtree(temp_dir)
+              except:
+                pass
+            raise HTTPException(500, f"Failed to flatten nested directory structure: {e}")
   except Exception as e:
     logger.error(f"[{slug_id}] Extraction error: {e}", exc_info=True)
     raise HTTPException(500, f"Zip extraction error: {e}")
@@ -2706,11 +3028,14 @@ async def upload_experiment_zip(
     config_data = {
       **parsed_manifest,
       "slug": slug_id,
-      "runtime_s3_uri": b2_final_uri,
+      "runtime_s3_uri": runtime_uri,
       "runtime_pip_deps": parsed_reqs,
     }
     await db.experiments_config.update_one({"slug": slug_id}, {"$set": config_data}, upsert=True)
-    logger.info(f"[{slug_id}] Updated DB config with new B2 runtime.")
+    if using_b2:
+      logger.info(f"[{slug_id}] Updated DB config with new B2 runtime.")
+    else:
+      logger.info(f"[{slug_id}] Updated DB config with local storage runtime.")
     
     # Invalidate cache after update since config has changed
     if hasattr(request.state, "experiment_config_cache"):
@@ -2726,17 +3051,37 @@ async def upload_experiment_zip(
     logger.error(f"[{slug_id}] DB config update error: {e}", exc_info=True)
     raise HTTPException(500, f"Failed saving config: {e}")
 
+  # Register the route immediately using the same discovery logic
+  # This ensures consistency - same code path as startup/discovery
   try:
-    logger.info(f"[{slug_id}] Reloading after zip upload...")
-    await reload_active_experiments(request.app)
-    return JSONResponse({
-      "status": "success",
-      "message": f"Successfully uploaded and reloaded '{slug_id}'. Experiment is now active.",
-      "slug_id": slug_id
-    })
+    # Use the same _register_experiments logic, but only for this one experiment
+    # is_reload=False to avoid clearing existing experiments
+    await _register_experiments(request.app, [config_data], is_reload=False)
+    logger.info(f"[{slug_id}] Route registered immediately using discovery logic.")
   except Exception as e:
-    logger.error(f"[{slug_id}] Reload failure: {e}", exc_info=True)
-    raise HTTPException(500, f"Reload failed: {e}")
+    logger.warning(f"[{slug_id}] Failed to register route immediately: {e}. Will retry in background reload.", exc_info=True)
+  
+  # Reload experiments in background to avoid blocking the upload response
+  # The reload can take a while (creating indexes, starting actors, etc.)
+  async def _reload_after_upload():
+    """Background task to reload experiments after upload."""
+    try:
+      logger.info(f"[{slug_id}] Starting background reload after zip upload...")
+      await reload_active_experiments(request.app)
+      logger.info(f"[{slug_id}] Background reload completed successfully.")
+    except Exception as e:
+      logger.error(f"[{slug_id}] Background reload failure: {e}", exc_info=True)
+  
+  # Start reload in background (non-blocking)
+  asyncio.create_task(_reload_after_upload())
+  
+  # Return success immediately - route is registered, full reload will happen in background
+  return JSONResponse({
+    "status": "success",
+    "message": f"Successfully uploaded '{slug_id}'. Experiment is active and accessible.",
+    "slug_id": slug_id,
+    "reload_status": "background"
+  })
 
 
 app.include_router(admin_router)
@@ -3114,8 +3459,24 @@ async def root(request: Request, user: Optional[Mapping[str, Any]] = Depends(get
       logger.error("Template engine not available for root route")
       raise HTTPException(500, "Template engine not available.")
     
-    experiments = getattr(request.app.state, "experiments", {})
-    logger.debug(f"Root route accessed. Found {len(experiments)} registered experiment(s).")
+    # Read directly from database to always show fresh data (including newly uploaded experiments)
+    # This ensures consistency with the admin dashboard
+    db: AsyncIOMotorDatabase = request.app.state.mongo_db
+    active_cfgs = await db.experiments_config.find({"status": "active"}).limit(500).to_list(None)
+    
+    # Convert configs to the same format as app.state.experiments
+    experiments = {}
+    for cfg in active_cfgs:
+      slug = cfg.get("slug")
+      if not slug:
+        continue
+      # Use the same format as _register_experiments uses
+      prefix = f"/experiments/{slug}"
+      cfg_copy = dict(cfg)
+      cfg_copy["url"] = prefix
+      experiments[slug] = cfg_copy
+    
+    logger.debug(f"Root route accessed. Found {len(experiments)} active experiment(s) from DB.")
     
     # Convert relative experiment URLs to absolute HTTPS URLs
     experiments_with_https_urls = {}
