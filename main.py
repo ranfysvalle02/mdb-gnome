@@ -1095,6 +1095,15 @@ def _create_intelligent_docker_compose(slug_id: str) -> str:
   Generates an intelligent docker-compose.yml with MongoDB Atlas Local
   and optional Ray service for distributed computing.
   """
+  # Sanitize slug_id for Docker container names (can't start with underscore)
+  # Remove leading underscores and replace remaining underscores with hyphens
+  sanitized_slug = slug_id.lstrip("_").replace("_", "-")
+  # Ensure it doesn't start with a hyphen or number (Docker requirement)
+  if sanitized_slug and sanitized_slug[0].isdigit():
+    sanitized_slug = f"scaffold-{sanitized_slug}"
+  if not sanitized_slug or sanitized_slug.startswith("-"):
+    sanitized_slug = f"scaffold-{slug_id.lstrip('_').replace('_', '-')}" or "scaffold-template"
+  
   docker_compose_content = f"""services:
   # --------------------------------------------------------------------------
   # FastAPI Application (Standalone Experiment)
@@ -1103,7 +1112,7 @@ def _create_intelligent_docker_compose(slug_id: str) -> str:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: {slug_id}-app
+    container_name: {sanitized_slug}-app
     platform: linux/arm64
     ports:
       - "8000:8000"
@@ -1127,7 +1136,7 @@ def _create_intelligent_docker_compose(slug_id: str) -> str:
   # --------------------------------------------------------------------------
   mongo:
     image: mongodb/mongodb-atlas-local:latest
-    container_name: {slug_id}-mongo
+    container_name: {sanitized_slug}-mongo
     platform: linux/arm64
     ports:
       - "27017:27017"
@@ -1148,7 +1157,7 @@ def _create_intelligent_docker_compose(slug_id: str) -> str:
   #   build:
   #     context: .
   #     dockerfile: Dockerfile.ray
-  #   container_name: {slug_id}-ray-head
+  #   container_name: {sanitized_slug}-ray-head
   #   platform: linux/arm64
   #   ports:
   #     - "10001:10001"  # Ray client server port
@@ -1158,7 +1167,7 @@ def _create_intelligent_docker_compose(slug_id: str) -> str:
   #   environment:
   #     - RAY_ENABLE_RUNTIME_ENV=1
   #     - RAY_RUNTIME_ENV_WORKING_DIR=/app
-  #     - RAY_NAMESPACE=experiment_{slug_id}
+  #     - RAY_NAMESPACE=experiment_{sanitized_slug}
   #   command: [
   #     "ray", "start", "--head",
   #     "--port=6379",
@@ -1841,34 +1850,64 @@ async def generate_scaffold(
   user: Optional[Mapping[str, Any]] = Depends(get_current_user) # Allows unauthenticated access
 ):
   """
-  Generate a standalone export of the 'hello_ray' experiment as a scaffold template.
-  This endpoint is specifically designed to generate a scaffold/boilerplate export of hello_ray.
+  Generate a standalone export of the scaffold template experiment.
+  This endpoint uses a dedicated static scaffold template that is independent of any real experiment.
   """
   db: AsyncIOMotorDatabase = request.app.state.mongo_db
-  slug_id = "hello_ray"  # Hardcoded to hello_ray experiment
+  scaffold_template_slug = "_scaffold_template"  # Dedicated scaffold template (excluded from normal discovery)
   
-  # 1. Check Experiment Configuration
-  config = await db.experiments_config.find_one({"slug": slug_id}, {"status": 1, "auth_required": 1})
-  if not config or config.get("status") != "active":
-    raise HTTPException(status_code=404, detail=f"Experiment '{slug_id}' not found or not active.")
+  # 1. Verify scaffold template directory exists
+  scaffold_template_path = EXPERIMENTS_DIR / scaffold_template_slug
+  if not scaffold_template_path.is_dir():
+    raise HTTPException(
+      status_code=404, 
+      detail=f"Scaffold template directory '{scaffold_template_slug}' not found at {scaffold_template_path}."
+    )
   
-  auth_required = config.get("auth_required", False)
-  
-  # 2. Enforce Authentication if required
-  if auth_required:
-    if not user:
-      # If auth is required and no user is logged in, redirect to login
-      current_path = quote(request.url.path)
-      login_url = request.url_for("login_get", next=current_path)
-      response = RedirectResponse(url=login_url, status_code=status.HTTP_302_FOUND)
-      return response
+  # 2. For scaffold template, we don't need DB config - use defaults
+  # The scaffold template is not a real experiment, so it won't have DB config
+  auth_required = False  # Scaffold template is always public
   
   # 3. Perform Intelligent Packaging
   try:
     templates = get_templates_from_request(request)
-    config_data, collections_data = await _dump_db_to_json(db, slug_id)
+    
+    # For scaffold template, create default config data (no DB needed)
+    # Load manifest.json from scaffold template if it exists
+    scaffold_manifest_path = scaffold_template_path / "manifest.json"
+    if scaffold_manifest_path.is_file():
+      try:
+        manifest_data = json.loads(scaffold_manifest_path.read_text(encoding="utf-8"))
+        config_data = {
+          "name": manifest_data.get("name", "Scaffold Template"),
+          "description": manifest_data.get("description", "A scaffold template for creating new experiments."),
+          "status": "draft",
+          "auth_required": False,
+          "data_scope": manifest_data.get("data_scope", ["self"]),
+        }
+      except Exception as e:
+        logger.warning(f"Failed to read scaffold manifest, using defaults: {e}")
+        config_data = {
+          "name": "Scaffold Template",
+          "description": "A scaffold template for creating new experiments.",
+          "status": "draft",
+          "auth_required": False,
+          "data_scope": ["self"],
+        }
+    else:
+      config_data = {
+        "name": "Scaffold Template",
+        "description": "A scaffold template for creating new experiments.",
+        "status": "draft",
+        "auth_required": False,
+        "data_scope": ["self"],
+      }
+    
+    # Scaffold template has no database collections
+    collections_data = {}
+    
     zip_buffer = _create_intelligent_export_zip(
-      slug_id=slug_id,
+      slug_id=scaffold_template_slug,
       source_dir=BASE_DIR,
       db_data=config_data,
       db_collections=collections_data,
@@ -1876,14 +1915,14 @@ async def generate_scaffold(
     )
     
     user_email = user.get('email', 'Guest') if user else 'Guest'
-    file_name = f"{slug_id}_scaffold_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    file_name = f"scaffold_template_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     file_size = zip_buffer.getbuffer().nbytes
     
     # Calculate checksum for deduplication
     checksum = _calculate_export_checksum(zip_buffer)
     
     # Check for existing export with same checksum
-    existing_export = await _find_existing_export_by_checksum(db, checksum, slug_id)
+    existing_export = await _find_existing_export_by_checksum(db, checksum, scaffold_template_slug)
     
     # Upload to B2 if enabled, otherwise save locally
     b2_file_name = None
@@ -1908,27 +1947,27 @@ async def generate_scaffold(
         try:
           # Upload to B2
           b2_file_name = f"exports/{file_name}"
-          logger.info(f"[{slug_id}] Uploading scaffold export to B2: {b2_file_name}")
+          logger.info(f"[{scaffold_template_slug}] Uploading scaffold export to B2: {b2_file_name}")
           await _upload_export_to_b2(b2_bucket, zip_buffer, b2_file_name)
           
           # Generate presigned download URL from B2
           download_url = _generate_presigned_download_url(b2_bucket, b2_file_name, duration_seconds=86400)  # 24 hours
-          logger.info(f"[{slug_id}] Scaffold export uploaded to B2. Generated presigned URL.")
+          logger.info(f"[{scaffold_template_slug}] Scaffold export uploaded to B2. Generated presigned URL.")
           
           # Clean up any local files after successful B2 upload
           local_file = EXPORTS_TEMP_DIR / file_name
           if local_file.exists():
             await _cleanup_local_export_file(local_file)
         except Exception as e:
-          logger.error(f"[{slug_id}] B2 upload failed, falling back to local storage: {e}", exc_info=True)
+          logger.error(f"[{scaffold_template_slug}] B2 upload failed, falling back to local storage: {e}", exc_info=True)
           # Fallback to local storage
           export_file_path = await _save_export_locally(zip_buffer, file_name)
           relative_url = str(request.url_for("exports", filename=file_name))
           download_url = _build_absolute_https_url(request, relative_url)
-          logger.info(f"[{slug_id}] Scaffold export saved locally as fallback.")
+          logger.info(f"[{scaffold_template_slug}] Scaffold export saved locally as fallback.")
       else:
         # Save to local temp directory (fallback if B2 not enabled)
-        logger.info(f"[{slug_id}] B2 not enabled, saving scaffold export locally: {file_name}")
+        logger.info(f"[{scaffold_template_slug}] B2 not enabled, saving scaffold export locally: {file_name}")
         export_file_path = await _save_export_locally(zip_buffer, file_name)
         relative_url = str(request.url_for("exports", filename=file_name))
         download_url = _build_absolute_https_url(request, relative_url)
@@ -1938,7 +1977,7 @@ async def generate_scaffold(
     if not existing_export:
       export_log_id = await _log_export(
         db=db,
-        slug_id=slug_id,
+        slug_id=scaffold_template_slug,
         export_type="scaffold",
         user_email=user_email,
         local_file_path=str(export_file_path.relative_to(BASE_DIR)) if export_file_path else None,
@@ -1948,9 +1987,9 @@ async def generate_scaffold(
         checksum=checksum
       )
     else:
-      logger.info(f"[{slug_id}] Reused existing export, skipping duplicate log entry")
+      logger.info(f"[{scaffold_template_slug}] Reused existing export, skipping duplicate log entry")
     
-    logger.info(f"[{slug_id}] Scaffold export created successfully. Download URL generated.")
+    logger.info(f"[{scaffold_template_slug}] Scaffold export created successfully. Download URL generated.")
     # Return JSON with download URL
     return JSONResponse({
       "status": "success",
@@ -1958,13 +1997,13 @@ async def generate_scaffold(
       "filename": file_name,
       "export_id": str(export_log_id) if export_log_id else None,
       "message": "Scaffold export ready for download",
-      "experiment": slug_id
+      "experiment": scaffold_template_slug
     })
   except ValueError as e:
-    logger.error(f"Error generating scaffold for '{slug_id}': {e}")
+    logger.error(f"Error generating scaffold for '{scaffold_template_slug}': {e}")
     raise HTTPException(status_code=404, detail=str(e))
   except Exception as e:
-    logger.error(f"Unexpected error generating scaffold for '{slug_id}': {e}", exc_info=True)
+    logger.error(f"Unexpected error generating scaffold for '{scaffold_template_slug}': {e}", exc_info=True)
     raise HTTPException(500, "Unexpected server error during scaffold generation.")
 
 
