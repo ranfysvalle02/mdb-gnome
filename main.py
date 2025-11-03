@@ -75,6 +75,7 @@ from fastapi.responses import (
   FileResponse,
   Response as FastAPIResponse,
   JSONResponse,
+  StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -147,7 +148,7 @@ from b2_utils import (
 from lifespan import lifespan, get_templates
 
 # Manifest validation
-from manifest_schema import validate_manifest, validate_managed_indexes
+from manifest_schema import validate_manifest, validate_manifest_with_db, validate_managed_indexes, validate_developer_id
 
 # Database initialization and seeding
 from database import (
@@ -160,6 +161,10 @@ from database import (
 from index_management import (
     normalize_json_def as _normalize_json_def,
     run_index_creation_for_collection as _run_index_creation_for_collection,
+)
+from role_management import (
+    assign_role_to_user,
+    remove_role_from_user,
 )
 
 # Export helpers
@@ -198,8 +203,10 @@ try:
     get_current_user,
     get_current_user_or_redirect,
     require_admin,
+    require_admin_or_developer,
     get_scoped_db,
     get_experiment_config,
+    get_authz_provider,
   )
   # ScopedMongoWrapper is imported above from async_mongo_wrapper
 except ImportError as e:
@@ -208,7 +215,7 @@ except ImportError as e:
 
 # Pluggable Authorization imports
 try:
-  from authz_provider import AuthorizationProvider
+  from authz_provider import AuthorizationProvider, CasbinAdapter
   from authz_factory import create_authz_provider
 except ImportError as e:
   logging.critical(f" CRITICAL ERROR: Failed to import authorization components: {e}")
@@ -2184,24 +2191,70 @@ async def invalidate_export(
 
 
 @admin_router.get("/", response_class=HTMLResponse, name="admin_dashboard")
-async def admin_dashboard(request: Request, user: Dict[str, Any] = Depends(require_admin), message: Optional[str] = None):
+async def admin_dashboard(
+  request: Request, 
+  user: Dict[str, Any] = Depends(require_admin), 
+  message: Optional[str] = None,
+  search: Optional[str] = Query(None),
+  owner: Optional[str] = Query(None),
+  status: Optional[str] = Query(None),
+):
+  """
+  Admin dashboard - shows ALL experiments with search/filter capabilities.
+  Admins can view everyone's experiments.
+  """
   templates = get_templates_from_request(request)
   if not templates:
     raise HTTPException(500, "Template engine not available.")
   db: AsyncIOMotorDatabase = request.app.state.mongo_db
   error_message: Optional[str] = None
 
-  # Fetch configs based on user role (admins see all, developers see own, demo see all readonly)
+  # Admin sees ALL experiments - fetch directly from database
   try:
-    user_experiments = await get_user_experiments(request, user)
+    # Build query filter for search/filter
+    query_filter: Dict[str, Any] = {}
+    
+    if owner:
+      query_filter["owner_email"] = owner
+    
+    if status:
+      query_filter["status"] = status
+    
+    # Fetch ALL experiments (no limit for admin)
+    all_experiments = await db.experiments_config.find(query_filter).limit(1000).to_list(length=None)
+    
+    # Apply text search if provided
+    if search:
+      search_lower = search.lower()
+      all_experiments = [
+        exp for exp in all_experiments
+        if (
+          search_lower in exp.get("slug", "").lower() or
+          search_lower in exp.get("name", "").lower() or
+          search_lower in exp.get("description", "").lower() or
+          search_lower in exp.get("owner_email", "").lower()
+        )
+      ]
+    
+    user_experiments = all_experiments
   except Exception as e:
     error_message = f"Error fetching experiment configs from DB: {e}"
     logger.error(error_message, exc_info=True)
     user_experiments = []
   
+  # Get unique owners for filter dropdown
+  try:
+    owners_aggregation = await db.experiments_config.aggregate([
+      {"$group": {"_id": "$owner_email"}},
+      {"$sort": {"_id": 1}}
+    ]).to_list(length=None)
+    unique_owners = [item["_id"] for item in owners_aggregation if item.get("_id")]
+  except Exception as e:
+    logger.warning(f"Error fetching owners: {e}", exc_info=True)
+    unique_owners = []
+  
   # Fetch export counts in parallel (independent query)
   async def fetch_configs():
-    # Already filtered by get_user_experiments
     return user_experiments
   
   async def fetch_export_counts():
@@ -2259,6 +2312,10 @@ async def admin_dashboard(request: Request, user: Dict[str, Any] = Depends(requi
     "message": message,
     "error_message": error_message,
     "current_user": user,
+    "search": search,
+    "owner": owner,
+    "status": status,
+    "unique_owners": unique_owners,
   })
 
 
@@ -2293,7 +2350,36 @@ async def save_manifest(
       raise ValueError("Manifest must be a JSON object.")
 
     # Validate manifest against schema
-    is_valid, validation_error, error_paths = validate_manifest(new_manifest_data)
+    async def check_developer_exists(dev_email: str) -> bool:
+      """Check if developer exists and has developer role."""
+      if not dev_email:
+        return False
+      try:
+        # Check if user exists
+        user_doc = await db.users.find_one({"email": dev_email}, {"_id": 1})
+        if not user_doc:
+          return False
+        
+        # Check if user has developer role
+        authz: AuthorizationProvider = await get_authz_provider(request)
+        if isinstance(authz, CasbinAdapter) and hasattr(authz, "_enforcer"):
+          try:
+            has_role = await asyncio.to_thread(
+              authz._enforcer.has_role_for_user, dev_email, "developer"
+            )
+            return has_role
+          except Exception:
+            return False
+        return False
+      except Exception as e:
+        logger.error(f"Error checking developer '{dev_email}': {e}", exc_info=True)
+        return False
+    
+    # Validate manifest with developer_id check
+    is_valid, validation_error, error_paths = await validate_manifest_with_db(
+      new_manifest_data,
+      check_developer_exists
+    )
     if not is_valid:
       error_msg = f"Manifest validation failed: {validation_error}"
       if error_paths:
@@ -2312,6 +2398,12 @@ async def save_manifest(
     old_config = await get_experiment_config(request, slug_id)
     old_status = old_config.get("status", "draft") if old_config else "draft"
     new_status = new_manifest_data.get("status", "draft")
+
+    # Map developer_id to owner_email if present
+    if "developer_id" in new_manifest_data:
+      dev_id = new_manifest_data.pop("developer_id")
+      new_manifest_data["owner_email"] = dev_id
+      logger.info(f"Mapped developer_id '{dev_id}' to owner_email for experiment '{slug_id}'")
 
     if old_config and old_config.get("runtime_s3_uri"):
       config_data = old_config.copy()
@@ -2362,14 +2454,36 @@ async def reload_experiment(request: Request, slug_id: str, user: Dict[str, Any]
     raise HTTPException(500, f"Reload failed: {e}")
 
 
-@admin_router.delete("/api/delete-experiment/{slug_id}", response_class=JSONResponse)
-async def delete_experiment(
+@admin_router.delete("/api/delete-experiment/{slug_id}", response_class=JSONResponse, name="admin_delete_experiment")
+async def admin_delete_experiment(
   request: Request,
   slug_id: str,
   body: Dict[str, str] = Body(...),
   user: Dict[str, Any] = Depends(require_experiment_ownership_or_admin_dep)
 ):
+  """Admin delete endpoint - delegates to shared delete logic."""
+  return await delete_experiment_impl(request, slug_id, body, user)
+
+
+@app.delete("/api/delete-experiment/{slug_id}", response_class=JSONResponse, name="developer_delete_experiment")
+async def developer_delete_experiment(
+  request: Request,
+  slug_id: str,
+  body: Dict[str, str] = Body(...),
+  user: Dict[str, Any] = Depends(require_experiment_ownership_or_admin_dep)
+):
+  """Developer delete endpoint - allows developers to delete their own experiments."""
+  return await delete_experiment_impl(request, slug_id, body, user)
+
+
+async def delete_experiment_impl(
+  request: Request,
+  slug_id: str,
+  body: Dict[str, str],
+  user: Dict[str, Any]
+):
   """
+  Shared delete experiment logic.
   Destructively delete an experiment and all associated data.
   Requires confirmation string: 'sudo rm -rf experiments/<slug>'
   """
@@ -2882,11 +2996,20 @@ async def detect_slug_from_zip(
     }, status_code=500)
 
 
-@admin_router.post("/api/upload-experiment", response_class=JSONResponse)
-async def upload_experiment_zip(
+@admin_router.post("/api/upload-experiment", response_class=JSONResponse, name="admin_upload_experiment")
+async def admin_upload_experiment(
   request: Request,
   file: UploadFile = File(...),
-  user: Dict[str, Any] = Depends(require_admin)
+  user: Dict[str, Any] = Depends(require_admin_or_developer)
+):
+  """Admin upload endpoint - delegates to shared upload logic."""
+  return await upload_experiment_zip(request, file, user)
+
+
+async def upload_experiment_zip(
+  request: Request,
+  file: UploadFile,
+  user: Dict[str, Any]
 ):
   """
   Upload an experiment ZIP file. Slug is automatically detected from ZIP structure.
@@ -2945,7 +3068,50 @@ async def upload_experiment_zip(
     if not slug_id:
       raise HTTPException(400, "ZIP must follow either format: (1) Upload-ready format: root-level files (manifest.json, actor.py, __init__.py), or (2) Standalone export format: experiments/{slug}/ with manifest.json, actor.py, and __init__.py.")
     
-    logger.info(f"Admin '{admin_email}' initiated zip upload. Auto-detected slug: '{slug_id}'")
+    logger.info(f"User '{admin_email}' initiated zip upload. Auto-detected slug: '{slug_id}'")
+    
+    # CRITICAL: Check if experiment already exists and validate ownership/protection
+    db: AsyncIOMotorDatabase = request.app.state.mongo_db
+    existing_config = await db.experiments_config.find_one({"slug": slug_id}, {"owner_email": 1, "slug": 1})
+    
+    # Check if user is admin (store for later use in ownership assignment)
+    authz: AuthorizationProvider = await get_authz_provider(request)
+    user_email = user.get("email")
+    is_admin = await authz.check(
+      subject=user_email,
+      resource="admin_panel",
+      action="access",
+      user_object=dict(user)
+    )
+    
+    # Store is_admin in request state for use later in ownership assignment
+    request.state.uploader_is_admin = is_admin
+    
+    if existing_config:
+      owner_email = existing_config.get("owner_email")
+      
+      # If experiment has no owner_email, it's admin-managed (legacy/protected)
+      if not owner_email:
+        if not is_admin:
+          raise HTTPException(
+            403,
+            detail=f"Experiment '{slug_id}' is admin-managed and cannot be overwritten by developers. Please use a different slug or contact an administrator."
+          )
+        logger.info(f"[{slug_id}] Admin '{admin_email}' overwriting admin-managed experiment")
+      else:
+        # Experiment has an owner - check if user owns it or is admin
+        if owner_email != user_email and not is_admin:
+          raise HTTPException(
+            403,
+            detail=f"Experiment '{slug_id}' is owned by '{owner_email}' and cannot be overwritten. Please use a different slug or contact the owner."
+          )
+        elif owner_email == user_email:
+          logger.info(f"[{slug_id}] Developer '{admin_email}' overwriting their own experiment")
+        else:
+          logger.info(f"[{slug_id}] Admin '{admin_email}' overwriting experiment owned by '{owner_email}'")
+    else:
+      # New experiment - OK to create
+      logger.info(f"[{slug_id}] Creating new experiment (uploaded by '{admin_email}')")
   except HTTPException:
     raise
   except Exception as e:
@@ -3035,9 +3201,38 @@ async def upload_experiment_zip(
         with zip_ref.open(manifest_path_in_zip) as mf:
           parsed_manifest = json.load(mf)
         
-        # Validate manifest before processing
-        from manifest_schema import validate_manifest, validate_managed_indexes
-        is_valid, validation_error, error_paths = validate_manifest(parsed_manifest)
+        # Validate manifest before processing (with developer_id check)
+        from manifest_schema import validate_manifest_with_db, validate_managed_indexes
+        # Check developer_id exists in system if present
+        async def check_developer_exists_upload(dev_email: str) -> bool:
+          """Check if developer exists and has developer role."""
+          if not dev_email:
+            return False
+          try:
+            # Check if user exists
+            user_doc = await db.users.find_one({"email": dev_email}, {"_id": 1})
+            if not user_doc:
+              return False
+            
+            # Check if user has developer role
+            authz: AuthorizationProvider = await get_authz_provider(request)
+            if isinstance(authz, CasbinAdapter) and hasattr(authz, "_enforcer"):
+              try:
+                has_role = await asyncio.to_thread(
+                  authz._enforcer.has_role_for_user, dev_email, "developer"
+                )
+                return has_role
+              except Exception:
+                return False
+            return False
+          except Exception as e:
+            logger.error(f"Error checking developer '{dev_email}': {e}", exc_info=True)
+            return False
+        
+        is_valid, validation_error, error_paths = await validate_manifest_with_db(
+          parsed_manifest,
+          check_developer_exists_upload
+        )
         if not is_valid:
           error_path_str = f" (errors in: {', '.join(error_paths[:3])})" if error_paths else ""
           logger.error(f"[{slug_id}] ❌ Upload BLOCKED: Manifest validation failed: {validation_error}{error_path_str}")
@@ -3055,6 +3250,24 @@ async def upload_experiment_zip(
               400,
               detail=f"Index validation failed: {index_error}. Please fix managed_indexes in manifest.json and try again."
             )
+        
+        # AUTOMATICALLY INJECT developer_id for developers (after conflict checks and validation)
+        # Conflicts have been checked above, so it's safe to inject
+        uploader_is_admin = getattr(request.state, "uploader_is_admin", False)
+        user_email = user.get("email")
+        
+        if not uploader_is_admin and user_email:
+          # Developer upload - automatically inject developer_id if not present or mismatched
+          existing_dev_id = parsed_manifest.get("developer_id")
+          if not existing_dev_id or existing_dev_id != user_email:
+            if existing_dev_id and existing_dev_id != user_email:
+              # Manifest has a different developer_id - this should have been caught in validation
+              # But if it passed validation, it means that developer exists, so allow override
+              logger.warning(f"[{slug_id}] Manifest has developer_id '{existing_dev_id}' but uploader is '{user_email}'. Overriding with uploader's email.")
+            parsed_manifest["developer_id"] = user_email
+            logger.info(f"[{slug_id}] ✅ Auto-injected developer_id '{user_email}' into manifest")
+          else:
+            logger.debug(f"[{slug_id}] Manifest already has matching developer_id '{user_email}'")
 
         # Find requirements.txt (could be at root or in experiments/{slug}/)
         reqs_path_in_zip = None
@@ -3312,6 +3525,18 @@ async def upload_experiment_zip(
             logger.error(f"[{slug_id}] Unexpected error extracting {relative_path}: {e}", exc_info=True)
             continue
     
+    # Write back the modified manifest.json with injected developer_id (if modified)
+    # This ensures the extracted manifest.json includes the developer_id we injected
+    manifest_path = experiment_path / "manifest.json"
+    if manifest_path.exists():
+      try:
+        # Write the modified parsed_manifest back to disk
+        with open(manifest_path, "w", encoding="utf-8") as mf:
+          json.dump(parsed_manifest, mf, indent=2, ensure_ascii=False)
+        logger.info(f"[{slug_id}] ✅ Updated manifest.json with injected developer_id")
+      except Exception as e:
+        logger.warning(f"[{slug_id}] Failed to write updated manifest.json: {e}. Continuing...")
+    
     # Verify extraction was successful - check for required files
     required_files_exist = (
       (experiment_path / "manifest.json").exists() and
@@ -3379,8 +3604,14 @@ async def upload_experiment_zip(
 
   try:
     db: AsyncIOMotorDatabase = request.app.state.mongo_db
-    # Check if experiment already exists to preserve ownership
+    # Get existing config (already checked earlier, but we need it here for ownership preservation)
     existing_config = await db.experiments_config.find_one({"slug": slug_id}, {"owner_email": 1})
+    
+    # Map developer_id to owner_email if present
+    if "developer_id" in parsed_manifest:
+      dev_id = parsed_manifest.pop("developer_id")
+      parsed_manifest["owner_email"] = dev_id
+      logger.info(f"[{slug_id}] Mapped developer_id '{dev_id}' to owner_email")
     
     config_data = {
       **parsed_manifest,
@@ -3389,15 +3620,30 @@ async def upload_experiment_zip(
       "runtime_pip_deps": parsed_reqs,
     }
     
-    # Set ownership on creation (preserve existing ownership if experiment already exists)
-    if not existing_config or not existing_config.get("owner_email"):
-      # New experiment: set owner to the uploader
-      config_data["owner_email"] = admin_email
-      logger.info(f"[{slug_id}] Setting owner to '{admin_email}' (new experiment or no owner)")
-    else:
-      # Existing experiment: preserve existing ownership
-      config_data["owner_email"] = existing_config.get("owner_email")
-      logger.debug(f"[{slug_id}] Preserving existing owner '{existing_config.get('owner_email')}'")
+    # Set ownership on creation/update
+    # If developer_id was provided, it's already set as owner_email above
+    if "owner_email" not in config_data:
+      # New experiment: set owner to the uploader (unless they're admin uploading for someone else)
+      # But if developer_id was validated, it should be in owner_email already
+      if not existing_config:
+        # Brand new experiment - set owner to uploader
+        config_data["owner_email"] = admin_email
+        logger.info(f"[{slug_id}] Setting owner to '{admin_email}' (new experiment)")
+      elif existing_config and existing_config.get("owner_email"):
+        # Existing experiment - preserve existing ownership (validation already passed above)
+        config_data["owner_email"] = existing_config.get("owner_email")
+        logger.debug(f"[{slug_id}] Preserving existing owner '{existing_config.get('owner_email')}'")
+      else:
+        # Existing experiment with no owner (admin-managed) - only admins get here due to validation above
+        uploader_is_admin = getattr(request.state, "uploader_is_admin", False)
+        if uploader_is_admin:
+          # Admin can choose to keep it admin-managed or assign an owner
+          # For now, keep it admin-managed (no owner_email)
+          logger.info(f"[{slug_id}] Keeping admin-managed experiment (no owner assigned)")
+        else:
+          # Should not reach here - validation should have blocked this
+          config_data["owner_email"] = admin_email
+          logger.warning(f"[{slug_id}] Unexpected: Non-admin overwriting admin-managed experiment. Setting owner to '{admin_email}'")
     
     await db.experiments_config.update_one({"slug": slug_id}, {"$set": config_data}, upsert=True)
     if using_b2:
@@ -3447,9 +3693,715 @@ async def upload_experiment_zip(
   return JSONResponse({
     "status": "success",
     "message": f"Successfully uploaded '{slug_id}'. Experiment is active and accessible.",
-    "slug_id": slug_id,
+    "slug": slug_id,  # Use 'slug' to match template expectations
+    "slug_id": slug_id,  # Also include for backwards compatibility
     "reload_status": "background"
   })
+
+
+# ============================================================================
+# Event Broadcasting for Real-time Updates (SSE)
+# ============================================================================
+
+# Global event queues for SSE broadcasting
+_indexes_event_queue: Optional[asyncio.Queue] = None
+_users_event_queue: Optional[asyncio.Queue] = None
+
+
+def _get_indexes_event_queue(app: FastAPI) -> asyncio.Queue:
+    """Get or create the indexes event queue."""
+    global _indexes_event_queue
+    if _indexes_event_queue is None:
+        _indexes_event_queue = asyncio.Queue()
+    return _indexes_event_queue
+
+
+def _get_users_event_queue(app: FastAPI) -> asyncio.Queue:
+    """Get or create the users event queue."""
+    global _users_event_queue
+    if _users_event_queue is None:
+        _users_event_queue = asyncio.Queue()
+    return _users_event_queue
+
+
+async def _broadcast_indexes_update(app: FastAPI):
+    """Broadcast an update event for indexes."""
+    queue = _get_indexes_event_queue(app)
+    try:
+        await queue.put({"type": "update", "timestamp": datetime.datetime.utcnow().isoformat()})
+    except Exception as e:
+        logger.warning(f"Failed to broadcast indexes update: {e}")
+
+
+async def _broadcast_users_update(app: FastAPI):
+    """Broadcast an update event for users."""
+    queue = _get_users_event_queue(app)
+    try:
+        await queue.put({"type": "update", "timestamp": datetime.datetime.utcnow().isoformat()})
+    except Exception as e:
+        logger.warning(f"Failed to broadcast users update: {e}")
+
+
+# ============================================================================
+# Admin Panel: Index Management & User/Role Management Routes
+# ============================================================================
+
+@admin_router.get("/management", response_class=HTMLResponse, name="admin_management")
+async def admin_management_panel(
+    request: Request,
+    user: Dict[str, Any] = Depends(require_admin),
+    tab: Optional[str] = Query("indexes", alias="tab"),
+):
+    """
+    Admin management panel with tabs for Index Management and User/Role Management.
+    """
+    templates = get_templates_from_request(request)
+    if not templates:
+        raise HTTPException(500, "Template engine not available.")
+    
+    db: AsyncIOMotorDatabase = request.app.state.mongo_db
+    authz: AuthorizationProvider = await get_authz_provider(request)
+    
+    # Default to indexes tab
+    active_tab = tab if tab in ("indexes", "users") else "indexes"
+    
+    # Fetch data for both tabs (we'll display based on active_tab)
+    indexes_data = []
+    users_data = []
+    collections_list = []
+    
+    if active_tab == "indexes":
+        # Get all collections and their indexes for monitoring
+        try:
+            all_collections = await db.list_collection_names()
+            # Filter to experiment collections (those with underscore prefix pattern)
+            experiment_collections = [
+                coll for coll in all_collections 
+                if "_" in coll and not coll.startswith(("users", "experiments_config", "export_logs"))
+            ]
+            
+            for coll_name in experiment_collections:
+                try:
+                    real_collection = db[coll_name]
+                    if INDEX_MANAGER_AVAILABLE:
+                        index_manager = AsyncAtlasIndexManager(real_collection)
+                        
+                        # Get regular indexes
+                        regular_indexes = await index_manager.list_indexes()
+                        for idx in regular_indexes:
+                            indexes_data.append({
+                                "collection": coll_name,
+                                "name": idx.get("name", "unknown"),
+                                "type": "regular",
+                                "keys": idx.get("key", {}),
+                                "unique": idx.get("unique", False),
+                                "status": "READY",
+                                "queryable": True,
+                                "size": idx.get("size", "N/A"),
+                            })
+                        
+                        # Get search indexes (Atlas Search/Vector Search)
+                        try:
+                            search_indexes = await index_manager.list_search_indexes()
+                            for idx in search_indexes:
+                                indexes_data.append({
+                                    "collection": coll_name,
+                                    "name": idx.get("name", "unknown"),
+                                    "type": idx.get("type", "search"),
+                                    "status": idx.get("status", "UNKNOWN"),
+                                    "queryable": idx.get("queryable", False),
+                                    "definition": idx.get("latestDefinition", idx.get("definition", {})),
+                                })
+                        except Exception as e:
+                            logger.debug(f"Could not list search indexes for '{coll_name}': {e}")
+                    
+                    collections_list.append(coll_name)
+                except Exception as e:
+                    logger.warning(f"Error processing collection '{coll_name}': {e}")
+                    
+        except Exception as e:
+            logger.error(f"Error fetching index data: {e}", exc_info=True)
+    
+    elif active_tab == "users":
+        # Get all users and their roles
+        try:
+            users_cursor = db.users.find({}, {"email": 1, "is_admin": 1, "created_at": 1}).limit(1000)
+            all_users = await users_cursor.to_list(length=None)
+            
+            for user_doc in all_users:
+                user_email = user_doc.get("email")
+                if not user_email:
+                    continue
+                
+                # Get roles for this user
+                user_roles = []
+                # Check if it's a CasbinAdapter and get roles from enforcer
+                if isinstance(authz, CasbinAdapter) and hasattr(authz, "_enforcer"):
+                    try:
+                        # get_roles_for_user is an async method on AsyncEnforcer
+                        roles_result = await authz._enforcer.get_roles_for_user(user_email)
+                        user_roles = roles_result if roles_result else []
+                    except Exception as e:
+                        logger.debug(f"Error getting roles for '{user_email}' via enforcer: {e}")
+                        # Fallback: check common roles
+                        common_roles = ["admin", "developer", "demo", "user"]
+                        for role in common_roles:
+                            if hasattr(authz, "has_role_for_user"):
+                                has_role = await authz.has_role_for_user(user_email, role)
+                                if has_role:
+                                    user_roles.append(role)
+                else:
+                    # Fallback: check common roles for non-Casbin providers
+                    common_roles = ["admin", "developer", "demo", "user"]
+                    for role in common_roles:
+                        if hasattr(authz, "has_role_for_user"):
+                            has_role = await authz.has_role_for_user(user_email, role)
+                            if has_role:
+                                user_roles.append(role)
+                
+                users_data.append({
+                    "email": user_email,
+                    "is_admin": user_doc.get("is_admin", False),
+                    "roles": user_roles,
+                    "created_at": user_doc.get("created_at"),
+                })
+        except Exception as e:
+            logger.error(f"Error fetching user data: {e}", exc_info=True)
+    
+    return templates.TemplateResponse(
+        "admin/management.html",
+        {
+            "request": request,
+            "current_user": user,
+            "active_tab": active_tab,
+            "indexes_data": indexes_data,
+            "collections_list": sorted(set(collections_list)),
+            "users_data": users_data,
+            "INDEX_MANAGER_AVAILABLE": INDEX_MANAGER_AVAILABLE,
+        }
+    )
+
+
+@admin_router.get("/api/indexes", response_class=JSONResponse, name="api_list_indexes")
+async def api_list_indexes(
+    request: Request,
+    user: Dict[str, Any] = Depends(require_admin),
+    collection: Optional[str] = Query(None),
+):
+    """
+    API endpoint to list all indexes across collections (read-only monitoring).
+    """
+    if not INDEX_MANAGER_AVAILABLE:
+        return JSONResponse(
+            {"error": "Index Management not available."},
+            status_code=501
+        )
+    
+    db: AsyncIOMotorDatabase = request.app.state.mongo_db
+    indexes_data = []
+    
+    try:
+        if collection:
+            collections_to_check = [collection]
+        else:
+            all_collections = await db.list_collection_names()
+            collections_to_check = [
+                coll for coll in all_collections 
+                if "_" in coll and not coll.startswith(("users", "experiments_config", "export_logs"))
+            ]
+        
+        for coll_name in collections_to_check:
+            try:
+                real_collection = db[coll_name]
+                index_manager = AsyncAtlasIndexManager(real_collection)
+                
+                # Regular indexes
+                regular_indexes = await index_manager.list_indexes()
+                for idx in regular_indexes:
+                    indexes_data.append({
+                        "collection": coll_name,
+                        "name": idx.get("name", "unknown"),
+                        "type": "regular",
+                        "keys": idx.get("key", {}),
+                        "unique": idx.get("unique", False),
+                        "sparse": idx.get("sparse", False),
+                        "status": "READY",
+                        "queryable": True,
+                        "size": idx.get("size", "N/A"),
+                        "v": idx.get("v", "N/A"),
+                    })
+                
+                # Search indexes
+                try:
+                    search_indexes = await index_manager.list_search_indexes()
+                    for idx in search_indexes:
+                        status_info = {
+                            "collection": coll_name,
+                            "name": idx.get("name", "unknown"),
+                            "type": idx.get("type", "search"),
+                            "status": idx.get("status", "UNKNOWN"),
+                            "queryable": idx.get("queryable", False),
+                            "definition": idx.get("latestDefinition", idx.get("definition", {})),
+                        }
+                        
+                        # Add additional metadata if available
+                        if "analyzer" in idx:
+                            status_info["analyzer"] = idx["analyzer"]
+                        if "mappings" in idx:
+                            status_info["mappings"] = idx["mappings"]
+                        
+                        indexes_data.append(status_info)
+                except Exception as e:
+                    logger.debug(f"Could not list search indexes for '{coll_name}': {e}")
+                    
+            except Exception as e:
+                logger.warning(f"Error processing collection '{coll_name}': {e}")
+                
+    except Exception as e:
+        logger.error(f"Error fetching indexes: {e}", exc_info=True)
+        return JSONResponse(
+            {"error": f"Failed to fetch indexes: {e}"},
+            status_code=500
+        )
+    
+    return JSONResponse({"status": "success", "indexes": indexes_data})
+
+
+@admin_router.get("/api/indexes/stream", name="api_indexes_stream")
+async def api_indexes_stream(
+    request: Request,
+    user: Dict[str, Any] = Depends(require_admin),
+):
+    """
+    Server-Sent Events (SSE) endpoint for real-time index updates.
+    """
+    async def event_generator():
+        queue = _get_indexes_event_queue(request.app)
+        
+        # Send initial connection message
+        yield f"data: {json.dumps({'type': 'connected', 'message': 'Connected to index updates stream'})}\n\n"
+        
+        try:
+            while True:
+                # Check if client disconnected
+                if await request.is_disconnected():
+                    break
+                
+                try:
+                    # Wait for event with timeout
+                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield f"data: {json.dumps(event)}\n\n"
+                    queue.task_done()
+                    
+                    # Send heartbeat every 30 seconds if no updates
+                except asyncio.TimeoutError:
+                    # Send heartbeat to keep connection alive
+                    yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': datetime.datetime.utcnow().isoformat()})}\n\n"
+                except Exception as e:
+                    logger.error(f"Error in indexes SSE stream: {e}", exc_info=True)
+                    yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                    break
+        except asyncio.CancelledError:
+            logger.debug("Indexes SSE stream cancelled")
+        except Exception as e:
+            logger.error(f"Indexes SSE stream error: {e}", exc_info=True)
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        }
+    )
+
+
+@admin_router.get("/api/users", response_class=JSONResponse, name="api_list_users")
+async def api_list_users(
+    request: Request,
+    user: Dict[str, Any] = Depends(require_admin),
+    limit: int = Query(1000, ge=1, le=10000),
+):
+    """
+    API endpoint to list all users and their roles.
+    """
+    db: AsyncIOMotorDatabase = request.app.state.mongo_db
+    authz: AuthorizationProvider = await get_authz_provider(request)
+    users_data = []
+    
+    try:
+        users_cursor = db.users.find(
+            {},
+            {"email": 1, "is_admin": 1, "created_at": 1}
+        ).limit(limit)
+        all_users = await users_cursor.to_list(length=None)
+        
+        for user_doc in all_users:
+            user_email = user_doc.get("email")
+            if not user_email:
+                continue
+            
+            # Get roles for this user
+            user_roles = []
+            # Check if it's a CasbinAdapter and get roles from enforcer
+            if isinstance(authz, CasbinAdapter) and hasattr(authz, "_enforcer"):
+                try:
+                    # get_roles_for_user is an async method on AsyncEnforcer
+                    roles_result = await authz._enforcer.get_roles_for_user(user_email)
+                    user_roles = roles_result if roles_result else []
+                except Exception as e:
+                    logger.debug(f"Error getting roles for '{user_email}': {e}")
+                    # Fallback: check common roles
+                    common_roles = ["admin", "developer", "demo", "user"]
+                    for role in common_roles:
+                        if hasattr(authz, "has_role_for_user"):
+                            has_role = await authz.has_role_for_user(user_email, role)
+                            if has_role:
+                                user_roles.append(role)
+            else:
+                # Fallback: check common roles for non-Casbin providers
+                common_roles = ["admin", "developer", "demo", "user"]
+                for role in common_roles:
+                    if hasattr(authz, "has_role_for_user"):
+                        has_role = await authz.has_role_for_user(user_email, role)
+                        if has_role:
+                            user_roles.append(role)
+            
+            users_data.append({
+                "email": user_email,
+                "is_admin": user_doc.get("is_admin", False),
+                "roles": user_roles,
+                "created_at": user_doc.get("created_at").isoformat() if user_doc.get("created_at") else None,
+            })
+            
+    except Exception as e:
+        logger.error(f"Error fetching users: {e}", exc_info=True)
+        return JSONResponse(
+            {"error": f"Failed to fetch users: {e}"},
+            status_code=500
+        )
+    
+    return JSONResponse({"status": "success", "users": users_data})
+
+
+@admin_router.get("/api/users/stream", name="api_users_stream")
+async def api_users_stream(
+    request: Request,
+    user: Dict[str, Any] = Depends(require_admin),
+):
+    """
+    Server-Sent Events (SSE) endpoint for real-time user updates.
+    """
+    async def event_generator():
+        queue = _get_users_event_queue(request.app)
+        
+        # Send initial connection message
+        yield f"data: {json.dumps({'type': 'connected', 'message': 'Connected to user updates stream'})}\n\n"
+        
+        try:
+            while True:
+                # Check if client disconnected
+                if await request.is_disconnected():
+                    break
+                
+                try:
+                    # Wait for event with timeout
+                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield f"data: {json.dumps(event)}\n\n"
+                    queue.task_done()
+                    
+                    # Send heartbeat every 30 seconds if no updates
+                except asyncio.TimeoutError:
+                    # Send heartbeat to keep connection alive
+                    yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': datetime.datetime.utcnow().isoformat()})}\n\n"
+                except Exception as e:
+                    logger.error(f"Error in users SSE stream: {e}", exc_info=True)
+                    yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                    break
+        except asyncio.CancelledError:
+            logger.debug("Users SSE stream cancelled")
+        except Exception as e:
+            logger.error(f"Users SSE stream error: {e}", exc_info=True)
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        }
+    )
+
+
+@admin_router.post("/api/users/{user_email}/roles/{role}", response_class=JSONResponse)
+async def api_assign_role(
+    request: Request,
+    user_email: str,
+    role: str,
+    user: Dict[str, Any] = Depends(require_admin),
+):
+    """
+    Assign a role to a user (admin only).
+    """
+    db: AsyncIOMotorDatabase = request.app.state.mongo_db
+    authz: AuthorizationProvider = await get_authz_provider(request)
+    admin_email = user.get("email")
+    
+    # Validate user exists
+    user_doc = await db.users.find_one({"email": user_email}, {"_id": 1, "is_admin": 1})
+    if not user_doc:
+        return JSONResponse(
+            {"error": f"User '{user_email}' not found."},
+            status_code=404
+        )
+    
+    # Prevent role changes for admin or demo users (managed via .env only)
+    is_admin_user = user_doc.get("is_admin", False)
+    if is_admin_user:
+        return JSONResponse(
+            {"error": "Cannot modify roles for admin users. Admin users are managed via .env configuration only."},
+            status_code=403
+        )
+    
+    # Check if user has demo role
+    if isinstance(authz, CasbinAdapter) and hasattr(authz, "_enforcer"):
+        try:
+            user_roles = await authz._enforcer.get_roles_for_user(user_email)
+            if user_roles and "demo" in user_roles:
+                return JSONResponse(
+                    {"error": "Cannot modify roles for demo users. Demo users are managed via .env configuration only."},
+                    status_code=403
+                )
+        except Exception as e:
+            logger.debug(f"Error checking roles for '{user_email}': {e}")
+    
+    # Validate role - only allow assigning developer or user
+    # Admin and demo roles cannot be assigned via UI
+    valid_roles = ["developer", "user"]
+    if role not in valid_roles:
+        return JSONResponse(
+            {"error": f"Invalid role. Only 'developer' or 'user' can be assigned via UI. Admin and demo roles are managed via .env"},
+            status_code=400
+        )
+    
+    try:
+        # Use role_management for proper validation
+        success = await assign_role_to_user(
+            authz=authz,
+            user_email=user_email,
+            role=role,
+            assigner_email=admin_email,
+            assigner_authz=authz,
+        )
+        
+        if success:
+            logger.info(f"Admin '{admin_email}' assigned role '{role}' to user '{user_email}'")
+            # Broadcast update to users stream
+            await _broadcast_users_update(request.app)
+            return JSONResponse({
+                "status": "success",
+                "message": f"Successfully assigned role '{role}' to user '{user_email}'"
+            })
+        else:
+            return JSONResponse(
+                {"error": "Failed to assign role."},
+                status_code=500
+            )
+    except ValueError as e:
+        return JSONResponse(
+            {"error": str(e)},
+            status_code=403
+        )
+    except Exception as e:
+        logger.error(f"Error assigning role: {e}", exc_info=True)
+        return JSONResponse(
+            {"error": f"Failed to assign role: {e}"},
+            status_code=500
+        )
+
+
+@admin_router.delete("/api/users/{user_email}/roles/{role}", response_class=JSONResponse)
+async def api_remove_role(
+    request: Request,
+    user_email: str,
+    role: str,
+    user: Dict[str, Any] = Depends(require_admin),
+):
+    """
+    Remove a role from a user (admin only).
+    """
+    db: AsyncIOMotorDatabase = request.app.state.mongo_db
+    authz: AuthorizationProvider = await get_authz_provider(request)
+    admin_email = user.get("email")
+    
+    # Validate user exists
+    user_doc = await db.users.find_one({"email": user_email}, {"_id": 1, "is_admin": 1})
+    if not user_doc:
+        return JSONResponse(
+            {"error": f"User '{user_email}' not found."},
+            status_code=404
+        )
+    
+    # Prevent role changes for admin or demo users (managed via .env only)
+    is_admin_user = user_doc.get("is_admin", False)
+    if is_admin_user:
+        return JSONResponse(
+            {"error": "Cannot modify roles for admin users. Admin users are managed via .env configuration only."},
+            status_code=403
+        )
+    
+    # Check if user has demo role
+    if isinstance(authz, CasbinAdapter) and hasattr(authz, "_enforcer"):
+        try:
+            user_roles = await authz._enforcer.get_roles_for_user(user_email)
+            if user_roles and "demo" in user_roles:
+                return JSONResponse(
+                    {"error": "Cannot modify roles for demo users. Demo users are managed via .env configuration only."},
+                    status_code=403
+                )
+        except Exception as e:
+            logger.debug(f"Error checking roles for '{user_email}': {e}")
+    
+    # Validate role
+    valid_roles = ["admin", "developer", "demo", "user"]
+    if role not in valid_roles:
+        return JSONResponse(
+            {"error": f"Invalid role. Must be one of: {', '.join(valid_roles)}"},
+            status_code=400
+        )
+    
+    try:
+        # Use role_management for proper validation
+        success = await remove_role_from_user(
+            authz=authz,
+            user_email=user_email,
+            role=role,
+            remover_email=admin_email,
+            remover_authz=authz,
+        )
+        
+        if success:
+            logger.info(f"Admin '{admin_email}' removed role '{role}' from user '{user_email}'")
+            # Broadcast update to users stream
+            await _broadcast_users_update(request.app)
+            return JSONResponse({
+                "status": "success",
+                "message": f"Successfully removed role '{role}' from user '{user_email}'"
+            })
+        else:
+            return JSONResponse(
+                {"error": "Failed to remove role."},
+                status_code=500
+            )
+    except ValueError as e:
+        return JSONResponse(
+            {"error": str(e)},
+            status_code=403
+        )
+    except Exception as e:
+        logger.error(f"Error removing role: {e}", exc_info=True)
+        return JSONResponse(
+            {"error": f"Failed to remove role: {e}"},
+            status_code=500
+        )
+
+
+@admin_router.post("/api/users/create", response_class=JSONResponse)
+async def api_create_user(
+    request: Request,
+    user: Dict[str, Any] = Depends(require_admin),
+    email: str = Body(..., embed=True),
+    password: str = Body(..., embed=True),
+    role: str = Body("developer", embed=True),
+):
+    """
+    Create a new user with a role (admin only).
+    
+    Restrictions:
+    - Cannot create more than 1 admin user
+    - Cannot create more than 1 demo user
+    - Can create unlimited developer users
+    """
+    db: AsyncIOMotorDatabase = request.app.state.mongo_db
+    authz: AuthorizationProvider = await get_authz_provider(request)
+    admin_email = user.get("email")
+    
+    # Validate email format
+    if not email or "@" not in email or "." not in email:
+        return JSONResponse(
+            {"error": "Invalid email format."},
+            status_code=400
+        )
+    
+    # Validate password
+    if not password or len(password) < 8:
+        return JSONResponse(
+            {"error": "Password must be at least 8 characters long."},
+            status_code=400
+        )
+    
+    # Validate role - only allow 'developer' or 'user'
+    # Admin and demo users are managed via .env only
+    valid_roles = ["developer", "user"]
+    if role not in valid_roles:
+        return JSONResponse(
+            {"error": f"Invalid role. Only 'developer' or 'user' can be created via UI. Admin and demo users are managed via .env"},
+            status_code=400
+        )
+    
+    # Check if user already exists
+    existing_user = await db.users.find_one({"email": email}, {"_id": 1})
+    if existing_user:
+        return JSONResponse(
+            {"error": f"User with email '{email}' already exists."},
+            status_code=409
+        )
+    
+    try:
+        # Hash password
+        import bcrypt
+        pwd_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
+        
+        # Create user (never admin - admin is managed via .env)
+        is_admin = False  # Admin users are managed via .env only
+        new_user = {
+            "email": email,
+            "password_hash": pwd_hash,
+            "is_admin": is_admin,
+            "created_at": datetime.datetime.utcnow(),
+        }
+        
+        result = await db.users.insert_one(new_user)
+        logger.info(f"Admin '{admin_email}' created user '{email}' with role '{role}' (ID: {result.inserted_id})")
+        
+        # Assign role (user role is default, so only assign if developer)
+        if role == "developer":
+            success = await assign_role_to_user(
+                authz=authz,
+                user_email=email,
+                role=role,
+                assigner_email=admin_email,
+                assigner_authz=authz,
+            )
+            if not success:
+                logger.warning(f"Failed to assign role '{role}' to new user '{email}', but user was created.")
+        
+        # Broadcast update to users stream
+        await _broadcast_users_update(request.app)
+        
+        return JSONResponse({
+            "status": "success",
+            "message": f"Successfully created user '{email}' with role '{role}'",
+            "user_id": str(result.inserted_id),
+        })
+    except Exception as e:
+        logger.error(f"Error creating user: {e}", exc_info=True)
+        return JSONResponse(
+            {"error": f"Failed to create user: {e}"},
+            status_code=500
+        )
 
 
 app.include_router(admin_router)
@@ -3483,6 +4435,9 @@ async def reload_active_experiments(app: FastAPI):
     logger.info(f" Experiment reload complete. {registered_count} experiment(s) registered.")
     if registered_count == 0:
       logger.warning(" ⚠️  No experiments were registered! Check logs above for errors.")
+    
+    # Broadcast indexes update after reload (indexes may have changed)
+    await _broadcast_indexes_update(app)
   except Exception as e:
     logger.error(f" Reload error: {e}", exc_info=True)
     app.state.experiments.clear()
@@ -3512,7 +4467,9 @@ async def _register_experiments(app: FastAPI, active_cfgs: List[Dict[str, Any]],
     
     # Validate manifest schema before registration
     try:
-      from manifest_schema import validate_manifest
+      from manifest_schema import validate_manifest, validate_manifest_with_db
+      # During registration, we validate schema only (no DB check for developer_id)
+      # DB validation happens during save/upload when database is available
       is_valid, validation_error, error_paths = validate_manifest(cfg)
       if not is_valid:
         error_path_str = f" (errors in: {', '.join(error_paths[:3])})" if error_paths else ""
@@ -3521,6 +4478,13 @@ async def _register_experiments(app: FastAPI, active_cfgs: List[Dict[str, Any]],
           f"Please fix the manifest.json and reload the experiment."
         )
         continue  # Skip this experiment, continue with others
+      
+      # Warning if developer_id is present but we can't validate during registration
+      if "developer_id" in cfg:
+        logger.warning(
+          f"[{slug}] ⚠️ developer_id '{cfg.get('developer_id')}' present but not validated during registration. "
+          f"Validation will occur when manifest is saved via admin panel."
+        )
     except Exception as validation_err:
       logger.error(
         f"[{slug}] ❌ Registration BLOCKED: Error during validation: {validation_err}. "
@@ -3700,6 +4664,10 @@ async def _register_experiments(app: FastAPI, active_cfgs: List[Dict[str, Any]],
     except Exception as e:
       logger.error(f"[{slug}] Actor start error: {e}", exc_info=True)
       continue
+  
+  # Broadcast indexes update after registration (indexes may have been created/updated)
+  if INDEX_MANAGER_AVAILABLE:
+    await _broadcast_indexes_update(app)
 
 
 async def _call_actor_initialize(actor_handle: Any, slug: str):
@@ -3874,16 +4842,135 @@ async def root(request: Request, user: Optional[Mapping[str, Any]] = Depends(get
         meta_copy["url"] = _build_absolute_https_url(request, meta_copy["url"])
       experiments_with_https_urls[slug] = meta_copy
     
+    # Check if user is a developer (for navigation)
+    is_developer = False
+    if user:
+      user_email = user.get("email")
+      if user_email:
+        authz = await get_authz_provider(request)
+        is_developer = await authz.check(
+          subject=user_email,
+          resource="experiments",
+          action="manage_own",
+          user_object=dict(user)
+        )
+    
     return templates_obj.TemplateResponse("index.html", {
       "request": request,
       "experiments": experiments_with_https_urls,
       "current_user": user,
+      "is_developer": is_developer,
       "ENABLE_REGISTRATION": ENABLE_REGISTRATION,
     })
   except HTTPException:
     raise
   except Exception as e:
     logger.error(f"Error in root route: {e}", exc_info=True)
+    raise HTTPException(500, f"Server error: {e}")
+
+
+@app.post("/api/upload-experiment", response_class=JSONResponse, name="developer_upload_experiment")
+async def developer_upload_experiment(
+  request: Request,
+  file: UploadFile = File(...),
+  user: Dict[str, Any] = Depends(require_admin_or_developer)
+):
+  """
+  Developer upload endpoint - allows developers to upload experiments.
+  This is a separate route from the admin upload to avoid router-level admin dependencies.
+  """
+  # Reuse the admin upload logic but from main app router
+  return await upload_experiment_zip(request, file, user)
+
+
+@app.get("/my-experiments", response_class=HTMLResponse, name="my_experiments")
+async def my_experiments(
+  request: Request,
+  user: Optional[Mapping[str, Any]] = Depends(get_current_user),
+  authz: AuthorizationProvider = Depends(get_authz_provider),
+):
+  """
+  My Experiments route - shows only experiments owned by the current developer.
+  Only accessible to users with developer role.
+  """
+  # Require authentication
+  if not user:
+    login_url = request.url_for("login_get")
+    original_path = request.url.path
+    redirect_url = f"{login_url}?next={original_path}"
+    raise HTTPException(
+      status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+      headers={"Location": redirect_url},
+      detail="Authentication required to view your experiments."
+    )
+  
+  user_email = user.get("email")
+  if not user_email:
+    raise HTTPException(
+      status_code=status.HTTP_401_UNAUTHORIZED,
+      detail="Invalid authentication token."
+    )
+  
+  # Check if user is a developer (has experiments:manage_own permission)
+  has_manage_own = await authz.check(
+    subject=user_email,
+    resource="experiments",
+    action="manage_own",
+    user_object=dict(user)
+  )
+  
+  if not has_manage_own:
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="You do not have permission to view your experiments. Developer role required."
+    )
+  
+  try:
+    templates_obj = get_templates_from_request(request)
+    if not templates_obj:
+      logger.error("Template engine not available for my_experiments route")
+      raise HTTPException(500, "Template engine not available.")
+    
+    # Get user's experiments using the helper function
+    user_experiments_list = await get_user_experiments(request, user, authz)
+    
+    # Convert to the same format as root route uses
+    experiments = {}
+    for cfg in user_experiments_list:
+      slug = cfg.get("slug")
+      if not slug:
+        continue
+      # Only include active experiments for display
+      if cfg.get("status") != "active":
+        continue
+      # Use the same format as _register_experiments uses
+      prefix = f"/experiments/{slug}"
+      cfg_copy = dict(cfg)
+      cfg_copy["url"] = prefix
+      experiments[slug] = cfg_copy
+    
+    logger.debug(f"My Experiments route accessed by '{user_email}'. Found {len(experiments)} experiment(s).")
+    
+    # Convert relative experiment URLs to absolute HTTPS URLs
+    experiments_with_https_urls = {}
+    for slug, meta in experiments.items():
+      meta_copy = dict(meta)
+      if "url" in meta_copy and meta_copy["url"]:
+        # Convert relative URL to absolute HTTPS URL
+        meta_copy["url"] = _build_absolute_https_url(request, meta_copy["url"])
+      experiments_with_https_urls[slug] = meta_copy
+    
+    return templates_obj.TemplateResponse("my_experiments.html", {
+      "request": request,
+      "experiments": experiments_with_https_urls,
+      "current_user": user,
+      "is_developer": True,  # This page is only accessible to developers
+      "ENABLE_REGISTRATION": ENABLE_REGISTRATION,
+    })
+  except HTTPException:
+    raise
+  except Exception as e:
+    logger.error(f"Error in my_experiments route: {e}", exc_info=True)
     raise HTTPException(500, f"Server error: {e}")
 
 

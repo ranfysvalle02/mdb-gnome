@@ -517,6 +517,12 @@
     <div class="header-nav">  
         {% if current_user %}  
             Logged in as <strong>{{ current_user.email }}</strong>  
+            {% if is_developer %}  
+                | <a href="{{ request.url_for('my_experiments') }}"  
+                     style="color: var(--mongodb-green); font-weight: 700; text-shadow: 0 0 5px rgba(0, 237, 100, 0.5);">  
+                     My Experiments  
+                  </a>  
+            {% endif %}  
             {% if current_user.is_admin %}  
                 | <a href="{{ request.url_for('admin_dashboard') }}"  
                      style="color: #dc3545; font-weight: 700; text-shadow: 0 0 5px rgba(220, 20, 60, 0.5);">  

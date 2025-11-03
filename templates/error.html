@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Error {{ status_code | default('500') }} - mdb-gnome</title>
+    <style>
+        /* --- MongoDB Theme Colors & Variables --- */
+        :root {
+            --mongodb-green: #00ED64;
+            --mongodb-dark-green: #00BF57;
+            --mongodb-dark-blue: #001E2B;
+            --mongodb-medium-blue: #0F1419;
+            --mongodb-bg: #03081A;
+            --text-primary: #F0F0F0;
+            --text-secondary: #B0B0B0;
+            --card-bg: rgba(26, 31, 53, 0.7);
+            --border-color: rgba(42, 52, 65, 0.8);
+            --glow-color: rgba(0, 237, 100, 0.5);
+            --error-red: #DC143C;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 0;
+            padding: 50px 80px;
+            background: var(--mongodb-bg);
+            color: var(--text-primary);
+            position: relative;
+            min-height: 100vh;
+            overflow-x: hidden;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Particle Animation Background */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -2;
+            background: radial-gradient(circle at 50% 120%, var(--mongodb-medium-blue) 0%, var(--mongodb-dark-blue) 100%);
+            animation: background-pulse 40s ease-in-out infinite;
+        }
+
+        body::after {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background-image: 
+                radial-gradient(1px 1px at 10% 20%, var(--glow-color), transparent),
+                radial-gradient(2px 2px at 90% 80%, rgba(0, 237, 100, 0.4), transparent),
+                radial-gradient(1.5px 1.5px at 50% 50%, rgba(0, 237, 100, 0.6), transparent);
+            background-repeat: repeat;
+            background-size: 400px 400px;
+            animation: particle-drift 50s linear infinite alternate;
+            opacity: 0.7;
+            pointer-events: none;
+        }
+
+        @keyframes background-pulse {
+            0%, 100% { transform: scale(1) translate(0, 0); }
+            50% { transform: scale(1.1) translate(10px, -10px); }
+        }
+
+        @keyframes particle-drift {
+            0% { transform: translate(0, 0); }
+            100% { transform: translate(500px, 400px); }
+        }
+
+        .error-container {
+            background: var(--card-bg);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 60px 80px;
+            text-align: center;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 25px rgba(220, 20, 60, 0.2);
+            max-width: 600px;
+            animation: fadeInDown 0.8s ease-out;
+        }
+
+        @keyframes fadeInDown {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .error-code {
+            font-size: 8em;
+            font-weight: 800;
+            color: var(--error-red);
+            text-shadow: 0 0 20px rgba(220, 20, 60, 0.5);
+            line-height: 1;
+            margin-bottom: 20px;
+        }
+
+        .error-title {
+            font-size: 2em;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 20px;
+        }
+
+        .error-detail {
+            color: var(--text-secondary);
+            font-size: 1.1em;
+            line-height: 1.6;
+            margin-bottom: 40px;
+        }
+
+        .error-actions {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 700;
+            transition: all 0.3s ease;
+            display: inline-block;
+        }
+
+        .btn-primary {
+            background: linear-gradient(90deg, var(--mongodb-green) 0%, var(--mongodb-dark-green) 100%);
+            color: var(--mongodb-dark-blue);
+            box-shadow: 0 6px 20px rgba(0, 237, 100, 0.5);
+        }
+
+        .btn-primary:hover {
+            background: var(--mongodb-dark-green);
+            transform: translateY(-3px);
+            box-shadow: 0 8px 30px rgba(0, 237, 100, 0.7);
+        }
+
+        .btn-secondary {
+            background: var(--card-bg);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--mongodb-green);
+            color: var(--mongodb-green);
+            transform: translateY(-3px);
+        }
+    </style>
+</head>
+<body>
+    <div class="error-container">
+        <div class="error-code">{{ status_code | default('500') }}</div>
+        <h1 class="error-title">
+            {% if status_code == 404 %}
+                Page Not Found
+            {% elif status_code == 403 %}
+                Access Forbidden
+            {% elif status_code == 401 %}
+                Unauthorized
+            {% elif status_code == 500 %}
+                Internal Server Error
+            {% else %}
+                Error
+            {% endif %}
+        </h1>
+        <p class="error-detail">
+            {{ detail | default('An unexpected error occurred. Please try again later.') }}
+        </p>
+        <div class="error-actions">
+            <a href="/" class="btn btn-primary">Go Home</a>
+            <a href="javascript:history.back()" class="btn btn-secondary">Go Back</a>
+        </div>
+    </div>
+</body>
+</html>
+

@@ -33,7 +33,17 @@ async def get_actor_handle(
             detail="Ray service is unavailable. Check Ray cluster status."
         )
 
-    actor_name = "indexing_demo-actor"
+    # Get the slug from request state (set by main.py routing)
+    slug_id = getattr(request.state, "slug_id", None)
+    if not slug_id:
+        logger.error("[IndexingDemo] Server error: slug_id not found in request state.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server error: slug_id not found in request state."
+        )
+
+    # Construct actor name from slug (matches naming convention in main.py)
+    actor_name = f"{slug_id}-actor"
     try:
         handle = ray.get_actor(actor_name, namespace="modular_labs")
         return handle
@@ -44,7 +54,7 @@ async def get_actor_handle(
             detail=f"Experiment service '{actor_name}' is not running."
         )
     except Exception as e:
-        logger.error(f"[IndexingDemo] Failed to get actor handle: {e}", exc_info=True)
+        logger.error(f"[IndexingDemo] Failed to get actor handle '{actor_name}': {e}", exc_info=True)
         raise HTTPException(500, "Error connecting to experiment service.")
 
 

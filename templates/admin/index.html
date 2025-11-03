@@ -1166,6 +1166,11 @@
             <span>Logged in as <strong>{{ current_user.email }}</strong> | <a href="{{ request.url_for('logout') }}">Logout</a></span>
         {% endif %}
     </div>
+    <div style="margin-bottom: 20px;">
+        <a href="{{ request.url_for('admin_management') }}" style="display: inline-block; padding: 12px 24px; background: var(--mongodb-green); color: var(--mongodb-dark-blue); text-decoration: none; border-radius: 6px; font-weight: 600; transition: all 0.3s ease;">
+            🔧 Index & User Management
+        </a>
+    </div>
     <h1>Admin Dashboard</h1>
     
     <button class="manage-exports-btn" onclick="openExportsModal()">📦 Manage Exports</button>
@@ -1175,7 +1180,74 @@
       <div class="flash-success">{{ message }}</div>
     {% endif %}
 
-    <h2>Configured Experiments</h2>
+    <!-- Search & Filter Section -->
+    <div style="background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; margin-bottom: 30px;">
+        <h2 style="margin-top: 0; margin-bottom: 15px;">🔍 Browse & Search Experiments</h2>
+        <form method="get" action="{{ request.url_for('admin_dashboard') }}" style="display: flex; gap: 15px; flex-wrap: wrap; align-items: end;">
+            <div style="flex: 1; min-width: 250px;">
+                <label for="search" style="display: block; margin-bottom: 5px; font-weight: 600; color: var(--text-primary);">Search:</label>
+                <input 
+                    type="text" 
+                    id="search" 
+                    name="search" 
+                    value="{{ search or '' }}" 
+                    placeholder="Search by slug, name, description, or owner..."
+                    style="width: 100%; padding: 10px; background: var(--mongodb-dark-blue); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-primary); font-size: 14px;"
+                />
+            </div>
+            <div style="min-width: 200px;">
+                <label for="owner" style="display: block; margin-bottom: 5px; font-weight: 600; color: var(--text-primary);">Filter by Owner:</label>
+                <select 
+                    id="owner" 
+                    name="owner" 
+                    style="width: 100%; padding: 10px; background: var(--mongodb-dark-blue); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-primary); font-size: 14px; cursor: pointer;"
+                >
+                    <option value="">All Owners</option>
+                    {% for owner_email in unique_owners %}
+                        <option value="{{ owner_email }}" {% if owner == owner_email %}selected{% endif %}>{{ owner_email }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div style="min-width: 150px;">
+                <label for="status" style="display: block; margin-bottom: 5px; font-weight: 600; color: var(--text-primary);">Filter by Status:</label>
+                <select 
+                    id="status" 
+                    name="status" 
+                    style="width: 100%; padding: 10px; background: var(--mongodb-dark-blue); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-primary); font-size: 14px; cursor: pointer;"
+                >
+                    <option value="">All Statuses</option>
+                    <option value="active" {% if status == 'active' %}selected{% endif %}>Active</option>
+                    <option value="draft" {% if status == 'draft' %}selected{% endif %}>Draft</option>
+                    <option value="archived" {% if status == 'archived' %}selected{% endif %}>Archived</option>
+                </select>
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button 
+                    type="submit" 
+                    style="padding: 10px 20px; background: var(--mongodb-green); color: var(--mongodb-dark-blue); border: none; border-radius: 6px; font-weight: 600; cursor: pointer; transition: all 0.3s ease;"
+                >
+                    🔍 Search
+                </button>
+                <a 
+                    href="{{ request.url_for('admin_dashboard') }}" 
+                    style="padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 6px; font-weight: 600; text-decoration: none; display: inline-block; transition: all 0.3s ease;"
+                >
+                    🗑️ Clear
+                </a>
+            </div>
+        </form>
+        {% if search or owner or status %}
+            <div style="margin-top: 15px; padding: 10px; background: rgba(0, 237, 100, 0.1); border: 1px solid var(--mongodb-green); border-radius: 6px; color: var(--text-secondary); font-size: 14px;">
+                <strong>Active Filters:</strong>
+                {% if search %}<span style="margin-left: 10px;">Search: "{{ search }}"</span>{% endif %}
+                {% if owner %}<span style="margin-left: 10px;">Owner: {{ owner }}</span>{% endif %}
+                {% if status %}<span style="margin-left: 10px;">Status: {{ status }}</span>{% endif %}
+                <span style="margin-left: 15px; color: var(--mongodb-green);">Showing {{ configured|length }} experiment(s)</span>
+            </div>
+        {% endif %}
+    </div>
+
+    <h2>Configured Experiments ({{ configured|length }})</h2>
     <ul class="exp-list">
         {% for exp in configured %}
             <li class="exp-item" data-slug="{{ exp.slug }}">
@@ -1183,6 +1255,9 @@
                 <p>{{ exp.description }}</p>
                 <div class="exp-meta">
                     <strong>Slug:</strong> <code>{{ exp.slug }}</code><br>
+                    {% if exp.owner_email %}
+                        <strong>Owner:</strong> <span style="color: var(--mongodb-green);">{{ exp.owner_email }}</span><br>
+                    {% endif %}
                     <strong>Auth:</strong> {{ "Required" if exp.auth_required else "Public" }}<br>
                     <strong>Data Scope:</strong> <code>{{ exp.data_scope | join(', ') }}</code><br>
                     <strong>Export Count:</strong> <span style="font-weight: 600; color: #007bff;">{{ exp.export_count | default(0) }}</span>

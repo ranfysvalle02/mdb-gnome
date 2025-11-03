@@ -206,6 +206,65 @@ async def require_admin(
     return dict(user)
 
 
+async def require_admin_or_developer(
+    user: Optional[Mapping[str, Any]] = Depends(get_current_user),
+    authz: AuthorizationProvider = Depends(get_authz_provider),
+) -> Dict[str, Any]:
+    """
+    FastAPI Dependency: Enforces admin OR developer privileges.
+    Developers can upload experiments, admins can upload any experiment.
+    """
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required to upload experiments.",
+        )
+    
+    user_email = user.get("email")
+    if not user_email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token.",
+        )
+    
+    # Check if user is an admin
+    is_admin = await authz.check(
+        subject=user_email,
+        resource="admin_panel",
+        action="access",
+        user_object=dict(user)
+    )
+    
+    if is_admin:
+        logger.debug(
+            f"require_admin_or_developer: Admin '{user_email}' granted access to upload experiments"
+        )
+        return dict(user)
+    
+    # Check if user is a developer (has experiments:manage_own permission)
+    is_developer = await authz.check(
+        subject=user_email,
+        resource="experiments",
+        action="manage_own",
+        user_object=dict(user)
+    )
+    
+    if is_developer:
+        logger.debug(
+            f"require_admin_or_developer: Developer '{user_email}' granted access to upload experiments"
+        )
+        return dict(user)
+    
+    # Neither admin nor developer
+    logger.warning(
+        f"require_admin_or_developer: Access DENIED for '{user_email}'. User is not an admin or developer."
+    )
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Administrator or developer privileges are required to upload experiments.",
+    )
+
+
 async def get_current_user_or_redirect(
     request: Request, user: Optional[Mapping[str, Any]] = Depends(get_current_user)
 ) -> Dict[str, Any]:
@@ -413,7 +472,7 @@ async def require_experiment_ownership_or_admin(
     
     # Developer with manage_own permission: check ownership
     db = getattr(request.app.state, "mongo_db", None)
-    if not db:
+    if db is None:
         logger.error("require_experiment_ownership_or_admin: MongoDB connection not available.")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -501,7 +560,7 @@ async def get_user_experiments(
         return []
     
     db = getattr(request.app.state, "mongo_db", None)
-    if not db:
+    if db is None:
         logger.error("get_user_experiments: MongoDB connection not available.")
         return []
     
@@ -648,7 +707,7 @@ async def get_experiment_config(
     
     # 3. Fetch from database
     db = getattr(request.app.state, "mongo_db", None)
-    if not db:
+    if db is None:
         logger.error("get_experiment_config: MongoDB connection not available.")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -762,7 +821,7 @@ async def get_experiment_configs_batch(
     
     # Fetch missing configs from database in batch
     db = getattr(request.app.state, "mongo_db", None)
-    if not db:
+    if db is None:
         logger.error("get_experiment_configs_batch: MongoDB connection not available.")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

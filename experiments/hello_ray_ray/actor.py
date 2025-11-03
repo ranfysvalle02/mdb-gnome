@@ -1,4 +1,4 @@
-# File: /app/experiments/hello_ray/actor.py
+# File: /app/experiments/demo_ray/actor.py
 
 import logging
 
@@ -18,7 +18,7 @@ class ExperimentActor:
         self,
         mongo_uri: str = None,
         db_name: str = None,
-        write_scope: str = "hello_ray",
+        write_scope: str = "demo_ray",
         read_scopes: list[str] = None
     ):
         self.write_scope = write_scope

@@ -6,7 +6,7 @@ ensuring they conform to the expected structure and include valid index
 definitions.
 """
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Callable, Awaitable
 from jsonschema import validate, ValidationError, SchemaError
 
 logger = logging.getLogger(__name__)
@@ -82,6 +82,11 @@ MANIFEST_SCHEMA = {
                 }
             },
             "description": "Collection name -> collection settings"
+        },
+        "developer_id": {
+            "type": "string",
+            "format": "email",
+            "description": "Email of the developer who owns this experiment"
         }
     },
     "required": [],
@@ -319,6 +324,114 @@ MANIFEST_SCHEMA = {
 }
 
 
+async def validate_developer_id(
+    developer_id: str,
+    db_validator: Optional[Callable[[str], Awaitable[bool]]] = None
+) -> Tuple[bool, Optional[str]]:
+    """
+    Validate that a developer_id exists in the system and has developer role.
+    
+    Args:
+        developer_id: The developer email to validate
+        db_validator: Optional async function that checks if user exists and has developer role
+                    Should return True if valid, False otherwise
+        
+    Returns:
+        Tuple of (is_valid, error_message)
+        - is_valid: True if valid, False otherwise
+        - error_message: Human-readable error message (None if valid)
+    """
+    if not developer_id:
+        return False, "developer_id cannot be empty"
+    
+    if not isinstance(developer_id, str):
+        return False, "developer_id must be a string (email)"
+    
+    # Basic email format check (JSON schema will also validate format)
+    if "@" not in developer_id or "." not in developer_id:
+        return False, f"developer_id '{developer_id}' does not appear to be a valid email"
+    
+    # If db_validator is provided, check database
+    if db_validator:
+        try:
+            is_valid = await db_validator(developer_id)
+            if not is_valid:
+                return False, f"developer_id '{developer_id}' does not exist or does not have developer role"
+        except Exception as e:
+            logger.error(f"Error validating developer_id '{developer_id}': {e}", exc_info=True)
+            return False, f"Error validating developer_id: {e}"
+    
+    return True, None
+
+
+async def validate_manifest_with_db(
+    manifest_data: Dict[str, Any],
+    db_validator: Callable[[str], Awaitable[bool]]
+) -> Tuple[bool, Optional[str], Optional[List[str]]]:
+    """
+    Validate a manifest against the JSON Schema and check developer_id exists in system.
+    
+    Args:
+        manifest_data: The manifest data to validate
+        db_validator: Async function that checks if developer_id exists and has developer role
+                    Should accept developer_id (str) and return bool
+        
+    Returns:
+        Tuple of (is_valid, error_message, error_paths)
+        - is_valid: True if valid, False otherwise
+        - error_message: Human-readable error message (None if valid)
+        - error_paths: List of JSON paths with errors (None if valid)
+    """
+    # First validate schema
+    try:
+        validate(instance=manifest_data, schema=MANIFEST_SCHEMA)
+    except ValidationError as e:
+        error_paths = []
+        error_messages = []
+        
+        # Extract error path and message
+        error_path = ".".join(str(p) for p in e.absolute_path) if e.absolute_path else "root"
+        error_paths.append(error_path)
+        
+        # Build human-readable message
+        if e.absolute_path:
+            field = ".".join(str(p) for p in e.absolute_path)
+            error_messages.append(f"Field '{field}': {e.message}")
+        else:
+            error_messages.append(f"Manifest validation error: {e.message}")
+        
+        # Collect all validation errors from the context
+        for error in e.context:
+            ctx_path = ".".join(str(p) for p in error.absolute_path) if error.absolute_path else "root"
+            error_paths.append(ctx_path)
+            if error.absolute_path:
+                ctx_field = ".".join(str(p) for p in error.absolute_path)
+                error_messages.append(f"Field '{ctx_field}': {error.message}")
+            else:
+                error_messages.append(error.message)
+        
+        combined_message = " | ".join(error_messages[:3])  # Limit to first 3 errors
+        if len(error_messages) > 3:
+            combined_message += f" (+ {len(error_messages) - 3} more errors)"
+        
+        return False, combined_message, error_paths
+    except SchemaError as e:
+        logger.error(f"Schema error (this is a bug): {e}")
+        return False, f"Internal schema validation error: {e}", None
+    except Exception as e:
+        logger.error(f"Unexpected validation error: {e}", exc_info=True)
+        return False, f"Unexpected validation error: {e}", None
+    
+    # Then validate developer_id if present
+    if "developer_id" in manifest_data:
+        dev_id = manifest_data.get("developer_id")
+        is_valid, error_msg = await validate_developer_id(dev_id, db_validator)
+        if not is_valid:
+            return False, f"developer_id validation failed: {error_msg}", ["developer_id"]
+    
+    return True, None, None
+
+
 def validate_manifest(manifest_data: Dict[str, Any]) -> Tuple[bool, Optional[str], Optional[List[str]]]:
     """
     Validate a manifest against the JSON Schema.
@@ -331,6 +444,9 @@ def validate_manifest(manifest_data: Dict[str, Any]) -> Tuple[bool, Optional[str
         - is_valid: True if valid, False otherwise
         - error_message: Human-readable error message (None if valid)
         - error_paths: List of JSON paths with errors (None if valid)
+        
+    Note: This function does NOT validate developer_id against the database.
+          Use validate_manifest_with_db() for database validation.
     """
     try:
         validate(instance=manifest_data, schema=MANIFEST_SCHEMA)
@@ -512,4 +628,3 @@ def validate_managed_indexes(managed_indexes: Dict[str, List[Dict[str, Any]]]) -
                 return False, error_msg
     
     return True, None
-

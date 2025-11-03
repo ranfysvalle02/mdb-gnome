@@ -49,7 +49,7 @@ async def get_actor_handle(
     Note: Relies on main.py's `reload_active_experiments` to ensure the actor is running.
     """
     
-    # 1. FIX: Check global Ray availability state set during main.py lifespan
+    # 1. Check global Ray availability state set during main.py lifespan
     if not getattr(request.app.state, "ray_is_available", False):
         logger.error("[StatsDashboard] Ray is globally unavailable, blocking actor handle request.")
         raise HTTPException(
@@ -57,7 +57,17 @@ async def get_actor_handle(
             detail="Ray service is unavailable. Check Ray cluster status."
         )
 
-    actor_name = "stats_dashboard-actor"
+    # 2. Get the slug from request state (set by main.py routing)
+    slug_id = getattr(request.state, "slug_id", None)
+    if not slug_id:
+        logger.error("[StatsDashboard] Server error: slug_id not found in request state.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server error: slug_id not found in request state."
+        )
+
+    # 3. Construct actor name from slug (matches naming convention in main.py)
+    actor_name = f"{slug_id}-actor"
     try:
         # Attempt to get existing actor by name
         # 'modular_labs' is the namespace set in main.py

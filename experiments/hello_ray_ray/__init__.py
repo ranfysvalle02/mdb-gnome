@@ -1,4 +1,4 @@
-# File: /app/experiments/hello_ray/__init__.py
+# File: /app/experiments/demo_ray/__init__.py
 
 import logging
 import ray
@@ -42,32 +42,16 @@ def get_actor_handle(request: Request) -> ActorHandle:
             detail="Ray Service is unavailable. Check Ray cluster and logs."
         )
 
-    # 2. Get the slug from request state (set by main.py routing)
-    slug_id = getattr(request.state, "slug_id", None)
-    if not slug_id:
-        logger.error("[HelloRay] Server error: slug_id not found in request state.")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Server error: slug_id not found in request state."
-        )
-
     try:
-        # 3. Construct actor name from slug (matches naming convention in main.py)
-        actor_name = f"{slug_id}-actor"
-        logger.debug(f"[HelloRay] Looking up actor '{actor_name}' for slug '{slug_id}'...")
+        # 2. This is the *only* path that should work.
+        # The actor is started by main.py during the app's startup.
+        actor_name = "demo_ray_ray-actor"
         return ray.get_actor(actor_name, namespace="modular_labs")
 
-    except ValueError as e:
-        # Actor doesn't exist - this is a critical server error
+    except Exception as e:
+        # 3. If we can't get the actor, it's a critical server error.
         logger.error(f"[HelloRay] Failed to get actor handle '{actor_name}': {e}", exc_info=True)
         logger.error("This likely means the actor failed to start during the main app's startup sequence.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Experiment service '{actor_name}' is not running."
-        )
-    except Exception as e:
-        # Other errors
-        logger.error(f"[HelloRay] Failed to get actor handle '{actor_name}': {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error connecting to Ray actor '{actor_name}'."
@@ -75,7 +59,7 @@ def get_actor_handle(request: Request) -> ActorHandle:
 
 
 @bp.get("/", response_class=HTMLResponse)
-async def hello_ray_index(request: Request):
+async def demo_ray_index(request: Request):
     """
     A simple route that calls the Ray actor and returns its response.
     """

@@ -43,7 +43,17 @@ async def get_actor_handle(
             detail="Ray service is unavailable. Check Ray cluster status."
         )
 
-    actor_name = "click_tracker-actor"  
+    # 2. Get the slug from request state (set by main.py routing)
+    slug_id = getattr(request.state, "slug_id", None)
+    if not slug_id:
+        logger.error("[ClickTracker] Server error: slug_id not found in request state.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server error: slug_id not found in request state."
+        )
+
+    # 3. Construct actor name from slug (matches naming convention in main.py)
+    actor_name = f"{slug_id}-actor"
     try:  
         # Attempt to get existing actor (which should be running due to main.py lifecycle)
         # 'modular_labs' is the namespace set in main.py

@@ -1,0 +1,1497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Management Panel - Indexes & Users</title>
+    <style>
+        /* MongoDB Theme Colors */
+        :root {
+            --mongodb-green: #00ED64;
+            --mongodb-dark-green: #13AA52;
+            --mongodb-dark-blue: #001E2B;
+            --mongodb-medium-blue: #0F1419;
+            --mongodb-bg: #0A0E27;
+            --text-primary: #E8E8E8;
+            --text-secondary: #B0B0B0;
+            --card-bg: #1A1F35;
+            --border-color: #2A3441;
+            --warning: #FFC107;
+            --error: #DC143C;
+            --success: #28A745;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: var(--mongodb-bg);
+            color: var(--text-primary);
+            padding: 40px 20px;
+            min-height: 100vh;
+            position: relative;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            background: radial-gradient(ellipse at center, var(--mongodb-medium-blue) 0%, var(--mongodb-dark-blue) 100%);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            position: relative;
+            z-index: 1;
+        }
+
+        .header {
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+
+        .header h1 {
+            color: var(--text-primary);
+            text-shadow: 0 0 10px rgba(0, 237, 100, 0.3);
+            margin: 0;
+        }
+
+        .header-nav a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+
+        .header-nav a:hover {
+            color: var(--mongodb-green);
+        }
+
+        .header-nav strong {
+            color: var(--text-primary);
+        }
+
+        /* Tab Navigation */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        .tab {
+            padding: 15px 30px;
+            background: transparent;
+            border: none;
+            border-bottom: 3px solid transparent;
+            color: var(--text-secondary);
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            top: 2px;
+        }
+
+        .tab:hover {
+            color: var(--mongodb-green);
+            background: rgba(0, 237, 100, 0.05);
+        }
+
+        .tab.active {
+            color: var(--mongodb-green);
+            border-bottom-color: var(--mongodb-green);
+            background: rgba(0, 237, 100, 0.1);
+        }
+
+        /* Tab Content */
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Index Management Styles */
+        .indexes-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .filter-controls {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .filter-select {
+            padding: 10px 15px;
+            background: var(--mongodb-dark-blue);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .filter-select:hover {
+            border-color: var(--mongodb-green);
+        }
+
+        .refresh-btn {
+            padding: 10px 20px;
+            background: var(--mongodb-green);
+            color: var(--mongodb-dark-blue);
+            border: 2px solid var(--mongodb-green);
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .refresh-btn:hover:not(:disabled) {
+            background: var(--mongodb-dark-green);
+            transform: translateY(-2px);
+        }
+
+        .refresh-btn:disabled {
+            background: #444;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .indexes-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+            gap: 20px;
+        }
+
+        .index-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .index-card:hover {
+            border-color: var(--mongodb-green);
+            box-shadow: 0 4px 20px rgba(0, 237, 100, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .index-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 15px;
+        }
+
+        .index-name {
+            font-weight: 600;
+            color: var(--text-primary);
+            font-size: 16px;
+            word-break: break-word;
+        }
+
+        .index-type-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .index-type-regular {
+            background: rgba(0, 237, 100, 0.2);
+            color: var(--mongodb-green);
+        }
+
+        .index-type-search {
+            background: rgba(255, 193, 7, 0.2);
+            color: var(--warning);
+        }
+
+        .index-type-vectorSearch {
+            background: rgba(0, 123, 255, 0.2);
+            color: #007BFF;
+        }
+
+        .index-status {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+
+        .status-ready {
+            background: rgba(40, 167, 69, 0.2);
+            color: var(--success);
+        }
+
+        .status-building {
+            background: rgba(255, 193, 7, 0.2);
+            color: var(--warning);
+        }
+
+        .status-failed {
+            background: rgba(220, 20, 60, 0.2);
+            color: var(--error);
+        }
+
+        .status-unknown {
+            background: rgba(108, 117, 125, 0.2);
+            color: var(--text-secondary);
+        }
+
+        .index-details {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .index-detail-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .index-detail-label {
+            color: var(--text-secondary);
+        }
+
+        .index-detail-value {
+            color: var(--text-primary);
+            font-family: 'Courier New', monospace;
+            word-break: break-word;
+        }
+
+        /* User Management Styles */
+        .users-table {
+            width: 100%;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .users-table thead {
+            background: var(--mongodb-dark-blue);
+        }
+
+        .users-table th {
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+            color: var(--text-primary);
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        .users-table td {
+            padding: 15px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .users-table tbody tr:hover {
+            background: rgba(0, 237, 100, 0.05);
+        }
+
+        .users-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        .role-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-right: 5px;
+            margin-bottom: 5px;
+        }
+
+        .role-admin {
+            background: rgba(220, 20, 60, 0.2);
+            color: var(--error);
+        }
+
+        .role-developer {
+            background: rgba(0, 123, 255, 0.2);
+            color: #007BFF;
+        }
+
+        .role-demo {
+            background: rgba(255, 193, 7, 0.2);
+            color: var(--warning);
+        }
+
+        .role-user {
+            background: rgba(108, 117, 125, 0.2);
+            color: var(--text-secondary);
+        }
+
+        .admin-badge {
+            background: rgba(220, 20, 60, 0.2);
+            color: var(--error);
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+
+        .role-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .btn-role {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-role-add {
+            background: var(--mongodb-green);
+            color: var(--mongodb-dark-blue);
+        }
+
+        .btn-role-add:hover {
+            background: var(--mongodb-dark-green);
+        }
+
+        .btn-role-remove {
+            background: var(--error);
+            color: white;
+        }
+
+        .btn-role-remove:hover {
+            background: #B8122E;
+        }
+
+        .btn-role:disabled {
+            background: #444;
+            cursor: not-allowed;
+        }
+
+        /* Loading States */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+
+        .loading::after {
+            content: '...';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60%, 100% { content: '...'; }
+        }
+
+        /* Empty States */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-secondary);
+        }
+
+        .empty-state-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        /* Messages */
+        .message {
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-weight: 500;
+        }
+
+        .message-success {
+            background: rgba(40, 167, 69, 0.2);
+            color: var(--success);
+            border: 1px solid var(--success);
+        }
+
+        .message-error {
+            background: rgba(220, 20, 60, 0.2);
+            color: var(--error);
+            border: 1px solid var(--error);
+        }
+
+        .message-info {
+            background: rgba(0, 237, 100, 0.1);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .indexes-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .users-table {
+                font-size: 14px;
+            }
+
+            .users-table th,
+            .users-table td {
+                padding: 10px;
+            }
+        }
+
+        /* JSON Display */
+        .json-display {
+            background: var(--mongodb-dark-blue);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            color: var(--text-secondary);
+        }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0, 0, 0, 0.5);
+        }
+
+        .modal-content {
+            background-color: var(--mongodb-dark-blue);
+            margin: 10% auto;
+            padding: 0;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h2 {
+            margin: 0;
+            color: var(--text-primary);
+        }
+
+        .close {
+            color: var(--text-secondary);
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            line-height: 1;
+        }
+
+        .close:hover,
+        .close:focus {
+            color: var(--text-primary);
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .message {
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+
+        .message-success {
+            background-color: rgba(16, 185, 129, 0.2);
+            border: 1px solid rgba(16, 185, 129, 0.5);
+            color: #10b981;
+        }
+
+        .message-error {
+            background-color: rgba(239, 68, 68, 0.2);
+            border: 1px solid rgba(239, 68, 68, 0.5);
+            color: #ef4444;
+        }
+
+        .message-info {
+            background-color: rgba(59, 130, 246, 0.2);
+            border: 1px solid rgba(59, 130, 246, 0.5);
+            color: #3b82f6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔧 Admin Management Panel</h1>
+            <div class="header-nav">
+                <a href="{{ request.url_for('admin_dashboard') }}">← Back to Dashboard</a>
+                {% if current_user %}
+                    <span>Logged in as <strong>{{ current_user.email }}</strong></span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="tabs">
+            <button class="tab {{ 'active' if active_tab == 'indexes' else '' }}" onclick="switchTab('indexes')">
+                📊 Index Management
+            </button>
+            <button class="tab {{ 'active' if active_tab == 'users' else '' }}" onclick="switchTab('users')">
+                👥 User & Role Management
+            </button>
+        </div>
+
+        <!-- Index Management Tab -->
+        <div id="indexes-tab" class="tab-content {{ 'active' if active_tab == 'indexes' else '' }}">
+            <div class="indexes-header">
+                <h2>Index Monitoring & Status</h2>
+                <div class="filter-controls">
+                    <select id="collectionFilter" class="filter-select" onchange="filterIndexes()">
+                        <option value="">All Collections</option>
+                        {% for coll in collections_list %}
+                            <option value="{{ coll }}">{{ coll }}</option>
+                        {% endfor %}
+                    </select>
+                    <span id="indexesStatus" style="color: var(--text-secondary); font-size: 0.9em; margin-left: 10px; display: flex; align-items: center; gap: 10px;">
+                        <span id="indexesLastUpdate">Not updated</span>
+                        <button id="refreshIndexesBtn" onclick="refreshIndexes(true)" class="refresh-btn" style="padding: 6px 12px; font-size: 0.85em;">
+                            🔄 Refresh
+                        </button>
+                    </span>
+                </div>
+            </div>
+
+            <div id="indexesContainer">
+                {% if not INDEX_MANAGER_AVAILABLE %}
+                    <div class="message message-error">
+                        ⚠️ Index Management is not available. Please ensure MongoDB Atlas Search is properly configured.
+                    </div>
+                {% elif indexes_data %}
+                    <div class="indexes-grid" id="indexesGrid">
+                        {% for idx in indexes_data %}
+                            <div class="index-card" data-collection="{{ idx.collection }}" data-type="{{ idx.type }}">
+                                <div class="index-header">
+                                    <div>
+                                        <div class="index-name">{{ idx.name }}</div>
+                                        <span class="index-type-badge index-type-{{ idx.type }}">
+                                            {{ idx.type }}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div class="index-status status-{{ idx.status.lower() if idx.status else 'unknown' }}">
+                                    {{ idx.status if idx.status else 'UNKNOWN' }}
+                                    {% if idx.queryable %}✓ Queryable{% endif %}
+                                </div>
+                                <div class="index-details">
+                                    <div class="index-detail-row">
+                                        <span class="index-detail-label">Collection:</span>
+                                        <span class="index-detail-value">{{ idx.collection }}</span>
+                                    </div>
+                                    {% if idx.get("keys") %}
+                                        <div class="index-detail-row">
+                                            <span class="index-detail-label">Keys:</span>
+                                            <span class="index-detail-value">{{ idx.get("keys") | tojson }}</span>
+                                        </div>
+                                    {% endif %}
+                                    {% if idx.unique %}
+                                        <div class="index-detail-row">
+                                            <span class="index-detail-label">Unique:</span>
+                                            <span class="index-detail-value">Yes</span>
+                                        </div>
+                                    {% endif %}
+                                    {% if idx.size and idx.size != 'N/A' %}
+                                        <div class="index-detail-row">
+                                            <span class="index-detail-label">Size:</span>
+                                            <span class="index-detail-value">{{ idx.size }}</span>
+                                        </div>
+                                    {% endif %}
+                                    {% if idx.definition %}
+                                        <div class="index-detail-row">
+                                            <span class="index-detail-label">Definition:</span>
+                                            <div class="json-display">{{ idx.definition | tojson(indent=2) }}</div>
+                                        </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📊</div>
+                        <h3>No indexes found</h3>
+                        <p>Indexes are automatically managed via manifest.json. No indexes have been created yet.</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- User & Role Management Tab -->
+        <div id="users-tab" class="tab-content {{ 'active' if active_tab == 'users' else '' }}">
+            <div class="indexes-header">
+                <h2>User & Role Management</h2>
+                <div class="filter-controls">
+                    <span id="usersStatus" style="color: var(--text-secondary); font-size: 0.9em; display: flex; align-items: center; gap: 10px;">
+                        <span id="usersLastUpdate">Not updated</span>
+                        <button id="refreshUsersBtn" onclick="refreshUsers(true, true)" class="refresh-btn" style="padding: 6px 12px; font-size: 0.85em;">
+                            🔄 Refresh
+                        </button>
+                    </span>
+                    <button class="refresh-btn" onclick="openCreateUserModal()" style="background: var(--mongodb-green); color: var(--mongodb-dark-blue); margin-left: 10px;">
+                        ➕ Create User
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Create User Modal -->
+            <div id="createUserModal" class="modal" style="display: none;">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2>➕ Create New User</h2>
+                        <span class="close" onclick="closeCreateUserModal()">&times;</span>
+                    </div>
+                    <div class="modal-body">
+                        <form id="createUserForm" onsubmit="handleCreateUser(event)">
+                            <div class="form-group">
+                                <label for="newUserEmail">Email *</label>
+                                <input type="email" id="newUserEmail" name="email" required 
+                                       placeholder="user@example.com"
+                                       style="width: 100%; padding: 10px; background: var(--mongodb-dark-blue); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-primary); font-size: 14px; box-sizing: border-box;" />
+                            </div>
+                            <div class="form-group">
+                                <label for="newUserPassword">Password * (min 8 characters)</label>
+                                <input type="password" id="newUserPassword" name="password" required minlength="8"
+                                       placeholder="Enter password"
+                                       style="width: 100%; padding: 10px; background: var(--mongodb-dark-blue); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-primary); font-size: 14px; box-sizing: border-box;" />
+                            </div>
+                            <div class="form-group">
+                                <label for="newUserRole">Role *</label>
+                                <select id="newUserRole" name="role" required
+                                        style="width: 100%; padding: 10px; background: var(--mongodb-dark-blue); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-primary); font-size: 14px; cursor: pointer; box-sizing: border-box;">
+                                    <option value="developer" selected>Developer</option>
+                                    <option value="user">User</option>
+                                </select>
+                                <small style="color: var(--text-secondary); font-size: 0.9em; display: block; margin-top: 5px;">
+                                    Note: Admin and demo users are managed via .env configuration only. Only 'developer' and 'user' roles can be created via this UI.
+                                </small>
+                            </div>
+                            <div id="createUserStatus" class="message" style="display: none; margin-top: 15px;"></div>
+                            <div style="display: flex; gap: 10px; margin-top: 20px;">
+                                <button type="button" onclick="closeCreateUserModal()" 
+                                        style="flex: 1; padding: 10px; background: #6c757d; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer;">
+                                    Cancel
+                                </button>
+                                <button type="submit" id="createUserBtn"
+                                        style="flex: 1; padding: 10px; background: var(--mongodb-green); color: var(--mongodb-dark-blue); border: none; border-radius: 6px; font-weight: 600; cursor: pointer;">
+                                    ➕ Create User
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <div id="usersContainer">
+                {% if users_data %}
+                    <table class="users-table">
+                        <thead>
+                            <tr>
+                                <th>Email</th>
+                                <th>Admin</th>
+                                <th>Roles</th>
+                                <th>Actions</th>
+                                <th>Created</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTableBody">
+                            {% for user in users_data %}
+                                <tr data-email="{{ user.email }}">
+                                    <td><strong>{{ user.email }}</strong></td>
+                                    <td>
+                                        {% if user.is_admin %}
+                                            <span class="admin-badge">Admin</span>
+                                        {% else %}
+                                            <span style="color: var(--text-secondary);">—</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% for role in user.roles %}
+                                            <span class="role-badge role-{{ role }}">{{ role }}</span>
+                                        {% endfor %}
+                                        {% if not user.roles %}
+                                            <span style="color: var(--text-secondary);">No roles</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% set is_admin_user = user.is_admin %}
+                                        {% set has_demo_role = user.roles and 'demo' in user.roles %}
+                                        {% if is_admin_user or has_demo_role %}
+                                            <span style="color: var(--text-secondary); font-size: 0.9em; font-style: italic;">
+                                                Managed via .env
+                                            </span>
+                                        {% else %}
+                                            <div class="role-actions">
+                                                <select class="filter-select" id="roleSelect_{{ loop.index0 }}">
+                                                    <option value="">Select role...</option>
+                                                    <option value="developer">Developer</option>
+                                                    <option value="user">User</option>
+                                                </select>
+                                                <button class="btn-role btn-role-add" onclick="assignRole('{{ user.email }}', 'roleSelect_{{ loop.index0 }}')">
+                                                    ➕ Add
+                                                </button>
+                                                {% if user.roles %}
+                                                    {% for role in user.roles %}
+                                                        {% if role not in ['admin', 'demo'] %}
+                                                            <button class="btn-role btn-role-remove" onclick="removeRole('{{ user.email }}', '{{ role }}')">
+                                                                ➖ Remove {{ role }}
+                                                            </button>
+                                                        {% endif %}
+                                                    {% endfor %}
+                                                {% endif %}
+                                            </div>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if user.created_at %}
+                                            {{ user.created_at.strftime('%Y-%m-%d') if user.created_at.__class__.__name__ != 'str' else user.created_at.split('T')[0] }}
+                                        {% else %}
+                                            <span style="color: var(--text-secondary);">—</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                {% else %}
+                    <div class="empty-state">
+                        <div class="empty-state-icon">👥</div>
+                        <h3>No users found</h3>
+                        <p>There are no users in the system yet.</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function switchTab(tab) {
+            // Update URL without reload
+            const url = new URL(window.location);
+            url.searchParams.set('tab', tab);
+            window.history.pushState({}, '', url);
+            
+            // Switch active tab buttons - find button by text content
+            document.querySelectorAll('.tab').forEach(t => {
+                t.classList.remove('active');
+                // If this button matches the tab we're switching to, activate it
+                const buttonText = t.textContent.toLowerCase();
+                if ((tab === 'indexes' && buttonText.includes('index')) || 
+                    (tab === 'users' && buttonText.includes('user'))) {
+                    t.classList.add('active');
+                }
+            });
+            
+            // Switch active tab content
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            const tabContent = document.getElementById(tab + '-tab');
+            if (tabContent) {
+                tabContent.classList.add('active');
+            }
+        }
+        
+        function toggleAutoRefresh(tab) {
+            if (tab === 'indexes') {
+                indexesPaused = !indexesPaused;
+                const btn = document.getElementById('pauseIndexesBtn');
+                if (indexesPaused) {
+                    if (indexesRefreshInterval) {
+                        clearInterval(indexesRefreshInterval);
+                        indexesRefreshInterval = null;
+                    }
+                    btn.textContent = '▶️ Resume';
+                    btn.style.color = 'var(--mongodb-green)';
+                    document.getElementById('indexesLastUpdate').textContent = 'Auto-refresh paused';
+                } else {
+                    startIndexesAutoRefresh();
+                    btn.textContent = '⏸️ Pause';
+                    btn.style.color = 'var(--text-secondary)';
+                    document.getElementById('indexesLastUpdate').textContent = 'Auto-refreshing every 5 min...';
+                }
+            } else if (tab === 'users') {
+                usersPaused = !usersPaused;
+                const btn = document.getElementById('pauseUsersBtn');
+                if (usersPaused) {
+                    if (usersRefreshInterval) {
+                        clearInterval(usersRefreshInterval);
+                        usersRefreshInterval = null;
+                    }
+                    btn.textContent = '▶️ Resume';
+                    btn.style.color = 'var(--mongodb-green)';
+                    document.getElementById('usersLastUpdate').querySelector('span').textContent = 'Auto-refresh paused';
+                } else {
+                    startUsersAutoRefresh();
+                    btn.textContent = '⏸️ Pause';
+                    btn.style.color = 'var(--text-secondary)';
+                    document.getElementById('usersLastUpdate').querySelector('span').textContent = 'Auto-refreshing every 1 min...';
+                }
+            }
+        }
+        
+        function startIndexesAutoRefresh() {
+            if (indexesRefreshInterval) clearInterval(indexesRefreshInterval);
+            if (indexesPaused) return; // Don't start if paused
+            
+            indexesRefreshInterval = setInterval(() => {
+                // Only refresh if tab is visible and active
+                const indexesTab = document.getElementById('indexes-tab');
+                if (indexesTab && indexesTab.classList.contains('active') && !document.hidden) {
+                    refreshIndexes(false); // Don't show status on auto-refresh
+                }
+            }, INDEXES_REFRESH_INTERVAL_MS);
+        }
+        
+        function startUsersAutoRefresh() {
+            if (usersRefreshInterval) clearInterval(usersRefreshInterval);
+            if (usersPaused) return; // Don't start if paused
+            
+            usersRefreshInterval = setInterval(() => {
+                // Only refresh if tab is visible and active
+                const usersTab = document.getElementById('users-tab');
+                if (usersTab && usersTab.classList.contains('active') && !document.hidden) {
+                    refreshUsers(false, true); // Silent refresh, update UI
+                }
+            }, USERS_REFRESH_INTERVAL_MS);
+        }
+        
+        // Pause refresh when page is hidden, resume when visible
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                // Page is hidden, pause refresh
+                if (indexesRefreshInterval) {
+                    clearInterval(indexesRefreshInterval);
+                    indexesRefreshInterval = null;
+                }
+                if (usersRefreshInterval) {
+                    clearInterval(usersRefreshInterval);
+                    usersRefreshInterval = null;
+                }
+            } else {
+                // Page is visible again, resume refresh
+                const activeTab = document.querySelector('.tab.active')?.id;
+                if (activeTab === 'indexes-tab' && !indexesPaused) {
+                    startIndexesAutoRefresh();
+                } else if (activeTab === 'users-tab' && !usersPaused) {
+                    startUsersAutoRefresh();
+                }
+            }
+        });
+
+        function filterIndexes() {
+            const filter = document.getElementById('collectionFilter').value;
+            const cards = document.querySelectorAll('.index-card');
+            
+            cards.forEach(card => {
+                if (!filter || card.dataset.collection === filter) {
+                    card.style.display = 'block';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+        }
+
+        // Last updated timestamps and highlight management
+        let indexesLastUpdated = null;
+        let usersLastUpdated = null;
+        let highlightInterval = null;
+        
+        function updateLastUpdatedTime(tab) {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString();
+            
+            if (tab === 'indexes') {
+                indexesLastUpdated = now;
+                const statusEl = document.getElementById('indexesLastUpdate');
+                if (statusEl) {
+                    statusEl.textContent = `Last updated: ${timeStr}`;
+                }
+            } else if (tab === 'users') {
+                usersLastUpdated = now;
+                const statusEl = document.getElementById('usersLastUpdate');
+                if (statusEl) {
+                    statusEl.textContent = `Last updated: ${timeStr}`;
+                }
+            }
+        }
+        
+        function updateHighlight() {
+            const now = Date.now();
+            const oneMinute = 60 * 1000;
+            const maxHighlight = 5 * 60 * 1000; // Max highlight at 5 minutes
+            
+            // Update indexes button highlight
+            const indexesBtn = document.getElementById('refreshIndexesBtn');
+            if (indexesBtn && indexesLastUpdated) {
+                const elapsed = now - indexesLastUpdated.getTime();
+                if (elapsed > oneMinute) {
+                    const highlightIntensity = Math.min(1, (elapsed - oneMinute) / (maxHighlight - oneMinute));
+                    const opacity = 0.3 + (highlightIntensity * 0.7); // 0.3 to 1.0
+                    const glow = Math.min(10, highlightIntensity * 10); // 0 to 10px
+                    indexesBtn.style.boxShadow = `0 0 ${glow}px rgba(0, 237, 100, ${opacity})`;
+                    indexesBtn.style.borderColor = `rgba(0, 237, 100, ${opacity})`;
+                } else {
+                    indexesBtn.style.boxShadow = '';
+                    indexesBtn.style.borderColor = '';
+                }
+            }
+            
+            // Update users button highlight
+            const usersBtn = document.getElementById('refreshUsersBtn');
+            if (usersBtn && usersLastUpdated) {
+                const elapsed = now - usersLastUpdated.getTime();
+                if (elapsed > oneMinute) {
+                    const highlightIntensity = Math.min(1, (elapsed - oneMinute) / (maxHighlight - oneMinute));
+                    const opacity = 0.3 + (highlightIntensity * 0.7); // 0.3 to 1.0
+                    const glow = Math.min(10, highlightIntensity * 10); // 0 to 10px
+                    usersBtn.style.boxShadow = `0 0 ${glow}px rgba(0, 237, 100, ${opacity})`;
+                    usersBtn.style.borderColor = `rgba(0, 237, 100, ${opacity})`;
+                } else {
+                    usersBtn.style.boxShadow = '';
+                    usersBtn.style.borderColor = '';
+                }
+            }
+        }
+
+        async function refreshIndexes(showStatus = true) {
+            const btn = document.getElementById('refreshIndexesBtn');
+            if (btn) btn.disabled = true;
+            
+            const statusEl = document.getElementById('indexesLastUpdate');
+            if (showStatus && statusEl) {
+                statusEl.textContent = '⏳ Updating...';
+                statusEl.style.color = 'var(--mongodb-green)';
+            }
+            
+            try {
+                const baseUrl = window.location.origin;
+                const response = await fetch(`${baseUrl}/admin/api/indexes`);
+                const data = await response.json();
+                
+                if (data.status === 'success' && data.indexes) {
+                    updateIndexesGrid(data.indexes);
+                    updateLastUpdatedTime('indexes');
+                } else {
+                    console.error('Failed to refresh indexes:', data);
+                }
+            } catch (error) {
+                console.error('Error refreshing indexes:', error);
+            } finally {
+                const btn = document.getElementById('refreshIndexesBtn');
+                if (btn) btn.disabled = false;
+            }
+        }
+        
+        function updateIndexesGrid(indexes) {
+            const container = document.getElementById('indexesContainer');
+            if (!container) return;
+            
+            if (!indexes || indexes.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📊</div>
+                        <h3>No indexes found</h3>
+                        <p>Indexes are automatically managed via manifest.json. No indexes have been created yet.</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            const grid = document.getElementById('indexesGrid');
+            if (!grid) {
+                // Create grid if it doesn't exist
+                container.innerHTML = '<div class="indexes-grid" id="indexesGrid"></div>';
+                const newGrid = document.getElementById('indexesGrid');
+                renderIndexesCards(newGrid, indexes);
+            } else {
+                renderIndexesCards(grid, indexes);
+            }
+            
+            // Update collection filter options
+            const collections = [...new Set(indexes.map(idx => idx.collection))].sort();
+            const filterSelect = document.getElementById('collectionFilter');
+            if (filterSelect) {
+                const currentValue = filterSelect.value;
+                filterSelect.innerHTML = '<option value="">All Collections</option>';
+                collections.forEach(coll => {
+                    const option = document.createElement('option');
+                    option.value = coll;
+                    option.textContent = coll;
+                    if (currentValue === coll) option.selected = true;
+                    filterSelect.appendChild(option);
+                });
+            }
+        }
+        
+        function renderIndexesCards(container, indexes) {
+            container.innerHTML = '';
+            
+            indexes.forEach(idx => {
+                const card = document.createElement('div');
+                card.className = 'index-card';
+                card.dataset.collection = idx.collection;
+                card.dataset.type = idx.type;
+                
+                let html = `
+                    <div class="index-header">
+                        <div>
+                            <div class="index-name">${escapeHtml(idx.name || 'unknown')}</div>
+                            <span class="index-type-badge index-type-${idx.type || 'unknown'}">
+                                ${idx.type || 'unknown'}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="index-status status-${(idx.status || 'unknown').toLowerCase()}">
+                        ${idx.status || 'UNKNOWN'}${idx.queryable ? ' ✓ Queryable' : ''}
+                    </div>
+                    <div class="index-details">
+                        <div class="index-detail-row">
+                            <span class="index-detail-label">Collection:</span>
+                            <span class="index-detail-value">${escapeHtml(idx.collection || 'unknown')}</span>
+                        </div>
+                `;
+                
+                if (idx.keys) {
+                    html += `
+                        <div class="index-detail-row">
+                            <span class="index-detail-label">Keys:</span>
+                            <span class="index-detail-value">${JSON.stringify(idx.keys)}</span>
+                        </div>
+                    `;
+                }
+                
+                if (idx.unique) {
+                    html += `
+                        <div class="index-detail-row">
+                            <span class="index-detail-label">Unique:</span>
+                            <span class="index-detail-value">Yes</span>
+                        </div>
+                    `;
+                }
+                
+                if (idx.size && idx.size !== 'N/A') {
+                    html += `
+                        <div class="index-detail-row">
+                            <span class="index-detail-label">Size:</span>
+                            <span class="index-detail-value">${idx.size}</span>
+                        </div>
+                    `;
+                }
+                
+                if (idx.definition) {
+                    html += `
+                        <div class="index-detail-row">
+                            <span class="index-detail-label">Definition:</span>
+                            <div class="json-display">${JSON.stringify(idx.definition, null, 2)}</div>
+                        </div>
+                    `;
+                }
+                
+                html += '</div>';
+                card.innerHTML = html;
+                container.appendChild(card);
+            });
+        }
+
+        async function refreshUsers(showStatus = true, updateUI = true) {
+            const btn = document.getElementById('refreshUsersBtn');
+            if (btn) btn.disabled = true;
+            
+            const statusEl = document.getElementById('usersLastUpdate');
+            
+            if (showStatus && statusEl) {
+                statusEl.textContent = '⏳ Updating...';
+                statusEl.style.color = 'var(--mongodb-green)';
+            }
+            
+            try {
+                const baseUrl = window.location.origin;
+                const response = await fetch(`${baseUrl}/admin/api/users`);
+                const data = await response.json();
+                
+                if (data.status === 'success' && data.users) {
+                    if (updateUI) {
+                        updateUsersTable(data.users);
+                    }
+                    updateLastUpdatedTime('users');
+                } else {
+                    console.error('Failed to refresh users:', data);
+                }
+            } catch (error) {
+                console.error('Error refreshing users:', error);
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        function updateUsersTable(users) {
+            const tbody = document.getElementById('usersTableBody');
+            if (!tbody) return;
+            
+            // Clear existing rows
+            tbody.innerHTML = '';
+            
+            // Rebuild table rows
+            users.forEach((user, index) => {
+                const row = document.createElement('tr');
+                row.dataset.email = user.email;
+                
+                // Email
+                const emailCell = document.createElement('td');
+                emailCell.innerHTML = `<strong>${escapeHtml(user.email)}</strong>`;
+                row.appendChild(emailCell);
+                
+                // Admin badge
+                const adminCell = document.createElement('td');
+                if (user.is_admin) {
+                    adminCell.innerHTML = '<span class="admin-badge">Admin</span>';
+                } else {
+                    adminCell.innerHTML = '<span style="color: var(--text-secondary);">—</span>';
+                }
+                row.appendChild(adminCell);
+                
+                // Roles
+                const rolesCell = document.createElement('td');
+                if (user.roles && user.roles.length > 0) {
+                    user.roles.forEach(role => {
+                        const badge = document.createElement('span');
+                        badge.className = `role-badge role-${role}`;
+                        badge.textContent = role;
+                        rolesCell.appendChild(badge);
+                    });
+                } else {
+                    rolesCell.innerHTML = '<span style="color: var(--text-secondary);">No roles</span>';
+                }
+                row.appendChild(rolesCell);
+                
+                // Actions
+                const actionsCell = document.createElement('td');
+                const isAdminUser = user.is_admin;
+                const hasDemoRole = user.roles && user.roles.includes('demo');
+                
+                if (isAdminUser || hasDemoRole) {
+                    actionsCell.innerHTML = '<span style="color: var(--text-secondary); font-size: 0.9em; font-style: italic;">Managed via .env</span>';
+                } else {
+                    const roleActions = document.createElement('div');
+                    roleActions.className = 'role-actions';
+                    
+                    // Role select
+                    const select = document.createElement('select');
+                    select.className = 'filter-select';
+                    select.id = `roleSelect_${index}`;
+                    select.innerHTML = `
+                        <option value="">Select role...</option>
+                        <option value="developer">Developer</option>
+                        <option value="user">User</option>
+                    `;
+                    roleActions.appendChild(select);
+                    
+                    // Add button
+                    const addBtn = document.createElement('button');
+                    addBtn.className = 'btn-role btn-role-add';
+                    addBtn.textContent = '➕ Add';
+                    addBtn.onclick = () => assignRole(user.email, select.id);
+                    roleActions.appendChild(addBtn);
+                    
+                    // Remove buttons for each role (except admin/demo)
+                    if (user.roles && user.roles.length > 0) {
+                        user.roles.forEach(role => {
+                            if (role !== 'admin' && role !== 'demo') {
+                                const removeBtn = document.createElement('button');
+                                removeBtn.className = 'btn-role btn-role-remove';
+                                removeBtn.textContent = `➖ Remove ${role}`;
+                                removeBtn.onclick = () => removeRole(user.email, role);
+                                roleActions.appendChild(removeBtn);
+                            }
+                        });
+                    }
+                    
+                    actionsCell.appendChild(roleActions);
+                }
+                row.appendChild(actionsCell);
+                
+                // Created date
+                const createdCell = document.createElement('td');
+                if (user.created_at) {
+                    const dateStr = typeof user.created_at === 'string' 
+                        ? user.created_at.split('T')[0] 
+                        : new Date(user.created_at).toISOString().split('T')[0];
+                    createdCell.textContent = dateStr;
+                } else {
+                    createdCell.innerHTML = '<span style="color: var(--text-secondary);">—</span>';
+                }
+                row.appendChild(createdCell);
+                
+                tbody.appendChild(row);
+            });
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        async function assignRole(userEmail, selectId) {
+            const select = document.getElementById(selectId);
+            const role = select.value;
+            
+            if (!role) {
+                alert('Please select a role to assign.');
+                return;
+            }
+            
+            if (!confirm(`Assign role '${role}' to ${userEmail}?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/admin/api/users/${encodeURIComponent(userEmail)}/roles/${role}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    // Show success message briefly
+                    const statusEl = document.getElementById('usersLastUpdate');
+                    if (statusEl) {
+                        statusEl.textContent = '✅ ' + data.message.split('.')[0];
+                        statusEl.style.color = 'var(--mongodb-green)';
+                    }
+                    // Update UI immediately without page reload
+                    await refreshUsers(false, true);
+                    setTimeout(() => {
+                        if (statusEl) {
+                            const now = new Date();
+                            statusEl.textContent = `✓ Updated ${now.toLocaleTimeString()}`;
+                            statusEl.style.color = 'var(--text-secondary)';
+                        }
+                    }, 2000);
+                } else {
+                    alert('❌ Failed to assign role: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error assigning role:', error);
+                alert('Error assigning role: ' + error.message);
+            }
+        }
+
+        async function removeRole(userEmail, role) {
+            if (!confirm(`Remove role '${role}' from ${userEmail}?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/admin/api/users/${encodeURIComponent(userEmail)}/roles/${role}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    // Show success message briefly
+                    const statusEl = document.getElementById('usersLastUpdate');
+                    if (statusEl) {
+                        statusEl.textContent = '✅ ' + data.message.split('.')[0];
+                        statusEl.style.color = 'var(--mongodb-green)';
+                    }
+                    // Update UI immediately without page reload
+                    await refreshUsers(false, true);
+                    setTimeout(() => {
+                        if (statusEl) {
+                            const now = new Date();
+                            statusEl.textContent = `✓ Updated ${now.toLocaleTimeString()}`;
+                            statusEl.style.color = 'var(--text-secondary)';
+                        }
+                    }, 2000);
+                } else {
+                    alert('❌ Failed to remove role: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error removing role:', error);
+                alert('Error removing role: ' + error.message);
+            }
+        }
+
+        function openCreateUserModal() {
+            const modal = document.getElementById('createUserModal');
+            const form = document.getElementById('createUserForm');
+            const status = document.getElementById('createUserStatus');
+            
+            form.reset();
+            status.style.display = 'none';
+            status.className = 'message';
+            modal.style.display = 'block';
+        }
+
+        function closeCreateUserModal() {
+            const modal = document.getElementById('createUserModal');
+            modal.style.display = 'none';
+        }
+
+        async function handleCreateUser(event) {
+            event.preventDefault();
+            
+            const email = document.getElementById('newUserEmail').value;
+            const password = document.getElementById('newUserPassword').value;
+            const role = document.getElementById('newUserRole').value;
+            const status = document.getElementById('createUserStatus');
+            const btn = document.getElementById('createUserBtn');
+            
+            status.style.display = 'block';
+            status.className = 'message message-info';
+            status.textContent = '⏳ Creating user...';
+            btn.disabled = true;
+            
+            try {
+                const response = await fetch('/admin/api/users/create', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        email: email,
+                        password: password,
+                        role: role
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    status.className = 'message message-success';
+                    status.textContent = '✅ ' + data.message;
+                    // Update UI immediately without page reload
+                    setTimeout(async () => {
+                        closeCreateUserModal();
+                        await refreshUsers(false, true);
+                        const statusEl = document.getElementById('usersLastUpdate');
+                        if (statusEl) {
+                            const now = new Date();
+                            statusEl.textContent = `✓ Updated ${now.toLocaleTimeString()}`;
+                            statusEl.style.color = 'var(--text-secondary)';
+                        }
+                    }, 1000);
+                } else {
+                    status.className = 'message message-error';
+                    status.textContent = '❌ ' + (data.error || 'Failed to create user');
+                    btn.disabled = false;
+                }
+            } catch (error) {
+                console.error('Error creating user:', error);
+                status.className = 'message message-error';
+                status.textContent = '❌ Error: ' + error.message;
+                btn.disabled = false;
+            }
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('createUserModal');
+            if (event.target === modal) {
+                closeCreateUserModal();
+            }
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Always default to indexes tab first, unless explicitly specified in URL
+            const urlParams = new URLSearchParams(window.location.search);
+            const activeTab = urlParams.get('tab') === 'users' ? 'users' : 'indexes';
+            
+            // Switch to the active tab immediately
+            switchTab(activeTab);
+            
+            // Load initial data for the active tab
+            if (activeTab === 'users') {
+                setTimeout(() => refreshUsers(true, true), 500);
+            } else {
+                // Default to indexes tab
+                setTimeout(() => refreshIndexes(true), 500);
+            }
+            
+            // Start highlight interval (checks every 5 seconds)
+            highlightInterval = setInterval(updateHighlight, 5000);
+        });
+    </script>
+</body>
+</html>
