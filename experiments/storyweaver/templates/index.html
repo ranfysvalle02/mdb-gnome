@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+
+{% block title %}Workspace - Story Weaver{% endblock %}
+
+{% block content %}
+<main class="space-y-12">
+    <div class="text-center">
+        <h2 class="text-4xl font-extrabold text-slate-900">Your Workspace</h2>
+        <p class="mt-2 text-lg text-slate-600">Create, manage, and weave your writing projects.</p>
+    </div>
+    <div class="content-card max-w-3xl mx-auto">
+        <h3 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">✨</span> Create New Project</h3>
+        <form id="new-project-form" class="space-y-4">
+            <div>
+                <label for="project-name-input" class="block text-sm font-medium text-slate-700 mb-1">Project Name</label>
+                <input type="text" id="project-name-input" required class="form-input" placeholder="e.g., 'Grandma's Biography' or 'Biology 101'">
+            </div>
+             <div>
+                <label for="project-type-select" class="block text-sm font-medium text-slate-700 mb-1">Project Type</label>
+                <select id="project-type-select" class="form-select">
+                    <option value="story">Story / Creative</option>
+                    <option value="study">Study Aid</option>
+                </select>
+            </div>
+            <div>
+                <label for="project-goal-input" class="block text-sm font-medium text-slate-700 mb-1">Project Goal</label>
+                <textarea id="project-goal-input" rows="3" required class="form-textarea" placeholder="e.g., 'A biography of my grandfather' or 'Study for the midterm exam'"></textarea>
+            </div>
+            <div class="flex justify-end pt-2">
+                <button type="submit" class="btn btn-primary">Create Project</button>
+            </div>
+        </form>
+    </div>
+    <div>
+        <h3 class="text-3xl font-bold mb-6 text-center md:text-left">All Projects</h3>
+        <div id="projects-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {% if projects %}
+                {% for project in projects %}
+                <div class="card-reveal project-card relative group">
+                    <a href="/experiments/storyweaver/project/{{ project._id }}" class="block">
+                        <div class="flex justify-between items-start">
+                            <h4 class="text-xl font-bold text-slate-800 truncate mb-2 pr-2">{{ project.get('name', 'PROJECT NAME MISSING') }}</h4>
+                            {% if project.get('project_type') == 'study' %}
+                            <span class="text-xs font-semibold bg-cyan-100 text-cyan-800 px-2 py-1 rounded-full">Study</span>
+                            {% else %}
+                            <span class="text-xs font-semibold bg-purple-100 text-purple-800 px-2 py-1 rounded-full">Story</span>
+                            {% endif %}
+                        </div>
+                        <p class="text-sm text-slate-600 italic border-l-2 border-pink-200 pl-3 mb-4">"{{ project.get('project_goal', 'Goal missing.') }}"</p>
+                        <p class="text-xs text-slate-500 mt-auto pt-2 border-t border-slate-200/80">
+                            Created: 
+                            {% if project.created_at and project.created_at.strftime %}
+                                {{ project.created_at.strftime('%B %d, %Y') }}
+                            {% else %}
+                                Date Missing
+                            {% endif %}
+                        </p>
+                    </a>
+                    <button 
+                        class="delete-project-btn absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-red-500 hover:text-red-700 p-1 rounded"
+                        data-project-id="{{ project._id }}"
+                        data-project-name="{{ project.get('name', 'Project') }}"
+                        title="Delete project">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                        </svg>
+                    </button>
+                </div>
+                {% endfor %}
+            {% else %}
+                <p id="no-projects-message" class="text-slate-500 col-span-full text-center py-8">You haven't created any projects yet. Get started above!</p>
+            {% endif %}
+        </div>
+    </div>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('DOM loaded, setting up create project form...');
+    
+    // Animate cards on load
+    const cards = document.querySelectorAll('.card-reveal');
+    cards.forEach((card, index) => {
+        setTimeout(() => {
+            card.classList.add('reveal');
+        }, index * 100);
+    });
+
+    // Create project form
+    const form = document.getElementById('new-project-form');
+    console.log('Form element:', form);
+    
+    if (form) {
+        console.log('Form found, attaching submit handler...');
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            console.log('Form submitted!');
+            
+            const submitBtn = e.target.querySelector('button[type="submit"]');
+            const originalText = submitBtn.textContent;
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Creating...';
+
+            const nameInput = document.getElementById('project-name-input');
+            const goalInput = document.getElementById('project-goal-input');
+            const typeSelect = document.getElementById('project-type-select');
+            
+            console.log('Form inputs:', {
+                name: nameInput?.value,
+                goal: goalInput?.value,
+                type: typeSelect?.value
+            });
+
+            if (!nameInput || !goalInput || !typeSelect) {
+                alert('Error: Form inputs not found. Please refresh the page.');
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+                return;
+            }
+
+            const formData = {
+                name: nameInput.value.trim(),
+                project_goal: goalInput.value.trim(),
+                project_type: typeSelect.value
+            };
+
+            if (!formData.name || !formData.project_goal) {
+                alert('Please fill in both project name and goal.');
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+                return;
+            }
+
+            console.log('Sending request with data:', formData);
+
+            try {
+                const response = await fetch('/experiments/storyweaver/api/projects', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include', // Include cookies for authentication
+                    body: JSON.stringify(formData)
+                });
+                
+                console.log('Response status:', response.status);
+                console.log('Response ok:', response.ok);
+                
+                const responseText = await response.text();
+                console.log('Response text:', responseText);
+                
+                let result;
+                try {
+                    result = JSON.parse(responseText);
+                } catch (parseError) {
+                    console.error('Failed to parse JSON:', parseError);
+                    throw new Error(`Server returned invalid JSON: ${responseText.substring(0, 100)}`);
+                }
+                
+                console.log('Parsed result:', result);
+                
+                if (!response.ok) {
+                    throw new Error(result.detail || result.message || `HTTP ${response.status}`);
+                }
+                
+                if (result.status === 'success') {
+                    console.log('Success! Redirecting to project:', result.project._id);
+                    window.location.href = `/experiments/storyweaver/project/${result.project._id}`;
+                } else {
+                    alert('Error creating project: ' + (result.message || 'Unknown error'));
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = originalText;
+                }
+            } catch (error) {
+                console.error('Error creating project:', error);
+                console.error('Error stack:', error.stack);
+                alert('Error creating project: ' + error.message);
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+            }
+        });
+    } else {
+        console.error('Form with id "new-project-form" not found!');
+    }
+
+    // Delete project functionality
+    document.querySelectorAll('.delete-project-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            e.stopPropagation(); // Prevent link navigation
+            
+            const projectId = btn.dataset.projectId;
+            const projectName = btn.dataset.projectName;
+            
+            if (!confirm(`Are you sure you want to delete "${projectName}"?\n\nThis will permanently delete the project and all its notes, invites, and quizzes. This action cannot be undone.`)) {
+                return;
+            }
+            
+            btn.disabled = true;
+            const originalHTML = btn.innerHTML;
+            btn.innerHTML = '<svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
+            
+            try {
+                const response = await fetch(`/experiments/storyweaver/api/projects/${projectId}`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include'
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    // Remove the project card with animation
+                    const projectCard = btn.closest('.project-card');
+                    projectCard.style.transition = 'opacity 0.3s, transform 0.3s';
+                    projectCard.style.opacity = '0';
+                    projectCard.style.transform = 'scale(0.95)';
+                    
+                    setTimeout(() => {
+                        projectCard.remove();
+                        
+                        // Check if no projects remain
+                        const remainingProjects = document.querySelectorAll('.project-card').length;
+                        if (remainingProjects === 0) {
+                            const container = document.getElementById('projects-container');
+                            container.innerHTML = '<p id="no-projects-message" class="text-slate-500 col-span-full text-center py-8">You haven\'t created any projects yet. Get started above!</p>';
+                        }
+                    }, 300);
+                } else {
+                    alert('Error deleting project: ' + (result.message || 'Unknown error'));
+                    btn.disabled = false;
+                    btn.innerHTML = originalHTML;
+                }
+            } catch (error) {
+                console.error('Error deleting project:', error);
+                alert('Error deleting project: ' + error.message);
+                btn.disabled = false;
+                btn.innerHTML = originalHTML;
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

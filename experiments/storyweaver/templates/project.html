@@ -1,0 +1,748 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.name }} - Story Weaver{% endblock %}
+
+{% block content %}
+<div id="js-data"
+    data-project-id="{{ project._id }}"
+    data-project-name="{{ project.name }}"
+    data-project-type="{{ project.project_type }}"
+    data-is-atlas="{{ is_atlas }}">
+</div>
+<main class="space-y-12">
+    <div class="text-center">
+        <h2 class="text-4xl font-extrabold text-slate-900">{{ project.name }}</h2>
+        <p class="mt-2 text-lg text-slate-600 max-w-2xl mx-auto italic">"{{ project.project_goal }}"</p>
+    </div>
+    <div class="space-y-8">
+        {% if project.project_type == 'study' %}
+        <div class="content-card">
+            <h3 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">🧠</span> Generate Study Notes</h3>
+             <form id="generate-notes-form" class="space-y-4">
+                <div>
+                    <label for="note-topic-input" class="block text-sm font-medium text-slate-700 mb-1">Topic</label>
+                    <input type="text" id="note-topic-input" required class="form-input" placeholder="e.g., 'The Krebs Cycle', 'Key Events of the Renaissance'">
+                </div>
+                <div class="text-right pt-2"><button type="submit" class="btn btn-accent">Generate Notes</button></div>
+            </form>
+        </div>
+        {% endif %}
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div class="space-y-8">
+                <div class="content-card">
+                    <h3 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">✍️</span> Add a New Note</h3>
+                    <form id="note-form" class="space-y-4">
+                        <div><textarea id="note-content" rows="6" class="form-textarea" placeholder="Add your thoughts, research, or memories..."></textarea></div>
+                        <div>
+                            <label for="note-tags-input" class="block text-sm font-medium text-slate-700 mb-1">Tags <span class="text-slate-500 font-normal">(comma separated)</span></label>
+                            <div class="flex items-center space-x-2">
+                                <input type="text" id="note-tags-input" class="form-input" placeholder="research, chapter 1, key point">
+                                <button type="button" id="suggest-tags-btn" class="btn btn-accent flex-shrink-0 h-[46px] disabled:opacity-50">Suggest</button>
+                            </div>
+                            <div id="tag-suggestions-container" class="mt-3 flex flex-wrap gap-2"></div>
+                        </div>
+                        <div class="text-right pt-2"><button type="submit" class="btn btn-primary">Add Note</button></div>
+                    </form>
+                </div>
+            </div>
+            <div class="content-card">
+                <h3 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">💌</span> Invite & Share</h3>
+                <form id="token-form" class="space-y-4">
+                     <p class="text-sm font-semibold text-slate-800">Invite a Specific Contributor</p>
+                    <div><label for="contributor-label-input" class="block text-sm font-medium text-slate-700 mb-1">Contributor's Name</label><input type="text" id="contributor-label-input" required class="form-input"></div>
+                    <div><label for="prompt-textarea" class="block text-sm font-medium text-slate-700 mb-1">Prompt</label><textarea id="prompt-textarea" rows="3" required class="form-textarea" placeholder="e.g., 'What do you remember about the summer of '82?'"></textarea></div>
+                    <div class="flex justify-end pt-2"><button type="submit" class="btn btn-primary">Generate Invite Link</button></div>
+                    <div id="token-result" class="pt-4"></div>
+                </form>
+                <hr class="my-6">
+                <form id="shared-token-form" class="space-y-4">
+                     <p class="text-sm font-semibold text-slate-800">Share with a Group</p>
+                    <div><label for="shared-prompt-textarea" class="block text-sm font-medium text-slate-700 mb-1">Prompt for the Group</label><textarea id="shared-prompt-textarea" rows="3" required class="form-textarea" placeholder="e.g., 'What is your favorite memory from the event?'"></textarea></div>
+                    <div class="flex justify-end pt-2"><button type="submit" class="btn btn-secondary">Generate Share Link</button></div>
+                    <div id="shared-token-result" class="pt-4"></div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="content-card">
+        <h3 class="text-2xl font-bold mb-2 flex items-center gap-3"><span class="text-3xl">🤖</span> AI Actions & Search</h3>
+        <p class="text-slate-600 mb-6">Select notes from your project to search or use as inspiration for AI-powered creations.</p>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
+            <div class="ai-action-card">
+                <h4 class="ai-action-title">📖 Weave a Story</h4>
+                <div class="space-y-4">
+                    <div>
+                        <label for="story-tone-select" class="ai-action-label">Narrative Tone</label>
+                        <select id="story-tone-select" class="form-select">
+                            {% for tone in story_tones %}<option value="{{ tone }}">{{ tone }}</option>{% endfor %}
+                        </select>
+                    </div>
+                     <div>
+                        <label for="story-format-select" class="ai-action-label">Format</label>
+                        <select id="story-format-select" class="form-select">
+                            {% for format in story_formats %}<option value="{{ format }}">{{ format }}</option>{% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="pt-4 mt-auto text-right">
+                    <button type="button" id="launch-story-builder-btn" class="btn btn-secondary w-full">Select Notes & Create</button>
+                </div>
+            </div>
+            <div class="ai-action-card">
+                <h4 class="ai-action-title">🎵 Create a Song</h4>
+                <div class="space-y-4">
+                    <div>
+                        <label for="song-genre-select" class="ai-action-label">Genre</label>
+                        <select id="song-genre-select" class="form-select">
+                            {% for genre in song_genres %}<option value="{{ genre }}">{{ genre }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label for="song-mood-select" class="ai-action-label">Mood</label>
+                        <select id="song-mood-select" class="form-select">
+                            {% for mood in song_moods %}<option value="{{ mood }}">{{ mood }}</option>{% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="pt-4 mt-auto text-right">
+                    <button type="button" id="launch-song-builder-btn" class="btn btn-secondary w-full">Select Notes & Write</button>
+                </div>
+            </div>
+            <div class="ai-action-card">
+                <h4 class="ai-action-title">🧠 Generate a Quiz</h4>
+                <p class="text-sm text-slate-600 flex-grow">Test knowledge based on your notes. Customize question types, difficulty, and more.</p>
+                <div class="pt-4 mt-auto text-right">
+                    <button type="button" data-modal-target="quiz-options-modal" class="btn btn-accent w-full">Configure & Generate</button>
+                </div>
+            </div>
+            <div class="ai-action-card">
+                <h4 class="ai-action-title">📚 Generate Study Guide</h4>
+                <p class="text-sm text-slate-600 flex-grow">Synthesize your notes into a structured guide with key concepts, themes, and questions.</p>
+                <div class="pt-4 mt-auto text-right">
+                    <button type="button" id="launch-study-guide-btn" class="btn btn-secondary-outline w-full">Select Notes & Generate</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% if quizzes %}
+    <div id="project-quizzes">
+        <h3 class="text-4xl font-bold mb-8">Generated Quizzes</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {% for quiz in quizzes %}
+            <div class="content-card flex flex-col">
+                <div class="flex-grow">
+                    <div class="flex justify-between items-start">
+                        <h4 class="text-xl font-bold text-slate-800">{{ quiz.title }}</h4>
+                        <span class="text-xs font-semibold bg-cyan-100 text-cyan-800 px-2 py-1 rounded-full">{{ quiz.question_type }}</span>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-1 mb-4">Created: {{ quiz.created_at.strftime('%B %d, %Y, %-I:%M %p') if quiz.created_at and quiz.created_at.strftime else 'Date Missing' }}</p>
+                </div>
+                <div class="flex items-center justify-end gap-3 mt-4 pt-4 border-t">
+                    <a href="/experiments/storyweaver/quiz/{{ quiz.share_token }}" target="_blank" class="btn btn-secondary-outline text-sm py-2 px-4">View Quiz</a>
+                    <button class="btn btn-primary text-sm py-2 px-4 copy-link-btn" data-url="/experiments/storyweaver/quiz/{{ quiz.share_token }}">Share</button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+    {% if invited_users or shared_invites %}
+    <div id="project-invitations">
+        <h3 class="text-4xl font-bold mb-8">Generated Invitations & Share Links</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {% for invite in invited_users %}
+            <div class="content-card flex flex-col">
+                <div class="flex-grow">
+                    <div class="flex justify-between items-start">
+                        <h4 class="text-xl font-bold text-slate-800">{{ invite.label }}</h4>
+                        <span class="text-xs font-semibold bg-indigo-100 text-indigo-800 px-2 py-1 rounded-full">Specific Invite</span>
+                    </div>
+                    <p class="text-sm text-slate-600 italic mt-2">Prompt: "{{ invite.prompt }}"</p>
+                    <p class="text-xs text-slate-500 mt-1 mb-4">Created: {{ invite.created_at.strftime('%B %d, %Y, %-I:%M %p') if invite.created_at and invite.created_at.strftime else 'Date Missing' }}</p>
+                </div>
+                <div class="flex items-center justify-end gap-3 mt-4 pt-4 border-t">
+                    <input type="text" readonly value="/experiments/storyweaver/invite/{{ invite.token }}" class="form-input-minimal flex-grow text-xs truncate">
+                    <button class="btn btn-primary text-sm py-2 px-4 copy-link-btn" data-url="/experiments/storyweaver/invite/{{ invite.token }}">Copy Link</button>
+                </div>
+            </div>
+            {% endfor %}
+            {% for invite in shared_invites %}
+            <div class="content-card flex flex-col">
+                <div class="flex-grow">
+                    <div class="flex justify-between items-start">
+                        <h4 class="text-xl font-bold text-slate-800">Share Link</h4>
+                        <span class="text-xs font-semibold bg-green-100 text-green-800 px-2 py-1 rounded-full">Open Share</span>
+                    </div>
+                    <p class="text-sm text-slate-600 italic mt-2">Prompt: "{{ invite.prompt }}"</p>
+                    <p class="text-xs text-slate-500 mt-1 mb-4">Created: {{ invite.created_at.strftime('%B %d, %Y, %-I:%M %p') if invite.created_at and invite.created_at.strftime else 'Date Missing' }}</p>
+                </div>
+                <div class="flex items-center justify-end gap-3 mt-4 pt-4 border-t">
+                    <input type="text" readonly value="/experiments/storyweaver/share/{{ invite.token }}" class="form-input-minimal flex-grow text-xs truncate">
+                    <button class="btn btn-primary text-sm py-2 px-4 copy-link-btn" data-url="/experiments/storyweaver/share/{{ invite.token }}">Copy Link</button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+    <div id="project-notes">
+        <div class="flex flex-col sm:flex-row sm:justify-between items-start sm:items-center mb-8 space-y-4 sm:space-y-0">
+            <h3 class="text-4xl font-bold">Project Notes</h3>
+            <select id="contributor-filter" class="form-select w-full sm:w-auto"></select>
+        </div>
+        <div id="notes-container" class="space-y-6"></div>
+        <div id="loading-indicator" class="text-center p-4 text-slate-500 hidden">Loading...</div>
+    </div>
+</main>
+{% endblock %}
+
+{% block modals %}
+    <div id="note-selection-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 hidden z-50">
+        <div class="bg-slate-50 rounded-xl shadow-2xl max-w-7xl w-full h-[90vh] flex flex-col modal-animated">
+            <header class="flex-shrink-0 p-4 border-b flex justify-between items-center">
+                <h3 id="note-selection-title" class="text-xl font-bold text-slate-900">Select Notes</h3>
+                <button class="modal-close-btn text-slate-400 text-3xl hover:text-slate-800 transition-colors">&times;</button>
+            </header>
+            <main class="flex-grow flex flex-col md:flex-row overflow-hidden">
+                <aside class="w-full md:w-1/4 p-4 border-r overflow-y-auto">
+                    <h4 class="font-semibold mb-2">Search & Filter</h4>
+                    <input type="search" id="preview-search-input" placeholder="Search notes..." class="form-input mb-4">
+                    <h5 class="font-semibold mb-2 mt-4">Tags</h5>
+                    <div id="preview-tags-container" class="space-y-2 text-sm"></div>
+                </aside>
+                <section class="flex-grow p-4 flex flex-col overflow-y-auto bg-white">
+                    <div id="preview-results-summary" class="text-sm text-slate-600 mb-2 flex-shrink-0"></div>
+                    <div id="preview-notes-container" class="space-y-3 flex-grow overflow-y-auto pr-2"></div>
+                </section>
+                <aside class="w-full md:w-1/3 p-4 bg-slate-100 border-l flex flex-col overflow-y-auto">
+                    <div class="flex-shrink-0">
+                        <div class="flex justify-between items-center mb-2">
+                            <h4 class="font-semibold">Selected Notes (<span id="selected-notes-count">0</span>)</h4>
+                            <div class="flex items-center space-x-2">
+                                <button type="button" id="select-all-notes-btn" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition-colors">Select All</button>
+                                <button type="button" id="deselect-all-notes-btn" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition-colors">Deselect All</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="selected-notes-container" class="space-y-2 flex-grow overflow-y-auto"></div>
+                </aside>
+            </main>
+            <footer class="flex-shrink-0 p-4 border-t flex justify-end bg-slate-50 rounded-b-xl">
+                <button id="confirm-action-btn" class="btn btn-secondary disabled:from-slate-400 disabled:to-slate-400" disabled>Confirm Selection</button>
+            </footer>
+        </div>
+    </div>
+    <div id="quiz-options-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 hidden z-50">
+        <div class="bg-white rounded-xl shadow-2xl p-6 md:p-8 max-w-lg w-full modal-animated">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-2xl font-bold text-slate-900">Quiz Options</h3>
+                <button class="modal-close-btn text-slate-400 text-3xl hover:text-slate-800 transition-colors">&times;</button>
+            </div>
+            <form id="quiz-options-form" class="space-y-4">
+                <div>
+                    <label for="quiz-num-questions" class="block text-sm font-medium text-slate-700 mb-1">Number of Questions</label>
+                    <input type="number" id="quiz-num-questions" class="form-input" value="5" min="1" max="10">
+                </div>
+                <div>
+                    <label for="quiz-question-type" class="block text-sm font-medium text-slate-700 mb-1">Question Type</label>
+                    <select id="quiz-question-type" class="form-select">
+                        <option value="Multiple Choice">Multiple Choice</option>
+                        <option value="True/False">True / False</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="quiz-difficulty" class="block text-sm font-medium text-slate-700 mb-1">Difficulty</label>
+                    <select id="quiz-difficulty" class="form-select">
+                        <option value="Easy">Easy</option>
+                        <option selected value="Medium">Medium</option>
+                        <option value="Hard">Hard</option>
+                    </select>
+                </div>
+                <div class="pt-4 text-right">
+                    <button type="submit" class="btn btn-primary">Select Notes & Generate</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <div id="story-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 hidden z-50">
+        <div class="bg-white rounded-xl shadow-2xl p-6 md:p-8 max-w-3xl w-full max-h-[90vh] overflow-y-auto modal-animated">
+            <div class="flex justify-between items-center mb-4 pb-4 border-b">
+                <h3 id="story-modal-title" class="text-2xl font-bold text-slate-900">Your Story</h3>
+                <button class="modal-close-btn text-slate-400 text-3xl hover:text-slate-800 transition-colors">&times;</button>
+            </div>
+            <div id="story-modal-content" class="text-slate-700 leading-relaxed space-y-4 prose max-w-none"></div>
+        </div>
+    </div>
+    <div id="song-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 hidden z-50">
+        <div class="bg-white rounded-xl shadow-2xl p-6 md:p-8 max-w-3xl w-full max-h-[90vh] overflow-y-auto modal-animated">
+            <div class="flex justify-between items-center mb-4 pb-4 border-b">
+                <h3 id="song-modal-title" class="text-2xl font-bold text-slate-900">Your Song Lyrics</h3>
+                <button class="modal-close-btn text-slate-400 text-3xl hover:text-slate-800 transition-colors">&times;</button>
+            </div>
+            <div id="song-modal-content" class="text-slate-700 leading-relaxed space-y-4 prose max-w-none"></div>
+        </div>
+    </div>
+    <div id="study-guide-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 hidden z-50">
+        <div class="bg-white rounded-xl shadow-2xl p-6 md:p-8 max-w-3xl w-full max-h-[90vh] overflow-y-auto modal-animated">
+            <div class="flex justify-between items-center mb-4 pb-4 border-b">
+                <h3 id="study-guide-modal-title" class="text-2xl font-bold text-slate-900">Your Study Guide</h3>
+                <button class="modal-close-btn text-slate-400 text-3xl hover:text-slate-800 transition-colors">&times;</button>
+            </div>
+            <div id="study-guide-modal-content" class="text-slate-700 leading-relaxed space-y-4 prose max-w-none"></div>
+        </div>
+    </div>
+    <div id="quiz-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 hidden z-50">
+        <div class="bg-white rounded-xl shadow-2xl p-6 md:p-8 max-w-3xl w-full max-h-[90vh] overflow-y-auto modal-animated">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-2xl font-bold text-slate-900">Practice Quiz</h3>
+                <button class="modal-close-btn text-slate-400 text-3xl hover:text-slate-800 transition-colors">&times;</button>
+            </div>
+            <div id="quiz-content-area"></div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('Project page loaded, initializing...');
+    
+    const jsData = document.getElementById('js-data');
+    if (!jsData) {
+        console.error('js-data element not found!');
+        return;
+    }
+    
+    const projectId = jsData.dataset.projectId;
+    const projectName = jsData.dataset.projectName;
+    const projectType = jsData.dataset.projectType;
+    
+    console.log('Project data:', { projectId, projectName, projectType });
+    
+    // Load initial notes
+    loadNotes(projectId, 1);
+    loadContributors(projectId);
+    
+    // Note form submission
+    const noteForm = document.getElementById('note-form');
+    if (noteForm) {
+        noteForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            console.log('Note form submitted');
+            
+            const submitBtn = e.target.querySelector('button[type="submit"]');
+            const originalText = submitBtn.textContent;
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Adding...';
+            
+            const content = document.getElementById('note-content').value.trim();
+            const tags = document.getElementById('note-tags-input').value.trim();
+            
+            if (!content) {
+                alert('Please enter note content.');
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+                return;
+            }
+            
+            try {
+                const response = await fetch('/experiments/storyweaver/api/notes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        project_id: projectId,
+                        content: content,
+                        tags: tags
+                    })
+                });
+                
+                const result = await response.json();
+                console.log('Add note result:', result);
+                
+                if (result.status === 'success') {
+                    noteForm.reset();
+                    document.getElementById('tag-suggestions-container').innerHTML = '';
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = originalText;
+                    loadNotes(projectId, 1);
+                } else {
+                    alert('Error adding note: ' + (result.message || 'Unknown error'));
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = originalText;
+                }
+            } catch (error) {
+                console.error('Error adding note:', error);
+                alert('Error adding note: ' + error.message);
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+            }
+        });
+    }
+    
+    // Tag suggestions
+    const suggestTagsBtn = document.getElementById('suggest-tags-btn');
+    if (suggestTagsBtn) {
+        suggestTagsBtn.addEventListener('click', async () => {
+            const content = document.getElementById('note-content').value.trim();
+            if (!content) {
+                alert('Please enter some note content first.');
+                return;
+            }
+            
+            suggestTagsBtn.disabled = true;
+            suggestTagsBtn.textContent = 'Suggesting...';
+            
+            try {
+                const response = await fetch('/experiments/storyweaver/api/suggest-tags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        project_id: projectId,
+                        content: content
+                    })
+                });
+                
+                const result = await response.json();
+                const container = document.getElementById('tag-suggestions-container');
+                
+                if (result.tags && result.tags.length > 0) {
+                    container.innerHTML = result.tags.map(tag => 
+                        `<span class="tag-suggestion cursor-pointer" data-tag="${tag}">${tag}</span>`
+                    ).join('');
+                    
+                    // Make tag suggestions clickable
+                    container.querySelectorAll('.tag-suggestion').forEach(el => {
+                        el.addEventListener('click', () => {
+                            const tagsInput = document.getElementById('note-tags-input');
+                            const currentTags = tagsInput.value.split(',').map(t => t.trim()).filter(t => t);
+                            const newTag = el.dataset.tag;
+                            if (!currentTags.includes(newTag)) {
+                                tagsInput.value = currentTags.concat(newTag).join(', ');
+                            }
+                        });
+                    });
+                } else {
+                    container.innerHTML = '<span class="text-sm text-slate-500">No suggestions available</span>';
+                }
+            } catch (error) {
+                console.error('Error suggesting tags:', error);
+                alert('Error suggesting tags: ' + error.message);
+            } finally {
+                suggestTagsBtn.disabled = false;
+                suggestTagsBtn.textContent = 'Suggest';
+            }
+        });
+    }
+    
+    // Generate invite token form
+    const tokenForm = document.getElementById('token-form');
+    if (tokenForm) {
+        tokenForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const submitBtn = e.target.querySelector('button[type="submit"]');
+            const originalText = submitBtn.textContent;
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Generating...';
+            
+            const label = document.getElementById('contributor-label-input').value.trim();
+            const prompt = document.getElementById('prompt-textarea').value.trim();
+            
+            if (!label || !prompt) {
+                alert('Please fill in both contributor name and prompt.');
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+                return;
+            }
+            
+            try {
+                const response = await fetch('/experiments/storyweaver/api/generate-token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        project_id: projectId,
+                        label: label,
+                        prompt: prompt
+                    })
+                });
+                
+                const result = await response.json();
+                const resultDiv = document.getElementById('token-result');
+                
+                if (result.status === 'success') {
+                    const fullUrl = window.location.origin + result.invite_url;
+                    resultDiv.innerHTML = `
+                        <div class="p-4 bg-indigo-50 border border-indigo-200 rounded-lg">
+                            <p class="text-sm font-semibold mb-2">Invite link for ${result.label}:</p>
+                            <div class="flex items-center gap-2">
+                                <input type="text" readonly value="${fullUrl}" class="form-input-minimal flex-grow text-xs">
+                                <button class="btn btn-primary text-sm py-1 px-3 copy-link-btn" data-url="${fullUrl}">Copy</button>
+                            </div>
+                        </div>
+                    `;
+                    tokenForm.reset();
+                    
+                    // Setup copy button
+                    resultDiv.querySelector('.copy-link-btn').addEventListener('click', async (e) => {
+                        const url = e.target.dataset.url;
+                        try {
+                            await navigator.clipboard.writeText(url);
+                            e.target.textContent = 'Copied!';
+                            setTimeout(() => e.target.textContent = 'Copy', 2000);
+                        } catch (err) {
+                            alert('Failed to copy. URL: ' + url);
+                        }
+                    });
+                } else {
+                    alert('Error generating invite: ' + (result.message || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error generating token:', error);
+                alert('Error generating invite: ' + error.message);
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+            }
+        });
+    }
+    
+    // Generate shared token form
+    const sharedTokenForm = document.getElementById('shared-token-form');
+    if (sharedTokenForm) {
+        sharedTokenForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const submitBtn = e.target.querySelector('button[type="submit"]');
+            const originalText = submitBtn.textContent;
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Generating...';
+            
+            const prompt = document.getElementById('shared-prompt-textarea').value.trim();
+            
+            if (!prompt) {
+                alert('Please enter a prompt.');
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+                return;
+            }
+            
+            try {
+                const response = await fetch('/experiments/storyweaver/api/generate-shared-token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        project_id: projectId,
+                        prompt: prompt
+                    })
+                });
+                
+                const result = await response.json();
+                const resultDiv = document.getElementById('shared-token-result');
+                
+                if (result.status === 'success') {
+                    const fullUrl = window.location.origin + result.shared_url;
+                    resultDiv.innerHTML = `
+                        <div class="p-4 bg-green-50 border border-green-200 rounded-lg">
+                            <p class="text-sm font-semibold mb-2">Share link:</p>
+                            <div class="flex items-center gap-2">
+                                <input type="text" readonly value="${fullUrl}" class="form-input-minimal flex-grow text-xs">
+                                <button class="btn btn-secondary text-sm py-1 px-3 copy-link-btn" data-url="${fullUrl}">Copy</button>
+                            </div>
+                        </div>
+                    `;
+                    sharedTokenForm.reset();
+                    
+                    // Setup copy button
+                    resultDiv.querySelector('.copy-link-btn').addEventListener('click', async (e) => {
+                        const url = e.target.dataset.url;
+                        try {
+                            await navigator.clipboard.writeText(url);
+                            e.target.textContent = 'Copied!';
+                            setTimeout(() => e.target.textContent = 'Copy', 2000);
+                        } catch (err) {
+                            alert('Failed to copy. URL: ' + url);
+                        }
+                    });
+                } else {
+                    alert('Error generating share link: ' + (result.message || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error generating shared token:', error);
+                alert('Error generating share link: ' + error.message);
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+            }
+        });
+    }
+    
+    // Generate notes form (for study projects)
+    const generateNotesForm = document.getElementById('generate-notes-form');
+    if (generateNotesForm) {
+        generateNotesForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const submitBtn = e.target.querySelector('button[type="submit"]');
+            const originalText = submitBtn.textContent;
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Generating...';
+            
+            const topic = document.getElementById('note-topic-input').value.trim();
+            
+            if (!topic) {
+                alert('Please enter a topic.');
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+                return;
+            }
+            
+            try {
+                const response = await fetch('/experiments/storyweaver/api/generate-notes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        project_id: projectId,
+                        topic: topic,
+                        num_notes: 5
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    generateNotesForm.reset();
+                    loadNotes(projectId, 1);
+                    alert(`Successfully generated ${result.notes.length} study notes!`);
+                } else {
+                    alert('Error generating notes: ' + (result.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error generating notes:', error);
+                alert('Error generating notes: ' + error.message);
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+            }
+        });
+    }
+    
+    // Load notes function
+    async function loadNotes(projId, page = 1, contributorFilter = null) {
+        console.log('Loading notes for project:', projId);
+        const container = document.getElementById('notes-container');
+        const loadingIndicator = document.getElementById('loading-indicator');
+        
+        if (!container) {
+            console.error('notes-container not found!');
+            return;
+        }
+        
+        loadingIndicator.classList.remove('hidden');
+        container.innerHTML = '';
+        
+        try {
+            let url = `/experiments/storyweaver/api/notes/${projId}?page=${page}`;
+            if (contributorFilter && contributorFilter !== 'All Contributors') {
+                url += `&contributor_filter=${encodeURIComponent(contributorFilter)}`;
+            }
+            
+            const response = await fetch(url, {
+                credentials: 'include'
+            });
+            
+            const notes = await response.json();
+            console.log('Loaded notes:', notes);
+            
+            if (notes.length === 0) {
+                container.innerHTML = '<div class="no-notes-message"><p>No notes yet. Add your first note above!</p></div>';
+            } else {
+                container.innerHTML = notes.map(note => `
+                    <div class="note-card animate-fade-in" data-note-id="${note._id}">
+                        <div class="flex justify-between items-start mb-2">
+                            <div>
+                                <span class="contributor-tag">${note.contributor_label || 'Me'}</span>
+                                ${note.tags && note.tags.length > 0 ? note.tags.map(tag => `<span class="tag">${tag}</span>`).join(' ') : ''}
+                            </div>
+                            <button class="note-delete-btn" data-note-id="${note._id}" title="Delete note">&times;</button>
+                        </div>
+                        <p class="note-content">${escapeHtml(note.content)}</p>
+                        <small class="note-timestamp">${note.formatted_timestamp || 'Date missing'}</small>
+                    </div>
+                `).join('');
+                
+                // Setup delete buttons
+                container.querySelectorAll('.note-delete-btn').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        const noteId = btn.dataset.noteId;
+                        if (confirm('Are you sure you want to delete this note?')) {
+                            try {
+                                const deleteResponse = await fetch(`/experiments/storyweaver/api/notes/${noteId}`, {
+                                    method: 'DELETE',
+                                    credentials: 'include'
+                                });
+                                const result = await deleteResponse.json();
+                                if (result.status === 'success') {
+                                    btn.closest('.note-card').classList.add('animate-fade-out');
+                                    setTimeout(() => {
+                                        btn.closest('.note-card').remove();
+                                        if (container.children.length === 0) {
+                                            container.innerHTML = '<div class="no-notes-message"><p>No notes yet. Add your first note above!</p></div>';
+                                        }
+                                    }, 300);
+                                } else {
+                                    alert('Error deleting note: ' + result.message);
+                                }
+                            } catch (error) {
+                                console.error('Error deleting note:', error);
+                                alert('Error deleting note: ' + error.message);
+                            }
+                        }
+                    });
+                });
+            }
+        } catch (error) {
+            console.error('Error loading notes:', error);
+            container.innerHTML = '<div class="no-notes-message"><p class="text-red-500">Error loading notes. Please refresh the page.</p></div>';
+        } finally {
+            loadingIndicator.classList.add('hidden');
+        }
+    }
+    
+    // Load contributors for filter
+    async function loadContributors(projId) {
+        const filterSelect = document.getElementById('contributor-filter');
+        if (!filterSelect) return;
+        
+        try {
+            const response = await fetch(`/experiments/storyweaver/api/contributors/${projId}`, {
+                credentials: 'include'
+            });
+            const contributors = await response.json();
+            
+            filterSelect.innerHTML = contributors.map(c => 
+                `<option value="${c}">${c}</option>`
+            ).join('');
+            
+            filterSelect.addEventListener('change', (e) => {
+                loadNotes(projectId, 1, e.target.value);
+            });
+        } catch (error) {
+            console.error('Error loading contributors:', error);
+        }
+    }
+    
+    // Helper function to escape HTML
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML.replace(/\n/g, '<br>');
+    }
+});
+</script>
+{% endblock %}

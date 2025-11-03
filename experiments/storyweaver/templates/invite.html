@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}Contribute to {{ project.name }}{% endblock %}
+
+{% block content %}
+<div id="js-data" 
+     data-project-id="{{ project._id }}"
+     data-invite-token="{{ invite_token }}"
+     data-active-prompt="{{ invite_prompt }}">
+</div>
+<main class="space-y-12 max-w-3xl mx-auto">
+    <div class="text-center">
+        <h2 class="text-3xl font-extrabold text-slate-900">Add to: <span class="text-indigo-600">{{ project.name }}</span></h2>
+        <p class="text-md text-slate-600 mt-1">as <strong class="text-purple-600">{{ contributor_label }}</strong></p>
+    </div>
+    <div class="content-card text-left">
+        <p class="text-sm font-semibold text-slate-500 mb-2 tracking-wide uppercase">Your Current Prompt</p>
+        <blockquote id="active-prompt-display" class="text-lg text-slate-800 border-l-4 border-indigo-500 pl-4 italic">{{ invite_prompt }}</blockquote>
+    </div>
+    
+    <div id="follow-up-container" class="content-card text-left {% if not follow_up_questions %}hidden{% endif %}">
+        <h3 class="text-xl font-semibold mb-3 text-slate-800">Continue the Conversation...</h3>
+        <p class="text-slate-600 mb-4">Click a question below to keep the idea flowing.</p>
+        <ul id="follow-up-list" class="space-y-2">
+            {% for question in follow_up_questions %}
+                <li class="p-4 bg-indigo-50/80 text-indigo-800 rounded-lg cursor-pointer hover:bg-indigo-100 transition-all duration-200 ease-in-out transform hover:scale-[1.02]">{{ question }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    
+    <div class="content-card">
+        <h3 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">✍️</span> Your Contribution</h3>
+         <form id="invite-note-form" class="space-y-4">
+            <div>
+                <textarea id="note-content" rows="8" required class="form-textarea" placeholder="Share your thoughts here..."></textarea>
+            </div>
+            <div class="text-right pt-2">
+                 <button type="submit" class="btn btn-primary">Add Note</button>
+            </div>
+        </form>
+    </div>
+</main>
+{% endblock %}
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const jsData = document.getElementById('js-data');
+    const projectId = jsData.dataset.projectId;
+    const inviteToken = jsData.dataset.inviteToken;
+    const activePrompt = jsData.dataset.activePrompt;
+
+    // Follow-up questions click handler
+    document.querySelectorAll('#follow-up-list li').forEach(li => {
+        li.addEventListener('click', () => {
+            const question = li.textContent.trim();
+            document.getElementById('note-content').value = question + '\n\n';
+            document.getElementById('note-content').focus();
+        });
+    });
+
+    // Submit form
+    document.getElementById('invite-note-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const submitBtn = e.target.querySelector('button[type="submit"]');
+        const originalText = submitBtn.textContent;
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Submitting...';
+
+        const formData = {
+            project_id: projectId,
+            invite_token: inviteToken,
+            content: document.getElementById('note-content').value,
+            tags: '',
+            active_prompt: activePrompt
+        };
+
+        try {
+            const response = await fetch('/experiments/storyweaver/api/notes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(formData)
+            });
+            const result = await response.json();
+            if (result.status === 'success') {
+                alert('Thank you for your contribution!');
+                document.getElementById('invite-note-form').reset();
+                if (result.new_follow_ups && result.new_follow_ups.length > 0) {
+                    const container = document.getElementById('follow-up-container');
+                    const list = document.getElementById('follow-up-list');
+                    list.innerHTML = result.new_follow_ups.map(q => 
+                        `<li class="p-4 bg-indigo-50/80 text-indigo-800 rounded-lg cursor-pointer hover:bg-indigo-100 transition-all duration-200 ease-in-out transform hover:scale-[1.02]">${q}</li>`
+                    ).join('');
+                    container.classList.remove('hidden');
+                }
+            } else {
+                alert('Error: ' + result.message);
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+            }
+        } catch (error) {
+            alert('Error submitting contribution: ' + error);
+            submitBtn.disabled = false;
+            submitBtn.textContent = originalText;
+        }
+    });
+});
+</script>

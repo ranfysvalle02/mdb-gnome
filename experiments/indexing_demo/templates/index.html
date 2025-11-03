@@ -13,887 +13,612 @@
         
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #f5f7fa;
             min-height: 100vh;
             padding: 20px;
             line-height: 1.6;
+            transition: overflow 0.3s ease;
+        }
+
+        body.modal-open {
+            overflow: hidden;
         }
         
         .container {
-            max-width: 1400px;
+            max-width: 1200px;
             margin: 0 auto;
+        }
+        
+        /* Header */
+        .header {
             background: white;
             border-radius: 12px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            padding: 40px;
+            padding: 30px 40px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
         }
         
-        h1 {
-            color: #333;
-            margin-bottom: 10px;
-            font-size: 2.5em;
+        .header h1 {
+            font-size: 2rem;
+            color: #1a202c;
+            margin-bottom: 8px;
+            font-weight: 700;
         }
         
-        .hero {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 40px;
+        .header .subtitle {
+            color: #718096;
+            font-size: 1rem;
+        }
+        
+        /* Stats Bar */
+        .stats-bar {
+            background: white;
             border-radius: 12px;
-            margin-bottom: 40px;
-            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
-        }
-        
-        .hero h2 {
-            font-size: 1.8em;
-            margin-bottom: 15px;
-        }
-        
-        .hero p {
-            font-size: 1.1em;
-            opacity: 0.95;
-            margin-bottom: 20px;
-        }
-        
-        .hero .value-prop {
-            background: rgba(255, 255, 255, 0.2);
-            padding: 20px;
-            border-radius: 8px;
-            margin-top: 20px;
-        }
-        
-        .hero .value-prop h3 {
-            font-size: 1.2em;
-            margin-bottom: 10px;
-        }
-        
-        .subtitle {
-            color: #666;
-            margin-bottom: 30px;
-            font-size: 1.1em;
-        }
-        
-        .stats-grid {
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
             gap: 20px;
-            margin-bottom: 40px;
         }
         
-        .stat-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 20px;
-            border-radius: 8px;
+        .stat-item {
             text-align: center;
-            transition: transform 0.3s;
         }
         
-        .stat-card:hover {
-            transform: translateY(-5px);
-        }
-        
-        .stat-card h3 {
-            font-size: 0.9em;
+        .stat-item .label {
+            font-size: 0.875rem;
+            color: #718096;
             text-transform: uppercase;
-            opacity: 0.9;
-            margin-bottom: 10px;
-        }
-        
-        .stat-card .value {
-            font-size: 2.5em;
-            font-weight: bold;
-        }
-        
-        .actions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin-bottom: 30px;
-        }
-        
-        button {
-            padding: 12px 24px;
-            border: none;
-            border-radius: 6px;
-            font-size: 1em;
-            cursor: pointer;
-            transition: all 0.3s;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
             font-weight: 600;
         }
         
-        .btn-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+        .stat-item .value {
+            font-size: 2rem;
+            color: #2d3748;
+            font-weight: 700;
         }
         
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-        }
-        
-        .btn-secondary {
-            background: #f0f0f0;
-            color: #333;
-        }
-        
-        .btn-secondary:hover {
-            background: #e0e0e0;
-        }
-        
-        .btn-danger {
-            background: #e74c3c;
-            color: white;
-        }
-        
-        .btn-danger:hover {
-            background: #c0392b;
-        }
-        
-        .seeding-progress {
-            background: #f9f9f9;
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 30px;
-            display: none;
-        }
-        
-        .seeding-progress.show {
-            display: block;
-        }
-        
-        .seeding-progress h3 {
-            color: #667eea;
-            margin-bottom: 20px;
-        }
-        
-        .progress-step {
-            background: white;
-            border-left: 4px solid #667eea;
-            padding: 15px;
-            margin-bottom: 15px;
-            border-radius: 4px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        
-        .progress-step.completed {
-            border-left-color: #27ae60;
-        }
-        
-        .progress-step.in_progress {
-            border-left-color: #f39c12;
-        }
-        
-        .progress-step h4 {
-            color: #333;
-            margin-bottom: 8px;
-        }
-        
-        .progress-step p {
-            color: #666;
-            font-size: 0.9em;
-            margin-bottom: 10px;
-        }
-        
-        .progress-step .indexes {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 10px;
-        }
-        
-        .progress-step .index-badge {
-            background: #667eea;
-            color: white;
-            padding: 4px 10px;
-            border-radius: 12px;
-            font-size: 0.8em;
-        }
-        
-        .index-types {
+        /* Index Types Grid */
+        .index-types-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
             gap: 20px;
-            margin-bottom: 30px;
+            margin-bottom: 24px;
         }
         
         .index-card {
-            border: 2px solid #e0e0e0;
-            border-radius: 8px;
-            padding: 20px;
-            background: #f9f9f9;
-            transition: all 0.3s;
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            transition: all 0.2s ease;
+            border: 2px solid transparent;
         }
         
         .index-card:hover {
-            border-color: #667eea;
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.2);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+            border-color: #4299e1;
         }
         
-        .index-card h3 {
-            color: #667eea;
-            margin-bottom: 10px;
-            font-size: 1.2em;
+        .index-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
         }
         
-        .index-card .type {
-            display: inline-block;
-            background: #667eea;
-            color: white;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 0.8em;
-            margin-bottom: 10px;
+        .index-card-header h3 {
+            font-size: 1.25rem;
+            color: #2d3748;
+            font-weight: 700;
         }
+        
+        .index-card-header .badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .badge-regular { background: #e6fffa; color: #234e52; }
+        .badge-text { background: #fed7d7; color: #742a2a; }
+        .badge-geo { background: #feebc8; color: #7c2d12; }
+        .badge-partial { background: #e9d8fd; color: #553c9a; }
+        .badge-ttl { background: #bee3f8; color: #2c5282; }
+        .badge-vector { background: #c6f6d5; color: #22543d; }
         
         .index-card p {
-            color: #666;
+            color: #4a5568;
+            font-size: 0.9375rem;
+            margin-bottom: 16px;
             line-height: 1.6;
-            margin-bottom: 15px;
         }
         
-        .index-card ul {
-            list-style: none;
-            padding-left: 0;
+        .index-card-button {
+            width: 100%;
+            padding: 10px;
+            background: #f7fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            color: #2d3748;
+            font-weight: 600;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
         }
         
-        .index-card li {
-            padding: 5px 0;
-            color: #555;
+        .index-card-button:hover {
+            background: #edf2f7;
+            border-color: #cbd5e0;
         }
         
-        .index-card li:before {
-            content: "✓ ";
-            color: #667eea;
-            font-weight: bold;
+        /* Modal Styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
         }
         
-        .results {
-            margin-top: 30px;
-            padding: 30px;
-            background: #f9f9f9;
-            border-radius: 8px;
-            display: none;
+        .modal-overlay.show {
+            opacity: 1;
+            visibility: visible;
         }
         
-        .results.show {
-            display: block;
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 800px;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            opacity: 0;
+            transform: scale(0.95);
+            transition: opacity 0.3s ease, transform 0.3s ease;
         }
         
-        .results h3 {
-            color: #333;
-            margin-bottom: 20px;
-            font-size: 1.5em;
+        .modal-overlay.show .modal-content {
+            opacity: 1;
+            transform: scale(1);
         }
         
-        .results .index-type-header {
+        .modal-header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            padding: 20px;
-            border-radius: 8px;
-            margin-bottom: 20px;
+            padding: 20px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top-left-radius: 12px;
+            border-top-right-radius: 12px;
         }
         
-        .results .index-type-header h4 {
-            font-size: 1.3em;
-            margin-bottom: 10px;
+        .modal-header h2 {
+            font-size: 1.5rem;
+            font-weight: 700;
         }
         
-        .results .description {
-            background: white;
-            padding: 15px;
-            border-radius: 6px;
-            margin-bottom: 20px;
+        .modal-close {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+        
+        .modal-close:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: rotate(90deg);
+        }
+        
+        .modal-body {
+            padding: 24px;
+            overflow-y: auto;
+        }
+
+        /* Loading Spinner for Modal */
+        .modal-loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 200px;
+            color: #4a5568;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #4299e1;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 16px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Result Content Styles (Re-used from original) */
+        .result-description {
+            background: #f7fafc;
             border-left: 4px solid #667eea;
+            padding: 16px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            color: #4a5568;
         }
         
-        .results .value-box {
-            background: #e8f5e9;
-            border: 2px solid #27ae60;
-            padding: 15px;
+        .result-value {
+            background: #f0fff4;
+            border: 1px solid #9ae6b4;
+            border-left: 4px solid #48bb78;
+            padding: 16px;
             border-radius: 6px;
             margin-bottom: 20px;
         }
         
-        .results .value-box h4 {
-            color: #27ae60;
+        .result-value h4 {
+            color: #22543d;
+            font-size: 1rem;
+            font-weight: 700;
             margin-bottom: 8px;
         }
         
+        .result-value p {
+            color: #2f855a;
+            font-size: 0.9375rem;
+        }
+        
         .test-result {
-            background: white;
-            padding: 20px;
+            background: #f7fafc;
+            border: 1px solid #e2e8f0;
             border-radius: 8px;
-            margin-bottom: 20px;
-            border: 1px solid #e0e0e0;
+            padding: 20px;
+            margin-bottom: 16px;
         }
         
         .test-result h4 {
-            color: #667eea;
-            margin-bottom: 15px;
-            font-size: 1.1em;
+            color: #2d3748;
+            font-size: 1.125rem;
+            font-weight: 700;
+            margin-bottom: 12px;
         }
         
         .test-result .index-name {
-            background: #f0f0f0;
-            padding: 8px 12px;
-            border-radius: 4px;
             display: inline-block;
-            margin-bottom: 10px;
-            font-family: monospace;
-            font-size: 0.9em;
+            background: #edf2f7;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8125rem;
+            color: #2d3748;
+            margin-bottom: 12px;
         }
         
         .test-result .query {
-            background: #2d2d2d;
-            color: #f8f8f2;
+            background: #2d3748;
+            color: #f7fafc;
             padding: 12px;
-            border-radius: 4px;
-            font-family: monospace;
-            font-size: 0.9em;
-            margin: 10px 0;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.875rem;
+            margin: 12px 0;
             overflow-x: auto;
         }
         
         .test-result .explanation {
-            background: #e3f2fd;
+            background: #ebf8ff;
+            border-left: 3px solid #4299e1;
             padding: 12px;
             border-radius: 4px;
-            margin: 15px 0;
-            border-left: 4px solid #2196f3;
+            margin: 12px 0;
+            color: #2c5282;
+            font-size: 0.9375rem;
         }
         
         .test-result .result-data {
-            background: #f5f5f5;
-            padding: 15px;
-            border-radius: 4px;
-            margin-top: 15px;
+            background: #edf2f7;
+            padding: 16px;
+            border-radius: 6px;
+            margin-top: 12px;
         }
         
         .test-result .result-data pre {
-            background: #2d2d2d;
-            color: #f8f8f2;
-            padding: 15px;
+            background: #2d3748;
+            color: #f7fafc;
+            padding: 16px;
             border-radius: 6px;
             overflow-x: auto;
-            font-size: 0.9em;
-            margin-top: 10px;
+            font-size: 0.875rem;
+            margin-top: 12px;
         }
         
-        .loading {
-            display: none;
-            text-align: center;
-            padding: 20px;
-            color: #667eea;
-            font-size: 1.1em;
-        }
-        
-        .loading.show {
-            display: block;
-        }
-        
-        .loading::after {
-            content: "...";
-            animation: dots 1.5s steps(4, end) infinite;
-        }
-        
-        @keyframes dots {
-            0%, 20% { content: "."; }
-            40% { content: ".."; }
-            60%, 100% { content: "..."; }
-        }
-        
+        /* Messages */
         .message {
-            padding: 15px;
-            border-radius: 6px;
+            padding: 16px;
+            border-radius: 8px;
             margin-bottom: 20px;
             font-weight: 500;
         }
         
-        .message.success {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        
         .message.error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
+            background: #fff5f5;
+            color: #c53030;
+            border: 1px solid #fc8181;
         }
         
-        .summary-box {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 20px;
+        .message.info {
+            background: #ebf8ff;
+            color: #2c5282;
+            border: 1px solid #90cdf4;
+        }
+        
+        /* Auto-seed notice */
+        .auto-seed-notice {
+            background: #ebf8ff;
+            border: 1px solid #90cdf4;
+            border-left: 4px solid #4299e1;
+            padding: 12px 16px;
             border-radius: 8px;
-            margin-bottom: 30px;
+            margin-bottom: 20px;
+            color: #2c5282;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
         
-        .summary-box h3 {
-            margin-bottom: 15px;
+        /* Performance Metrics */
+        .performance-metrics {
+            background: #f7fafc;
+            border: 1px solid #e2e8f0;
+            border-left: 4px solid #48bb78;
+            padding: 16px;
+            border-radius: 6px;
+            margin: 12px 0;
         }
         
-        .summary-grid {
+        .performance-metrics h5 {
+            color: #22543d;
+            font-size: 0.9375rem;
+            font-weight: 700;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .metrics-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 15px;
-            margin-top: 15px;
+            gap: 12px;
+            margin-top: 12px;
         }
         
-        .summary-item {
-            background: rgba(255, 255, 255, 0.2);
-            padding: 15px;
+        .metric-item {
+            background: white;
+            padding: 12px;
             border-radius: 6px;
-            text-align: center;
+            border: 1px solid #e2e8f0;
         }
         
-        .summary-item .label {
-            font-size: 0.9em;
-            opacity: 0.9;
-            margin-bottom: 5px;
+        .metric-item .label {
+            font-size: 0.75rem;
+            color: #718096;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+            font-weight: 600;
         }
         
-        .summary-item .value {
-            font-size: 1.8em;
-            font-weight: bold;
+        .metric-item .value {
+            font-size: 1.125rem;
+            color: #2d3748;
+            font-weight: 700;
+        }
+        
+        .metric-item .value.highlight {
+            color: #48bb78;
+        }
+        
+        /* Explain Plan */
+        .explain-plan {
+            background: #fff5f9;
+            border: 1px solid #fbb6ce;
+            border-left: 4px solid #d946ef;
+            padding: 16px;
+            border-radius: 6px;
+            margin: 12px 0;
+        }
+        
+        .explain-plan h5 {
+            color: #831843;
+            font-size: 0.9375rem;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+        
+        .explain-plan .explain-item {
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 8px;
+            font-size: 0.875rem;
+        }
+        
+        .explain-plan .explain-item strong {
+            color: #831843;
+            margin-right: 8px;
+        }
+        
+        .index-used {
+            background: #c6f6d5;
+            color: #22543d;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+            font-size: 0.8125rem;
+        }
+        
+        .collection-scan {
+            background: #fed7d7;
+            color: #742a2a;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+            font-size: 0.8125rem;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🔍 Indexing Demo</h1>
-        <p class="subtitle">An Educational Experience: Understanding MongoDB Indexes and Their Impact</p>
-        
-        <div class="hero">
-            <h2>Why Indexes Matter</h2>
-            <p>
-                Indexes are the foundation of database performance. Without indexes, MongoDB must scan every document 
-                in a collection to find matching queries—a process that becomes exponentially slower as your data grows. 
-                With proper indexes, query performance can improve by 100-1000x, transforming seconds into milliseconds.
-            </p>
-            <div class="value-prop">
-                <h3>📊 Performance Impact</h3>
-                <p>
-                    <strong>Without indexes:</strong> O(n) full collection scan — slow for large collections<br>
-                    <strong>With indexes:</strong> O(log n) index lookup — fast regardless of collection size<br>
-                    <strong>Real-world impact:</strong> A query taking 5 seconds can drop to 50 milliseconds with proper indexing
-                </p>
-            </div>
+        <div class="header">
+            <h1>🔍 Indexing Demo</h1>
+            <p class="subtitle">Explore MongoDB index types and their performance impact</p>
         </div>
         
-        <div id="message"></div>
+        {% if auto_seeded %}
+        <div class="auto-seed-notice">
+            <strong>✨ Auto-seeded!</strong> Sample data has been automatically loaded.
+        </div>
+        {% endif %}
         
-        <div class="stats-grid">
-            <div class="stat-card">
-                <h3>Products</h3>
+        <div class="stats-bar">
+            <div class="stat-item">
+                <div class="label">Products</div>
                 <div class="value" id="products-count">-</div>
             </div>
-            <div class="stat-card">
-                <h3>Sessions</h3>
+            <div class="stat-item">
+                <div class="label">Sessions</div>
                 <div class="value" id="sessions-count">-</div>
             </div>
-            <div class="stat-card">
-                <h3>Embeddings</h3>
+            <div class="stat-item">
+                <div class="label">Embeddings</div>
                 <div class="value" id="embeddings-count">-</div>
             </div>
-            <div class="stat-card">
-                <h3>Logs</h3>
+            <div class="stat-item">
+                <div class="label">Logs</div>
                 <div class="value" id="logs-count">-</div>
             </div>
         </div>
         
-        <div class="seeding-progress" id="seeding-progress">
-            <h3>🌱 Seeding Process</h3>
-            <div id="progress-steps"></div>
-        </div>
-        
-        <div class="actions">
-            <button class="btn-primary" onclick="seedData()">🌱 Seed Sample Data</button>
-            <button class="btn-secondary" onclick="testRegular()">Test Regular Index</button>
-            <button class="btn-secondary" onclick="testText()">Test Text Index</button>
-            <button class="btn-secondary" onclick="testGeospatial()">Test Geospatial Index</button>
-            <button class="btn-secondary" onclick="testPartial()">Test Partial Index</button>
-            <button class="btn-secondary" onclick="testVector()">Test Vector Search</button>
-            <button class="btn-secondary" onclick="testTTL()">Test TTL Index</button>
-            <button class="btn-danger" onclick="clearData()">🗑️ Clear All Data</button>
-        </div>
-        
-        <div class="index-types">
+        <div class="index-types-grid">
             <div class="index-card">
-                <span class="type">Regular</span>
-                <h3>Regular Indexes</h3>
-                <p>The foundation of query performance. Enable fast lookups, enforce uniqueness, and optimize compound queries.</p>
-                <ul>
-                    <li>Unique SKU index prevents duplicates</li>
-                    <li>Compound category/price index for multi-field queries</li>
-                    <li>100-1000x performance improvement</li>
-                </ul>
+                <div class="index-card-header">
+                    <h3>Regular Indexes</h3>
+                    <span class="badge badge-regular">Regular</span>
+                </div>
+                <p>Unique indexes prevent duplicates. Compound indexes optimize multi-field queries. Essential for fast lookups.</p>
+                <button class="index-card-button" onclick="testRegular()">Test Regular Index</button>
             </div>
             
             <div class="index-card">
-                <span class="type">Text</span>
-                <h3>Text Indexes</h3>
-                <p>Full-text search capabilities with natural language processing, word stemming, and relevance scoring.</p>
-                <ul>
-                    <li>Weighted search on name/description</li>
-                    <li>Case-insensitive matching</li>
-                    <li>Multi-field text search</li>
-                </ul>
+                <div class="index-card-header">
+                    <h3>Text Indexes</h3>
+                    <span class="badge badge-text">Text</span>
+                </div>
+                <p>Full-text search with natural language processing. Word stemming and relevance scoring enable powerful search.</p>
+                <button class="index-card-button" onclick="testText()">Test Text Index</button>
             </div>
             
             <div class="index-card">
-                <span class="type">Geospatial</span>
-                <h3>Geospatial Indexes</h3>
-                <p>2dsphere indexes for location-based queries with spherical geometry calculations and distance sorting.</p>
-                <ul>
-                    <li>Nearby location search</li>
-                    <li>Distance-based queries</li>
-                    <li>Perfect for "find near me" features</li>
-                </ul>
+                <div class="index-card-header">
+                    <h3>Geospatial Indexes</h3>
+                    <span class="badge badge-geo">Geospatial</span>
+                </div>
+                <p>2dsphere indexes for location-based queries. Perfect for "find near me" features with spherical calculations.</p>
+                <button class="index-card-button" onclick="testGeospatial()">Test Geospatial Index</button>
             </div>
             
             <div class="index-card">
-                <span class="type">Partial</span>
-                <h3>Partial Indexes</h3>
-                <p>Index only documents matching a filter, reducing index size by 50-90% while maintaining full performance.</p>
-                <ul>
-                    <li>Index only active sessions</li>
-                    <li>Reduced storage and maintenance</li>
-                    <li>Full performance for filtered queries</li>
-                </ul>
+                <div class="index-card-header">
+                    <h3>Partial Indexes</h3>
+                    <span class="badge badge-partial">Partial</span>
+                </div>
+                <p>Index only matching documents. Reduces index size by 50-90% while maintaining full performance.</p>
+                <button class="index-card-button" onclick="testPartial()">Test Partial Index</button>
             </div>
             
             <div class="index-card">
-                <span class="type">TTL</span>
-                <h3>TTL Indexes</h3>
-                <p>Time-to-live indexes that automatically delete old documents—no application code needed.</p>
-                <ul>
-                    <li>Auto-expiring sessions (1 hour)</li>
-                    <li>Automatic cleanup every 60 seconds</li>
-                    <li>Perfect for GDPR compliance</li>
-                </ul>
+                <div class="index-card-header">
+                    <h3>TTL Indexes</h3>
+                    <span class="badge badge-ttl">TTL</span>
+                </div>
+                <p>Automatically delete documents after expiration. Perfect for session data, logs, and temporary data.</p>
+                <button class="index-card-button" onclick="testTTL()">Test TTL Index</button>
             </div>
             
             <div class="index-card">
-                <span class="type">Vector Search</span>
-                <h3>Vector Search</h3>
-                <p>Atlas Vector Search for semantic similarity queries using high-dimensional embeddings.</p>
-                <ul>
-                    <li>384-dimensional vectors</li>
-                    <li>Cosine similarity</li>
-                    <li>Powering AI applications</li>
-                </ul>
+                <div class="index-card-header">
+                    <h3>Vector Search</h3>
+                    <span class="badge badge-vector">Vector</span>
+                </div>
+                <p>Semantic similarity search using embeddings. Powers AI features like recommendations and semantic search.</p>
+                <button class="index-card-button" onclick="testVector()">Test Vector Search</button>
             </div>
         </div>
-        
-        <div class="loading" id="loading">Processing</div>
-        
-        <div class="results" id="results"></div>
+    </div>
+
+    <div class="modal-overlay" id="modal-overlay">
+        <div class="modal-content" id="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title">Test Results</h2>
+                <button class="modal-close" id="modal-close">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-body">
+                </div>
+        </div>
     </div>
     
     <script>
+        // Stats
         async function updateStats() {
             try {
-                const response = await fetch('/experiments/indexing_demo/');
-                const html = await response.text();
-                const parser = new DOMParser();
-                const doc = parser.parseFromString(html, 'text/html');
+                // A less disruptive way to update stats without full reload
+                const response = await fetch('/experiments/indexing_demo/stats'); // Assuming a dedicated stats endpoint
+                if (!response.ok) throw new Error('Stats request failed');
                 
-                // Extract stats from the page or make a direct API call
-                // For now, we'll reload the page to get updated stats
-                location.reload();
+                const stats = await response.json();
+                
+                if (stats && !stats.error) {
+                    document.getElementById('products-count').textContent = stats.collections?.products || stats.products || 0;
+                    document.getElementById('sessions-count').textContent = stats.collections?.sessions || stats.sessions || 0;
+                    document.getElementById('embeddings-count').textContent = stats.collections?.embeddings || stats.embeddings || 0;
+                    document.getElementById('logs-count').textContent = stats.collections?.logs || stats.logs || 0;
+                }
             } catch (error) {
                 console.error('Error updating stats:', error);
+                // Fallback to original reload logic if preferred
+                // location.reload(); 
             }
         }
         
-        async function seedData() {
-            showLoading(true);
-            hideResults();
-            const progressDiv = document.getElementById('seeding-progress');
-            progressDiv.classList.add('show');
-            const stepsDiv = document.getElementById('progress-steps');
-            stepsDiv.innerHTML = '<p>Starting seeding process...</p>';
-            
-            try {
-                const response = await fetch('/experiments/indexing_demo/seed-data', {
-                    method: 'POST'
-                });
-                const data = await response.json();
-                
-                if (data.success && data.result && data.result.steps) {
-                    displaySeedingProgress(data.result);
-                    showMessage('Sample data seeded successfully!', 'success');
-                    
-                    if (data.result.summary) {
-                        showSummary(data.result.summary);
-                    }
-                } else {
-                    showMessage('Sample data seeded successfully!', 'success');
-                }
-                
-                setTimeout(updateStats, 1000);
-            } catch (error) {
-                showMessage('Error seeding data: ' + error.message, 'error');
-                progressDiv.classList.remove('show');
-            } finally {
-                showLoading(false);
-            }
-        }
-        
-        function displaySeedingProgress(result) {
-            const stepsDiv = document.getElementById('progress-steps');
-            stepsDiv.innerHTML = '';
-            
-            if (result.steps) {
-                result.steps.forEach(step => {
-                    const stepDiv = document.createElement('div');
-                    stepDiv.className = `progress-step ${step.status}`;
-                    
-                    let indexesHtml = '';
-                    if (step.indexes && step.indexes.length > 0) {
-                        indexesHtml = '<div class="indexes">' +
-                            step.indexes.map(idx => `<span class="index-badge">${idx}</span>`).join('') +
-                            '</div>';
-                    }
-                    
-                    let countHtml = step.count ? `<strong>${step.count} documents created</strong>` : '';
-                    let noteHtml = step.note ? `<p style="color: #27ae60; font-weight: 500;">ℹ️ ${step.note}</p>` : '';
-                    
-                    stepDiv.innerHTML = `
-                        <h4>Step ${step.step}: ${step.name}</h4>
-                        <p>${step.description}</p>
-                        ${countHtml}
-                        ${noteHtml}
-                        ${indexesHtml}
-                    `;
-                    
-                    stepsDiv.appendChild(stepDiv);
-                });
-            }
-        }
-        
-        function showSummary(summary) {
-            const stepsDiv = document.getElementById('progress-steps');
-            const summaryDiv = document.createElement('div');
-            summaryDiv.className = 'summary-box';
-            summaryDiv.innerHTML = `
-                <h3>✅ Seeding Complete!</h3>
-                <div class="summary-grid">
-                    <div class="summary-item">
-                        <div class="label">Total Documents</div>
-                        <div class="value">${summary.total_documents || 0}</div>
-                    </div>
-                    <div class="summary-item">
-                        <div class="label">Collections</div>
-                        <div class="value">${summary.collections || 0}</div>
-                    </div>
-                    <div class="summary-item">
-                        <div class="label">Index Types</div>
-                        <div class="value">${summary.index_types_demonstrated || 0}</div>
-                    </div>
-                </div>
-            `;
-            stepsDiv.appendChild(summaryDiv);
-        }
-        
-        function displayTestResults(data) {
-            const resultsDiv = document.getElementById('results');
-            resultsDiv.classList.add('show');
-            
-            if (data.error) {
-                resultsDiv.innerHTML = `
-                    <div class="message error">
-                        <h3>Error</h3>
-                        <p>${data.error}</p>
-                    </div>
-                `;
-                return;
-            }
-            
-            const result = data.result || data;
-            let html = '';
-            
-            if (result.index_type) {
-                html += `
-                    <div class="index-type-header">
-                        <h4>${result.index_type}</h4>
-                        <p>${result.description || ''}</p>
-                    </div>
-                `;
-            }
-            
-            if (result.value) {
-                html += `
-                    <div class="value-box">
-                        <h4>💡 Value & Impact</h4>
-                        <p>${result.value}</p>
-                    </div>
-                `;
-            }
-            
-            if (result.tests && result.tests.length > 0) {
-                result.tests.forEach(test => {
-                    html += `
-                        <div class="test-result">
-                            <h4>${test.name}</h4>
-                            <div class="index-name">Index: ${test.index}</div>
-                            <div class="query">Query: ${test.query || test.expiration || ''}</div>
-                            <div class="explanation">${test.explanation}</div>
-                            <div class="result-data">
-                                <strong>Results:</strong>
-                                <pre>${JSON.stringify(test.result, null, 2)}</pre>
-                            </div>
-                        </div>
-                    `;
-                });
-            } else if (result.text_search || result.geospatial_search || result.partial_index || result.vector_search || result.ttl_index) {
-                // Legacy format support
-                html += `<div class="test-result"><pre>${JSON.stringify(result, null, 2)}</pre></div>`;
-            }
-            
-            if (result.note) {
-                html += `
-                    <div class="message" style="background: #fff3cd; border-color: #ffc107; color: #856404;">
-                        <strong>Note:</strong> ${result.note}
-                    </div>
-                `;
-            }
-            
-            resultsDiv.innerHTML = html;
-        }
-        
-        async function testRegular() {
-            showLoading(true);
-            hideResults();
-            try {
-                const response = await fetch('/experiments/indexing_demo/test-regular');
-                const data = await response.json();
-                displayTestResults(data);
-            } catch (error) {
-                showMessage('Error testing regular index: ' + error.message, 'error');
-            } finally {
-                showLoading(false);
-            }
-        }
-        
-        async function testText() {
-            showLoading(true);
-            hideResults();
-            try {
-                const response = await fetch('/experiments/indexing_demo/test-text');
-                const data = await response.json();
-                displayTestResults(data);
-            } catch (error) {
-                showMessage('Error testing text index: ' + error.message, 'error');
-            } finally {
-                showLoading(false);
-            }
-        }
-        
-        async function testGeospatial() {
-            showLoading(true);
-            hideResults();
-            try {
-                const response = await fetch('/experiments/indexing_demo/test-geospatial');
-                const data = await response.json();
-                displayTestResults(data);
-            } catch (error) {
-                showMessage('Error testing geospatial index: ' + error.message, 'error');
-            } finally {
-                showLoading(false);
-            }
-        }
-        
-        async function testPartial() {
-            showLoading(true);
-            hideResults();
-            try {
-                const response = await fetch('/experiments/indexing_demo/test-partial');
-                const data = await response.json();
-                displayTestResults(data);
-            } catch (error) {
-                showMessage('Error testing partial index: ' + error.message, 'error');
-            } finally {
-                showLoading(false);
-            }
-        }
-        
-        async function testVector() {
-            showLoading(true);
-            hideResults();
-            try {
-                const response = await fetch('/experiments/indexing_demo/test-vector');
-                const data = await response.json();
-                displayTestResults(data);
-            } catch (error) {
-                showMessage('Error testing vector index: ' + error.message, 'error');
-            } finally {
-                showLoading(false);
-            }
-        }
-        
-        async function testTTL() {
-            showLoading(true);
-            hideResults();
-            try {
-                const response = await fetch('/experiments/indexing_demo/test-ttl');
-                const data = await response.json();
-                displayTestResults(data);
-            } catch (error) {
-                showMessage('Error testing TTL index: ' + error.message, 'error');
-            } finally {
-                showLoading(false);
-            }
-        }
-        
-        async function clearData() {
-            if (!confirm('Are you sure you want to clear all demo data?')) {
-                return;
-            }
-            
-            showLoading(true);
-            hideResults();
-            try {
-                const response = await fetch('/experiments/indexing_demo/clear-data', {
-                    method: 'DELETE'
-                });
-                const data = await response.json();
-                showMessage('All data cleared successfully!', 'success');
-                document.getElementById('seeding-progress').classList.remove('show');
-                setTimeout(updateStats, 500);
-            } catch (error) {
-                showMessage('Error clearing data: ' + error.message, 'error');
-            } finally {
-                showLoading(false);
-            }
-        }
-        
-        function showMessage(message, type) {
-            const messageDiv = document.getElementById('message');
-            messageDiv.className = `message ${type}`;
-            messageDiv.textContent = message;
-            setTimeout(() => {
-                messageDiv.className = '';
-                messageDiv.textContent = '';
-            }, 5000);
-        }
-        
-        function hideResults() {
-            const resultsDiv = document.getElementById('results');
-            resultsDiv.classList.remove('show');
-        }
-        
-        function showLoading(show) {
-            const loadingDiv = document.getElementById('loading');
-            if (show) {
-                loadingDiv.classList.add('show');
-            } else {
-                loadingDiv.classList.remove('show');
-            }
-        }
-        
-        // Load initial stats
         window.addEventListener('DOMContentLoaded', () => {
             const stats = {{ stats | tojson | safe }};
             if (stats && !stats.error) {
@@ -903,6 +628,323 @@
                 document.getElementById('logs-count').textContent = stats.collections?.logs || stats.logs || 0;
             }
         });
+        
+        // Modal Controls
+        const modalOverlay = document.getElementById('modal-overlay');
+        const modalContent = document.getElementById('modal-content');
+        const modalTitle = document.getElementById('modal-title');
+        const modalBody = document.getElementById('modal-body');
+        const modalClose = document.getElementById('modal-close');
+
+        function openModal() {
+            document.body.classList.add('modal-open');
+            modalOverlay.classList.add('show');
+        }
+
+        function closeModal() {
+            document.body.classList.remove('modal-open');
+            modalOverlay.classList.remove('show');
+        }
+
+        if (modalOverlay && modalClose && modalContent) {
+            modalClose.addEventListener('click', closeModal);
+            
+            modalOverlay.addEventListener('click', (event) => {
+                if (event.target === modalOverlay) {
+                    closeModal();
+                }
+            });
+
+            document.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape' && modalOverlay.classList.contains('show')) {
+                    closeModal();
+                }
+            });
+        }
+
+        function showModalLoading(title) {
+            modalTitle.textContent = title || 'Processing...';
+            modalBody.innerHTML = `
+                <div class="modal-loading">
+                    <div class="spinner"></div>
+                    <p>Running test, please wait...</p>
+                </div>
+            `;
+            openModal();
+        }
+
+        function displayModalError(error) {
+            modalTitle.textContent = 'Error';
+            modalBody.innerHTML = `<div class="message error">${escapeHtml(String(error.message || 'An unknown error occurred'))}</div>`;
+            openModal();
+        }
+
+        // Display Test Results in Modal
+        function displayModalResults(data) {
+            // Handle errors
+            if (data.error || !data.success) {
+                displayModalError(new Error(data.error || 'Request failed'));
+                return;
+            }
+            
+            // Get result data
+            const result = data.result || data;
+            console.log('Result data:', result);
+            console.log('Tests:', result.tests);
+            
+            if (!result) {
+                displayModalError(new Error('No results returned'));
+                return;
+            }
+            
+            // Set title
+            modalTitle.textContent = result.index_type || 'Test Results';
+            
+            // Build HTML
+            let html = '';
+            
+            if (result.description) {
+                html += `<div class="result-description">${escapeHtml(String(result.description))}</div>`;
+            }
+            
+            if (result.value) {
+                html += `
+                    <div class="result-value">
+                        <h4>💡 Value & Impact</h4>
+                        <p>${escapeHtml(String(result.value))}</p>
+                    </div>
+                `;
+            }
+            
+            if (result.tests && Array.isArray(result.tests) && result.tests.length > 0) {
+                result.tests.forEach((test, idx) => {
+                    if (!test) return;
+                    console.log(`Test ${idx}:`, test);
+                    console.log(`Test performance:`, test.performance);
+                    
+                    // Build performance metrics section
+                    let performanceHtml = '';
+                    if (test.performance) {
+                        console.log('Building performance HTML for test:', test.name);
+                        console.log('Performance object:', test.performance);
+                        
+                        let metricsHtml = '';
+                        let hasMetrics = false;
+                        
+                        if (test.performance.execution_time_ms !== undefined && test.performance.execution_time_ms !== null) {
+                            metricsHtml += `
+                                <div class="metric-item">
+                                    <div class="label">Execution Time</div>
+                                    <div class="value highlight">${parseFloat(test.performance.execution_time_ms).toFixed(2)} ms</div>
+                                </div>
+                            `;
+                            hasMetrics = true;
+                        }
+                        if (test.performance.count_query_time_ms !== undefined && test.performance.count_query_time_ms !== null) {
+                            metricsHtml += `
+                                <div class="metric-item">
+                                    <div class="label">Count Query</div>
+                                    <div class="value highlight">${parseFloat(test.performance.count_query_time_ms).toFixed(2)} ms</div>
+                                </div>
+                            `;
+                            hasMetrics = true;
+                        }
+                        if (test.performance.find_query_time_ms !== undefined && test.performance.find_query_time_ms !== null) {
+                            metricsHtml += `
+                                <div class="metric-item">
+                                    <div class="label">Find Query</div>
+                                    <div class="value highlight">${parseFloat(test.performance.find_query_time_ms).toFixed(2)} ms</div>
+                                </div>
+                            `;
+                            hasMetrics = true;
+                        }
+                        
+                        // Build explain plan section
+                        let explainHtml = '';
+                        if (test.performance.explain) {
+                            let explainItems = '';
+                            if (test.performance.explain.index_used) {
+                                const indexUsed = test.performance.explain.index_used;
+                                const indexBadge = indexUsed !== 'Collection Scan' ? 
+                                    `<span class="index-used">${escapeHtml(String(indexUsed))}</span>` :
+                                    `<span class="collection-scan">Collection Scan (No Index)</span>`;
+                                explainItems += `
+                                    <div class="explain-item">
+                                        <strong>Index Used:</strong> ${indexBadge}
+                                    </div>
+                                `;
+                            }
+                            if (test.performance.explain.total_docs_examined !== undefined && test.performance.explain.total_docs_examined !== null) {
+                                explainItems += `
+                                    <div class="explain-item">
+                                        <strong>Documents Examined:</strong> ${test.performance.explain.total_docs_examined}
+                                    </div>
+                                `;
+                            }
+                            if (test.performance.explain.total_docs_returned !== undefined && test.performance.explain.total_docs_returned !== null) {
+                                explainItems += `
+                                    <div class="explain-item">
+                                        <strong>Documents Returned:</strong> ${test.performance.explain.total_docs_returned}
+                                    </div>
+                                `;
+                            }
+                            if (test.performance.explain.efficiency !== undefined && test.performance.explain.efficiency !== null) {
+                                explainItems += `
+                                    <div class="explain-item">
+                                        <strong>Query Efficiency:</strong> ${parseFloat(test.performance.explain.efficiency).toFixed(1)}%
+                                    </div>
+                                `;
+                            }
+                            if (test.performance.explain.execution_time_ms !== undefined && test.performance.explain.execution_time_ms !== null) {
+                                explainItems += `
+                                    <div class="explain-item">
+                                        <strong>Execution Time (DB):</strong> ${test.performance.explain.execution_time_ms} ms
+                                    </div>
+                                `;
+                            }
+                            
+                            if (explainItems) {
+                                explainHtml = `
+                                    <div class="explain-plan">
+                                        <h5>📊 Query Explain Plan</h5>
+                                        ${explainItems}
+                                    </div>
+                                `;
+                            }
+                        }
+                        
+                        // ALWAYS show performance section if performance object exists
+                        // Build the performance section
+                        let perfSectionContent = '';
+                        if (metricsHtml) {
+                            perfSectionContent += `<div class="metrics-grid">${metricsHtml}</div>`;
+                        }
+                        if (explainHtml) {
+                            perfSectionContent += explainHtml;
+                        }
+                        
+                        // ALWAYS show performance section if performance object exists
+                        // If we have metrics or explain, show them. Otherwise show what we have
+                        if (hasMetrics || explainHtml) {
+                            performanceHtml = `
+                                <div class="performance-metrics">
+                                    <h5>⚡ Performance Metrics</h5>
+                                    ${perfSectionContent}
+                                </div>
+                            `;
+                        } else {
+                            // Still show section even if empty - for debugging
+                            performanceHtml = `
+                                <div class="performance-metrics">
+                                    <h5>⚡ Performance Metrics</h5>
+                                    <div class="message info">
+                                        <strong>Performance data:</strong> execution_time_ms=${test.performance.execution_time_ms !== undefined ? test.performance.execution_time_ms : 'N/A'}, 
+                                        count_query_time_ms=${test.performance.count_query_time_ms !== undefined ? test.performance.count_query_time_ms : 'N/A'}, 
+                                        find_query_time_ms=${test.performance.find_query_time_ms !== undefined ? test.performance.find_query_time_ms : 'N/A'}
+                                    </div>
+                                </div>
+                            `;
+                        }
+                        
+                        console.log('Generated performance HTML:', performanceHtml ? 'YES (' + performanceHtml.length + ' chars)' : 'NO');
+                        console.log('hasMetrics:', hasMetrics);
+                        console.log('explainHtml:', explainHtml ? 'YES' : 'NO');
+                    } else {
+                        console.log('No performance object for test:', test.name);
+                    }
+                    
+                    html += `
+                        <div class="test-result">
+                            <h4>${escapeHtml(String(test.name || 'Test'))}</h4>
+                            ${test.index ? `<div class="index-name">Index: ${escapeHtml(String(test.index))}</div>` : ''}
+                            ${(test.query || test.expiration) ? `<div class="query">${escapeHtml(String(test.query || test.expiration))}</div>` : ''}
+                            ${test.explanation ? `<div class="explanation">${escapeHtml(String(test.explanation))}</div>` : ''}
+                            ${performanceHtml || ''}
+                            ${test.result ? `
+                                <div class="result-data">
+                                    <strong>Results:</strong>
+                                    <pre>${JSON.stringify(test.result, null, 2)}</pre>
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                });
+            } else {
+                html += `<div class="test-result"><pre>${JSON.stringify(result, null, 2)}</pre></div>`;
+            }
+            
+            if (result.note) {
+                html += `<div class="message info"><strong>Note:</strong> ${escapeHtml(String(result.note))}</div>`;
+            }
+            
+            if (!html) {
+                html = '<div class="message error">No content to display</div>';
+            }
+            
+            // Update DOM
+            modalBody.innerHTML = html;
+            openModal(); // Ensure it's open
+        }
+        
+        function escapeHtml(text) {
+            if (text == null || text === undefined) return '';
+            const div = document.createElement('div');
+            div.textContent = String(text);
+            return div.innerHTML;
+        }
+        
+        // Test Functions
+        async function testIndex(endpoint, name) {
+            console.log(`Testing ${name} at ${endpoint}`);
+            showModalLoading(`Testing ${name}...`);
+            
+            try {
+                const response = await fetch(`/experiments/indexing_demo/${endpoint}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                console.log(`Response for ${name}:`, data);
+                console.log(`Performance data:`, JSON.stringify(data, null, 2));
+                
+                if (!data) {
+                    throw new Error('No data returned from server');
+                }
+                
+                displayModalResults(data);
+                setTimeout(updateStats, 500); // Update stats after test
+                
+            } catch (error) {
+                console.error(`Error testing ${name}:`, error);
+                displayModalError(error);
+            }
+        }
+        
+        async function testRegular() {
+            await testIndex('test-regular', 'Regular Index');
+        }
+        
+        async function testText() {
+            await testIndex('test-text', 'Text Index');
+        }
+        
+        async function testGeospatial() {
+            await testIndex('test-geospatial', 'Geospatial Index');
+        }
+        
+        async function testPartial() {
+            await testIndex('test-partial', 'Partial Index');
+        }
+        
+        async function testTTL() {
+            await testIndex('test-ttl', 'TTL Index');
+        }
+        
+        async function testVector() {
+            await testIndex('test-vector', 'Vector Search');
+        }
     </script>
 </body>
 </html>

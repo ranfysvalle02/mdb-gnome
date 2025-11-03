@@ -52,9 +52,27 @@ async def get_actor_handle(
 async def index(request: Request, actor: Any = Depends(get_actor_handle)):
     """
     Main demo page showing all index types and sample data.
+    Auto-seeds if database is empty.
     """
     try:
+        # Check if database is empty and auto-seed if needed
+        is_empty = await actor.is_empty.remote()
+        if is_empty:
+            logger.info("[IndexingDemo] Database is empty, auto-seeding...")
+            seed_result = await actor.seed_sample_data.remote()
+            logger.info(f"[IndexingDemo] Auto-seed completed: {seed_result.get('success', False)}")
+        
         stats = await actor.get_stats.remote()
+        
+        # Track user visit
+        try:
+            await actor.track_user_click.remote("page_visit", {
+                "ip": request.client.host if request.client else None,
+                "user_agent": request.headers.get("user-agent", ""),
+                "referer": request.headers.get("referer", "")
+            })
+        except Exception:
+            pass  # Don't fail if tracking fails
     except Exception as e:
         logger.error(f"[IndexingDemo] index route error: {e}", exc_info=True)
         stats = {"error": str(e)}
@@ -63,17 +81,26 @@ async def index(request: Request, actor: Any = Depends(get_actor_handle)):
         "index.html",
         {
             "request": request,
-            "stats": stats
+            "stats": stats,
+            "auto_seeded": is_empty if 'is_empty' in locals() else False
         }
     )
 
 
 @bp.post("/seed-data", name="indexing_demo_seed")
-async def seed_data(actor: Any = Depends(get_actor_handle)):
+async def seed_data(request: Request, actor: Any = Depends(get_actor_handle)):
     """
     Seed sample data for all index types.
     """
     try:
+        # Track user click
+        try:
+            await actor.track_user_click.remote("seed_data", {
+                "ip": request.client.host if request.client else None
+            })
+        except Exception:
+            pass
+        
         result = await actor.seed_sample_data.remote()
         return {"success": True, "result": result}
     except Exception as e:
@@ -85,11 +112,25 @@ async def seed_data(actor: Any = Depends(get_actor_handle)):
 
 
 @bp.get("/test-regular", name="indexing_demo_test_regular")
-async def test_regular_index(actor: Any = Depends(get_actor_handle)):
+async def test_regular_index(request: Request, actor: Any = Depends(get_actor_handle)):
     """
     Test regular index queries (unique, compound).
+    Auto-seeds if database is empty.
     """
     try:
+        # Auto-seed if empty
+        is_empty = await actor.is_empty.remote()
+        if is_empty:
+            await actor.seed_sample_data.remote()
+        
+        # Track user click
+        try:
+            await actor.track_user_click.remote("test_regular_index", {
+                "ip": request.client.host if request.client else None
+            })
+        except Exception:
+            pass
+        
         result = await actor.test_regular_indexes.remote()
         return {"success": True, "result": result}
     except Exception as e:
@@ -101,11 +142,25 @@ async def test_regular_index(actor: Any = Depends(get_actor_handle)):
 
 
 @bp.get("/test-text", name="indexing_demo_test_text")
-async def test_text_index(actor: Any = Depends(get_actor_handle)):
+async def test_text_index(request: Request, actor: Any = Depends(get_actor_handle)):
     """
     Test text index queries.
+    Auto-seeds if database is empty.
     """
     try:
+        # Auto-seed if empty
+        is_empty = await actor.is_empty.remote()
+        if is_empty:
+            await actor.seed_sample_data.remote()
+        
+        # Track user click
+        try:
+            await actor.track_user_click.remote("test_text_index", {
+                "ip": request.client.host if request.client else None
+            })
+        except Exception:
+            pass
+        
         result = await actor.test_text_index.remote()
         return {"success": True, "result": result}
     except Exception as e:
@@ -117,11 +172,25 @@ async def test_text_index(actor: Any = Depends(get_actor_handle)):
 
 
 @bp.get("/test-geospatial", name="indexing_demo_test_geospatial")
-async def test_geospatial_index(actor: Any = Depends(get_actor_handle)):
+async def test_geospatial_index(request: Request, actor: Any = Depends(get_actor_handle)):
     """
     Test geospatial index queries.
+    Auto-seeds if database is empty.
     """
     try:
+        # Auto-seed if empty
+        is_empty = await actor.is_empty.remote()
+        if is_empty:
+            await actor.seed_sample_data.remote()
+        
+        # Track user click
+        try:
+            await actor.track_user_click.remote("test_geospatial_index", {
+                "ip": request.client.host if request.client else None
+            })
+        except Exception:
+            pass
+        
         result = await actor.test_geospatial_index.remote()
         return {"success": True, "result": result}
     except Exception as e:
@@ -133,11 +202,25 @@ async def test_geospatial_index(actor: Any = Depends(get_actor_handle)):
 
 
 @bp.get("/test-partial", name="indexing_demo_test_partial")
-async def test_partial_index(actor: Any = Depends(get_actor_handle)):
+async def test_partial_index(request: Request, actor: Any = Depends(get_actor_handle)):
     """
     Test partial index queries.
+    Auto-seeds if database is empty.
     """
     try:
+        # Auto-seed if empty
+        is_empty = await actor.is_empty.remote()
+        if is_empty:
+            await actor.seed_sample_data.remote()
+        
+        # Track user click
+        try:
+            await actor.track_user_click.remote("test_partial_index", {
+                "ip": request.client.host if request.client else None
+            })
+        except Exception:
+            pass
+        
         result = await actor.test_partial_index.remote()
         return {"success": True, "result": result}
     except Exception as e:
@@ -149,11 +232,25 @@ async def test_partial_index(actor: Any = Depends(get_actor_handle)):
 
 
 @bp.get("/test-vector", name="indexing_demo_test_vector")
-async def test_vector_index(actor: Any = Depends(get_actor_handle)):
+async def test_vector_index(request: Request, actor: Any = Depends(get_actor_handle)):
     """
     Test vector search index queries.
+    Auto-seeds if database is empty.
     """
     try:
+        # Auto-seed if empty
+        is_empty = await actor.is_empty.remote()
+        if is_empty:
+            await actor.seed_sample_data.remote()
+        
+        # Track user click
+        try:
+            await actor.track_user_click.remote("test_vector_index", {
+                "ip": request.client.host if request.client else None
+            })
+        except Exception:
+            pass
+        
         result = await actor.test_vector_index.remote()
         return {"success": True, "result": result}
     except Exception as e:
@@ -165,15 +262,45 @@ async def test_vector_index(actor: Any = Depends(get_actor_handle)):
 
 
 @bp.get("/test-ttl", name="indexing_demo_test_ttl")
-async def test_ttl_index(actor: Any = Depends(get_actor_handle)):
+async def test_ttl_index(request: Request, actor: Any = Depends(get_actor_handle)):
     """
     Test TTL index (sessions should expire automatically).
+    Auto-seeds if database is empty.
     """
     try:
+        # Auto-seed if empty
+        is_empty = await actor.is_empty.remote()
+        if is_empty:
+            await actor.seed_sample_data.remote()
+        
+        # Track user click
+        try:
+            await actor.track_user_click.remote("test_ttl_index", {
+                "ip": request.client.host if request.client else None
+            })
+        except Exception:
+            pass
+        
         result = await actor.test_ttl_index.remote()
         return {"success": True, "result": result}
     except Exception as e:
         logger.error(f"[IndexingDemo] test_ttl_index error: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": str(e)}
+        )
+
+
+@bp.get("/stats", name="indexing_demo_stats")
+async def get_stats(actor: Any = Depends(get_actor_handle)):
+    """
+    Get statistics about the demo data (for AJAX updates).
+    """
+    try:
+        stats = await actor.get_stats.remote()
+        return {"success": True, **stats}
+    except Exception as e:
+        logger.error(f"[IndexingDemo] get_stats error: {e}", exc_info=True)
         return JSONResponse(
             status_code=500,
             content={"success": False, "error": str(e)}

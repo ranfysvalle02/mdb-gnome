@@ -33,56 +33,51 @@ class ExperimentActor:
         read_scopes: List[str]
     ):
         """
-        Initialize the actor with MongoDB connection.
+        Initialize the actor with MongoDB connection using ExperimentDB.
         """
-        from async_mongo_wrapper import ScopedMongoWrapper
-        from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
-        
-        self.mongo_uri = mongo_uri
-        self.db_name = db_name
         self.write_scope = write_scope
         self.read_scopes = read_scopes
         
-        # Initialize MongoDB connection
-        self.client: Optional[AsyncIOMotorClient] = None
-        self.db: Optional[AsyncIOMotorDatabase] = None
-        self.wrapped_db: Optional[ScopedMongoWrapper] = None
-        
-        logger.info(f"[IndexingDemo] Actor initialized with write_scope={write_scope}, read_scopes={read_scopes}")
+        # Initialize database using ExperimentDB (consistent with other experiments)
+        try:
+            from experiment_db import create_actor_database
+            self.db = create_actor_database(
+                mongo_uri,
+                db_name,
+                write_scope,
+                read_scopes
+            )
+            logger.info(
+                f"[IndexingDemo] Actor initialized with write_scope='{self.write_scope}' "
+                f"(DB='{db_name}') using magical database abstraction"
+            )
+        except Exception as e:
+            logger.critical(f"[IndexingDemo] ❌ CRITICAL: Failed to init DB: {e}")
+            self.db = None
     
     async def initialize(self):
         """
-        Initialize MongoDB connection.
+        Post-initialization hook (kept for backward compatibility).
+        Database is already initialized in __init__ via ExperimentDB.
         """
-        from async_mongo_wrapper import ScopedMongoWrapper
-        from motor.motor_asyncio import AsyncIOMotorClient
+        if not self.db:
+            logger.warning(f"[IndexingDemo] Skipping initialize - DB not ready.")
+            return
         
-        try:
-            self.client = AsyncIOMotorClient(self.mongo_uri)
-            self.db = self.client[self.db_name]
-            self.wrapped_db = ScopedMongoWrapper(
-                real_db=self.db,
-                read_scopes=self.read_scopes,
-                write_scope=self.write_scope,
-                auto_index=False  # We're managing indexes via manifest
-            )
-            logger.info(f"[IndexingDemo] MongoDB connection established")
-        except Exception as e:
-            logger.error(f"[IndexingDemo] Failed to initialize MongoDB: {e}", exc_info=True)
-            raise
+        logger.info(f"[IndexingDemo] Post-initialization complete (database already initialized).")
     
     async def get_stats(self) -> Dict[str, Any]:
         """
         Get statistics about the demo data.
         """
-        if not self.wrapped_db:
+        if not self.db:
             return {"error": "Database not initialized"}
         
         try:
-            products_count = await self.wrapped_db.products.count_documents({})
-            sessions_count = await self.wrapped_db.sessions.count_documents({})
-            embeddings_count = await self.wrapped_db.embeddings.count_documents({})
-            logs_count = await self.wrapped_db.logs.count_documents({})
+            products_count = await self.db.products.count_documents({})
+            sessions_count = await self.db.sessions.count_documents({})
+            embeddings_count = await self.db.embeddings.count_documents({})
+            logs_count = await self.db.logs.count_documents({})
             
             return {
                 "products": products_count,
@@ -104,7 +99,7 @@ class ExperimentActor:
         """
         Seed sample data for all index types with detailed progress information.
         """
-        if not self.wrapped_db:
+        if not self.db:
             return {"error": "Database not initialized"}
         
         try:
@@ -140,7 +135,7 @@ class ExperimentActor:
                     "created_at": datetime.datetime.utcnow()
                 })
             
-            await self.wrapped_db.products.insert_many(products)
+            await self.db.products.insert_many(products)
             steps[-1]["status"] = "completed"
             steps[-1]["count"] = len(products)
             
@@ -163,7 +158,7 @@ class ExperimentActor:
                     "data": {"page_views": random.randint(1, 50)}
                 })
             
-            await self.wrapped_db.sessions.insert_many(sessions)
+            await self.db.sessions.insert_many(sessions)
             steps[-1]["status"] = "completed"
             steps[-1]["count"] = len(sessions)
             steps[-1]["note"] = f"{len([s for s in sessions if s['active']])} active sessions will be indexed by the partial index"
@@ -188,7 +183,7 @@ class ExperimentActor:
                     "metadata": {"type": "demo"}
                 })
             
-            await self.wrapped_db.embeddings.insert_many(embeddings)
+            await self.db.embeddings.insert_many(embeddings)
             steps[-1]["status"] = "completed"
             steps[-1]["count"] = len(embeddings)
             
@@ -220,7 +215,7 @@ class ExperimentActor:
                     "source": f"service_{random.randint(1, 3)}"
                 })
             
-            await self.wrapped_db.logs.insert_many(logs)
+            await self.db.logs.insert_many(logs)
             steps[-1]["status"] = "completed"
             steps[-1]["count"] = len(logs)
             
@@ -243,20 +238,45 @@ class ExperimentActor:
     
     async def test_regular_indexes(self) -> Dict[str, Any]:
         """
-        Test regular index queries (unique SKU, compound category/price).
+        Test regular index queries (unique SKU, compound category/price) with performance metrics.
         """
-        if not self.wrapped_db:
+        if not self.db:
             return {"error": "Database not initialized"}
         
         try:
-            # Test unique index: find by SKU
-            product_by_sku = await self.wrapped_db.products.find_one({"sku": "SKU-0001"})
+            import time
             
-            # Test compound index: find by category and price range
-            products_by_category = await self.wrapped_db.products.find({
+            # Test unique index: find by SKU with timing
+            start_time = time.time()
+            product_by_sku = await self.db.products.find_one({"sku": "SKU-0001"})
+            unique_query_time = (time.time() - start_time) * 1000  # Convert to milliseconds
+            
+            # Get explain plan for unique index query
+            try:
+                explain_result = await self.db.raw.products.find({"sku": "SKU-0001"}).explain()
+                unique_explain = self._extract_explain_info(explain_result)
+            except Exception as e:
+                logger.warning(f"Could not get explain plan: {e}")
+                unique_explain = None
+            
+            # Test compound index: find by category and price range with timing
+            start_time = time.time()
+            products_by_category = await self.db.products.find({
                 "category": "Electronics",
                 "price": {"$gte": 100.0}
             }).sort("price", -1).limit(5).to_list(5)
+            compound_query_time = (time.time() - start_time) * 1000
+            
+            # Get explain plan for compound query
+            try:
+                explain_result = await self.db.raw.products.find({
+                    "category": "Electronics",
+                    "price": {"$gte": 100.0}
+                }).sort("price", -1).limit(5).explain()
+                compound_explain = self._extract_explain_info(explain_result)
+            except Exception as e:
+                logger.warning(f"Could not get explain plan: {e}")
+                compound_explain = None
             
             return {
                 "success": True,
@@ -268,6 +288,10 @@ class ExperimentActor:
                         "index": "product_sku_unique",
                         "query": '{"sku": "SKU-0001"}',
                         "explanation": "The unique index on SKU ensures fast O(log n) lookups and prevents duplicate SKUs. Without an index, MongoDB would scan every document.",
+                        "performance": {
+                            "execution_time_ms": round(unique_query_time, 2),
+                            "explain": unique_explain
+                        },
                         "result": {
                             "found": product_by_sku is not None,
                             "sku": product_by_sku.get("sku") if product_by_sku else None,
@@ -279,6 +303,10 @@ class ExperimentActor:
                         "index": "product_category_price",
                         "query": '{"category": "Electronics", "price": {"$gte": 100.0}}',
                         "explanation": "Compound indexes support efficient multi-field queries. The index order (category, price) optimizes queries that filter by category first, then by price. Sorting by price descending is also optimized.",
+                        "performance": {
+                            "execution_time_ms": round(compound_query_time, 2),
+                            "explain": compound_explain
+                        },
                         "result": {
                             "count": len(products_by_category),
                             "products": [
@@ -294,18 +322,52 @@ class ExperimentActor:
             logger.error(f"[IndexingDemo] Error testing regular indexes: {e}", exc_info=True)
             return {"error": str(e)}
     
+    def _extract_explain_info(self, explain_result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract key information from MongoDB explain() result.
+        """
+        try:
+            execution_stats = explain_result.get("executionStats", {})
+            winning_plan = explain_result.get("queryPlanner", {}).get("winningPlan", {})
+            
+            return {
+                "execution_time_ms": execution_stats.get("executionTimeMillis", 0),
+                "total_docs_examined": execution_stats.get("totalDocsExamined", 0),
+                "total_docs_returned": execution_stats.get("nReturned", 0),
+                "index_used": winning_plan.get("indexName") or "Collection Scan",
+                "stage": winning_plan.get("stage", "unknown"),
+                "efficiency": round(execution_stats.get("nReturned", 0) / max(execution_stats.get("totalDocsExamined", 1), 1) * 100, 1) if execution_stats.get("totalDocsExamined", 0) > 0 else 100
+            }
+        except Exception as e:
+            logger.warning(f"Error extracting explain info: {e}")
+            return None
+    
     async def test_text_index(self) -> Dict[str, Any]:
         """
-        Test text index queries.
+        Test text index queries with performance metrics.
         """
-        if not self.wrapped_db:
+        if not self.db:
             return {"error": "Database not initialized"}
         
         try:
-            # Text search query
-            text_results = await self.wrapped_db.products.find({
+            import time
+            
+            # Text search query with timing
+            start_time = time.time()
+            text_results = await self.db.products.find({
                 "$text": {"$search": "description keywords"}
             }).limit(5).to_list(5)
+            text_query_time = (time.time() - start_time) * 1000
+            
+            # Get explain plan
+            try:
+                explain_result = await self.db.raw.products.find({
+                    "$text": {"$search": "description keywords"}
+                }).limit(5).explain()
+                text_explain = self._extract_explain_info(explain_result)
+            except Exception as e:
+                logger.warning(f"Could not get explain plan: {e}")
+                text_explain = None
             
             return {
                 "success": True,
@@ -317,6 +379,10 @@ class ExperimentActor:
                         "index": "product_name_text",
                         "query": '{"$text": {"$search": "description keywords"}}',
                         "explanation": "Text indexes tokenize and stem words, enabling natural language search. Fields can have different weights (name: 10, description: 5) to prioritize matches in certain fields. The search uses word stemming and case-insensitive matching.",
+                        "performance": {
+                            "execution_time_ms": round(text_query_time, 2),
+                            "explain": text_explain
+                        },
                         "result": {
                             "query": "description keywords",
                             "count": len(text_results),
@@ -335,16 +401,19 @@ class ExperimentActor:
     
     async def test_geospatial_index(self) -> Dict[str, Any]:
         """
-        Test geospatial index queries (2dsphere).
+        Test geospatial index queries (2dsphere) with performance metrics.
         """
-        if not self.wrapped_db:
+        if not self.db:
             return {"error": "Database not initialized"}
         
         try:
-            # Find products near San Francisco
+            import time
+            
+            # Find products near San Francisco with timing
             sf_coords = [-122.4194, 37.7749]
             
-            nearby_products = await self.wrapped_db.products.find({
+            start_time = time.time()
+            nearby_products = await self.db.products.find({
                 "location": {
                     "$near": {
                         "$geometry": {
@@ -355,6 +424,25 @@ class ExperimentActor:
                     }
                 }
             }).limit(5).to_list(5)
+            geo_query_time = (time.time() - start_time) * 1000
+            
+            # Get explain plan
+            try:
+                explain_result = await self.db.raw.products.find({
+                    "location": {
+                        "$near": {
+                            "$geometry": {
+                                "type": "Point",
+                                "coordinates": sf_coords
+                            },
+                            "$maxDistance": 50000
+                        }
+                    }
+                }).limit(5).explain()
+                geo_explain = self._extract_explain_info(explain_result)
+            except Exception as e:
+                logger.warning(f"Could not get explain plan: {e}")
+                geo_explain = None
             
             return {
                 "success": True,
@@ -366,6 +454,10 @@ class ExperimentActor:
                         "index": "product_location_2dsphere",
                         "query": "$near query with 50km radius from San Francisco",
                         "explanation": "The 2dsphere index uses spherical calculations to find documents within a specified distance from a point. Results are automatically sorted by distance. This is perfect for 'find stores near me' or 'find products in your area' features.",
+                        "performance": {
+                            "execution_time_ms": round(geo_query_time, 2),
+                            "explain": geo_explain
+                        },
                         "result": {
                             "center": sf_coords,
                             "center_label": "San Francisco, CA",
@@ -390,19 +482,33 @@ class ExperimentActor:
     
     async def test_partial_index(self) -> Dict[str, Any]:
         """
-        Test partial index queries (only active sessions).
+        Test partial index queries (only active sessions) with performance metrics.
         """
-        if not self.wrapped_db:
+        if not self.db:
             return {"error": "Database not initialized"}
         
         try:
-            # Query that should use partial index (active sessions only)
-            active_sessions = await self.wrapped_db.sessions.find({
+            import time
+            
+            # Query that should use partial index (active sessions only) with timing
+            start_time = time.time()
+            active_sessions = await self.db.sessions.find({
                 "active": True
             }).limit(5).to_list(5)
+            partial_query_time = (time.time() - start_time) * 1000
             
             # Query that shouldn't use partial index (inactive sessions)
-            all_sessions = await self.wrapped_db.sessions.find({}).limit(10).to_list(10)
+            all_sessions = await self.db.sessions.find({}).limit(10).to_list(10)
+            
+            # Get explain plan
+            try:
+                explain_result = await self.db.raw.sessions.find({
+                    "active": True
+                }).limit(5).explain()
+                partial_explain = self._extract_explain_info(explain_result)
+            except Exception as e:
+                logger.warning(f"Could not get explain plan: {e}")
+                partial_explain = None
             
             return {
                 "success": True,
@@ -414,6 +520,10 @@ class ExperimentActor:
                         "index": "session_user_active",
                         "query": '{"active": true}',
                         "explanation": "This partial index only indexes active sessions. It provides the same query performance as a full index for active sessions, but uses less storage and requires less maintenance. Inactive sessions are not indexed, saving space.",
+                        "performance": {
+                            "execution_time_ms": round(partial_query_time, 2),
+                            "explain": partial_explain
+                        },
                         "result": {
                             "active_sessions_count": len(active_sessions),
                             "total_sessions_count": len(all_sessions),
@@ -438,16 +548,18 @@ class ExperimentActor:
     
     async def test_vector_index(self) -> Dict[str, Any]:
         """
-        Test vector search index queries.
+        Test vector search index queries with performance metrics.
         """
-        if not self.wrapped_db:
+        if not self.db:
             return {"error": "Database not initialized"}
         
         try:
+            import time
+            
             # Generate a query vector
             query_vector = [random.uniform(-1.0, 1.0) for _ in range(384)]
             
-            # Vector search query
+            # Vector search query (using data_imaging pattern) with timing
             pipeline = [
                 {
                     "$vectorSearch": {
@@ -467,7 +579,11 @@ class ExperimentActor:
                 }
             ]
             
-            vector_results = await self.wrapped_db.embeddings.aggregate(pipeline).to_list(3)
+            start_time = time.time()
+            # Use raw access for vector search aggregation (consistent with data_imaging pattern)
+            cur = self.db.raw.embeddings.aggregate(pipeline)
+            vector_results = await cur.to_list(length=None)
+            vector_query_time = (time.time() - start_time) * 1000
             
             return {
                 "success": True,
@@ -479,6 +595,10 @@ class ExperimentActor:
                         "index": "embedding_vector_search",
                         "query": "Cosine similarity search with 384-dimensional vectors",
                         "explanation": "Vector search finds documents with similar meaning by comparing the cosine similarity between embedding vectors. Each document's text is converted to a 384-dimensional vector representing its semantic meaning. The search returns documents ranked by semantic similarity, not just keyword matches.",
+                        "performance": {
+                            "execution_time_ms": round(vector_query_time, 2),
+                            "explain": None  # Vector search explain is different
+                        },
                         "result": {
                             "query_vector_dim": len(query_vector),
                             "similarity_metric": "cosine",
@@ -510,14 +630,19 @@ class ExperimentActor:
     
     async def test_ttl_index(self) -> Dict[str, Any]:
         """
-        Test TTL index (check session expiration).
+        Test TTL index (check session expiration) with performance metrics.
         """
-        if not self.wrapped_db:
+        if not self.db:
             return {"error": "Database not initialized"}
         
         try:
+            import time
+            import asyncio
+            
             # Count sessions (TTL index should delete old ones)
-            total_sessions = await self.wrapped_db.sessions.count_documents({})
+            start_time = time.time()
+            total_sessions = await self.db.sessions.count_documents({})
+            count_query_time = (time.time() - start_time) * 1000
             
             # Create a session with old timestamp (should be expired)
             old_session = {
@@ -528,13 +653,24 @@ class ExperimentActor:
                 "data": {"note": "This should expire soon"}
             }
             
-            await self.wrapped_db.sessions.insert_one(old_session)
+            await self.db.sessions.insert_one(old_session)
             
             # Wait a moment, then check if it still exists
-            import asyncio
             await asyncio.sleep(1)
             
-            old_session_check = await self.wrapped_db.sessions.find_one({"session_id": "old_session"})
+            start_time = time.time()
+            old_session_check = await self.db.sessions.find_one({"session_id": "old_session"})
+            find_query_time = (time.time() - start_time) * 1000
+            
+            # Get explain plan
+            try:
+                explain_result = await self.db.raw.sessions.find({
+                    "session_id": "old_session"
+                }).explain()
+                ttl_explain = self._extract_explain_info(explain_result)
+            except Exception as e:
+                logger.warning(f"Could not get explain plan: {e}")
+                ttl_explain = None
             
             return {
                 "success": True,
@@ -546,6 +682,11 @@ class ExperimentActor:
                         "index": "session_created_at_ttl",
                         "expiration": "1 hour after created_at",
                         "explanation": "TTL indexes monitor a date field and automatically remove documents when their expiration time is reached. This is perfect for session data, temporary caches, event logs, and any data that has a natural expiration. No application code needed - MongoDB handles it automatically.",
+                        "performance": {
+                            "count_query_time_ms": round(count_query_time, 2),
+                            "find_query_time_ms": round(find_query_time, 2),
+                            "explain": ttl_explain
+                        },
                         "result": {
                             "total_sessions": total_sessions,
                             "old_session_inserted": True,
@@ -562,18 +703,56 @@ class ExperimentActor:
             logger.error(f"[IndexingDemo] Error testing TTL index: {e}", exc_info=True)
             return {"error": str(e)}
     
+    async def is_empty(self) -> bool:
+        """
+        Check if the database collections are empty.
+        """
+        if not self.db:
+            return True
+        
+        try:
+            products_count = await self.db.products.count_documents({})
+            sessions_count = await self.db.sessions.count_documents({})
+            embeddings_count = await self.db.embeddings.count_documents({})
+            logs_count = await self.db.logs.count_documents({})
+            
+            total = products_count + sessions_count + embeddings_count + logs_count
+            return total == 0
+        except Exception as e:
+            logger.error(f"[IndexingDemo] Error checking if empty: {e}", exc_info=True)
+            return True
+    
+    async def track_user_click(self, action: str, user_info: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Track user clicks/interactions for analytics.
+        Saves to a 'user_clicks' collection.
+        """
+        if not self.db:
+            return
+        
+        try:
+            import datetime
+            click_doc = {
+                "action": action,
+                "timestamp": datetime.datetime.utcnow(),
+                "user_info": user_info or {}
+            }
+            await self.db.user_clicks.insert_one(click_doc)
+        except Exception as e:
+            logger.warning(f"[IndexingDemo] Error tracking user click: {e}", exc_info=True)
+    
     async def clear_all_data(self) -> Dict[str, Any]:
         """
         Clear all demo data.
         """
-        if not self.wrapped_db:
+        if not self.db:
             return {"error": "Database not initialized"}
         
         try:
-            products_deleted = await self.wrapped_db.products.delete_many({})
-            sessions_deleted = await self.wrapped_db.sessions.delete_many({})
-            embeddings_deleted = await self.wrapped_db.embeddings.delete_many({})
-            logs_deleted = await self.wrapped_db.logs.delete_many({})
+            products_deleted = await self.db.products.delete_many({})
+            sessions_deleted = await self.db.sessions.delete_many({})
+            embeddings_deleted = await self.db.embeddings.delete_many({})
+            logs_deleted = await self.db.logs.delete_many({})
             
             return {
                 "success": True,

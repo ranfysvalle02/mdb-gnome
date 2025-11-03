@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Story Weaver{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/experiments/storyweaver/static/css/styles.css">
+</head>
+<body>
+    <header>
+        <div class="container mx-auto px-4 max-w-6xl">
+             <div class="flex items-center justify-between py-3">
+                <a href="/experiments/storyweaver/" class="flex items-center gap-2 md:gap-3">
+                    <svg class="w-12 h-12" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                        <defs>
+                            <linearGradient id="weaveGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#8B5CF6" />
+                                <stop offset="100%" stop-color="#EC4899" />
+                            </linearGradient>
+                            <filter id="glow">
+                                <feGaussianBlur stdDeviation="1.5" result="coloredBlur" />
+                                <feMerge>
+                                    <feMergeNode in="coloredBlur" />
+                                    <feMergeNode in="SourceGraphic" />
+                                </feMerge>
+                            </filter>
+                        </defs>
+                        <ellipse cx="50" cy="50" rx="42" ry="25" stroke="#E5E7EB" stroke-width="1" fill="none" transform="rotate(45 50 50)" opacity="0.5"/>
+                        <ellipse cx="50" cy="50" rx="42" ry="25" stroke="#E5E7EB" stroke-width="1" fill="none" transform="rotate(-45 50 50)" opacity="0.5"/>
+                        <circle class="center-sparkle" cx="50" cy="50" r="5" fill="url(#weaveGradient)" filter="url(#glow)"/>
+                        <g filter="url(#glow)">
+                            <ellipse class="weave-path" cx="50" cy="50" rx="42" ry="25" stroke="url(#weaveGradient)" stroke-width="2.5" stroke-linecap="round" fill="none" transform="rotate(45 50 50)"/>
+                            <ellipse class="weave-path weave-path-2" cx="50" cy="50" rx="42" ry="25" stroke="url(#weaveGradient)" stroke-width="2.5" stroke-linecap="round" fill="none" transform="rotate(-45 50 50)"/>
+                        </g>
+                    </svg>
+                    <h1 class="text-2xl md:text-3xl font-extrabold logo-text">Story Weaver</h1>
+                </a>
+                <nav>
+                    <ul class="flex items-center space-x-4 md:space-x-6">
+                        <li><a href="/experiments/storyweaver/" class="text-sm md:text-base font-semibold text-slate-600 hover:text-indigo-600">Workspace</a></li>
+                        <li><a href="/logout" class="text-sm md:text-base font-semibold text-slate-600 hover:text-indigo-600">Logout</a></li>
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </header>
+    <div class="container mx-auto px-4 py-8 md:p-12 max-w-6xl">
+        {% block content %}{% endblock %}
+    </div>
+    {% block modals %}{% endblock %}
+    <script src="/experiments/storyweaver/static/js/main.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const openModalTriggers = document.querySelectorAll('[data-modal-target]');
+            const closeModalButtons = document.querySelectorAll('.modal-close-btn');
+            const allModals = document.querySelectorAll('.fixed.inset-0.z-50');
+            const openModal = (modalId) => {
+                const modal = document.getElementById(modalId);
+                if (modal) modal.classList.remove('hidden');
+            };
+            const closeModal = (modal) => {
+                if (modal) modal.classList.add('hidden');
+            };
+            openModalTriggers.forEach(trigger => {
+                trigger.addEventListener('click', () => {
+                    openModal(trigger.dataset.modalTarget);
+                });
+            });
+            closeModalButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    closeModal(button.closest('.fixed.inset-0.z-50'));
+                });
+            });
+            allModals.forEach(modal => {
+                modal.addEventListener('click', (event) => {
+                    if (event.target === modal) {
+                        closeModal(modal);
+                    }
+                });
+            });
+        });
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>
+
