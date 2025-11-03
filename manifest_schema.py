@@ -1,20 +1,72 @@
 """
-JSON Schema validation for experiment manifest.json files.
+JSON Schema validation for experiment manifest.json files with versioning support.
 
-This module provides comprehensive validation for manifest.json files,
-ensuring they conform to the expected structure and include valid index
-definitions.
+This module provides:
+- Multi-version schema support for backward compatibility
+- Schema migration functions for upgrading manifests
+- Optimized validation with caching for scale
+- Parallel manifest processing capabilities
+
+SCHEMA VERSIONING STRATEGY
+==========================
+
+Versions:
+- 1.0: Initial schema (default for manifests without version field)
+- 2.0: Current schema with all features (auth_policy, sub_auth, managed_indexes, etc.)
+
+Migration Strategy:
+- Automatically detects schema version from manifest
+- Migrates older versions to current schema if needed
+- Maintains backward compatibility
+- Allows experiments to specify target schema version
+
+For Scale:
+- Schema validation results are cached
+- Supports parallel manifest processing
+- Lazy schema loading for multiple experiments
+- Optimized validation paths for common cases
 """
 import logging
+import hashlib
+import asyncio
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple, Callable, Awaitable
 from jsonschema import validate, ValidationError, SchemaError
 
 logger = logging.getLogger(__name__)
 
-# JSON Schema definition for manifest.json
-MANIFEST_SCHEMA = {
+# Current schema version
+CURRENT_SCHEMA_VERSION = "2.0"
+DEFAULT_SCHEMA_VERSION = "1.0"  # For manifests without version field
+
+# Schema registry: maps version -> schema definition
+SCHEMA_REGISTRY: Dict[str, Dict[str, Any]] = {}
+
+# Validation cache: maps (manifest_hash, version) -> validation_result
+_validation_cache: Dict[str, Tuple[bool, Optional[str], Optional[List[str]]]] = {}
+_cache_lock = asyncio.Lock()
+
+
+def _get_manifest_hash(manifest_data: Dict[str, Any]) -> str:
+    """Generate a hash for manifest caching."""
+    import json
+    # Normalize manifest by removing metadata fields that don't affect validation
+    normalized = {k: v for k, v in manifest_data.items() 
+                  if k not in ['_id', '_updated', '_created', 'url']}
+    normalized_str = json.dumps(normalized, sort_keys=True)
+    return hashlib.sha256(normalized_str.encode()).hexdigest()[:16]
+
+
+# JSON Schema definition for manifest.json (Version 2.0 - Current)
+MANIFEST_SCHEMA_V2 = {
     "type": "object",
     "properties": {
+        "schema_version": {
+            "type": "string",
+            "pattern": "^\\d+\\.\\d+$",
+            "default": "2.0",
+            "description": "Schema version for this manifest (format: 'major.minor'). Defaults to 2.0 if not specified."
+        },
         "slug": {
             "type": "string",
             "pattern": "^[a-z0-9_-]+$",
@@ -38,7 +90,209 @@ MANIFEST_SCHEMA = {
         "auth_required": {
             "type": "boolean",
             "default": False,
-            "description": "Whether authentication is required for this experiment"
+            "description": "Whether authentication is required for this experiment (backward compatibility). If auth_policy is provided, this is ignored."
+        },
+        "auth_policy": {
+            "type": "object",
+            "properties": {
+                "required": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Whether authentication is required (default: true). If false, allows anonymous access but still checks other policies."
+                },
+                "allowed_roles": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "List of roles that can access this experiment (e.g., ['admin', 'developer']). Users must have at least one of these roles."
+                },
+                "allowed_users": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "email"
+                    },
+                    "description": "List of specific user emails that can access this experiment (whitelist). If provided, only these users can access regardless of roles."
+                },
+                "denied_users": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "email"
+                    },
+                    "description": "List of user emails that are explicitly denied access (blacklist). Takes precedence over allowed_users and allowed_roles."
+                },
+                "required_permissions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "List of required permissions (format: 'resource:action', e.g., ['experiments:view', 'experiments:manage_own']). User must have all listed permissions."
+                },
+                "custom_resource": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9_:]+$",
+                    "description": "Custom Casbin resource name (e.g., 'experiment:storyweaver'). If not provided, defaults to 'experiment:{slug}'."
+                },
+                "custom_actions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["access", "read", "write", "admin"]
+                    },
+                    "description": "Custom actions to check (defaults to ['access']). Used with custom_resource for fine-grained permission checks."
+                },
+                "allow_anonymous": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "If true, allows anonymous (unauthenticated) access. Only applies if required is false or not specified."
+                },
+                "owner_can_access": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "If true (default), the experiment owner (developer_id) can always access the experiment."
+                }
+            },
+            "additionalProperties": False,
+            "description": "Intelligent authorization policy for experiment-level access control. Supports role-based, user-based, and permission-based access. Takes precedence over auth_required."
+        },
+        "sub_auth": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Enable experiment-specific authentication (sub-authentication). When enabled, experiment manages its own users separate from platform users."
+                },
+                "strategy": {
+                    "type": "string",
+                    "enum": ["experiment_users", "anonymous_session", "oauth", "hybrid"],
+                    "default": "experiment_users",
+                    "description": "Sub-authentication strategy. 'experiment_users' = experiment-specific user accounts, 'anonymous_session' = session-based anonymous users, 'oauth' = OAuth integration, 'hybrid' = combine platform auth with experiment-specific identities"
+                },
+                "collection_name": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9_]+$",
+                    "default": "users",
+                    "description": "Collection name for experiment-specific users (default: 'users'). Will be prefixed with experiment slug."
+                },
+                "session_cookie_name": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9_-]+$",
+                    "default": "experiment_session",
+                    "description": "Cookie name for experiment-specific session (default: 'experiment_session'). Will be suffixed with experiment slug."
+                },
+                "session_ttl_seconds": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "default": 86400,
+                    "description": "Session TTL in seconds (default: 86400 = 24 hours). Used for experiment-specific sessions."
+                },
+                "allow_registration": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Allow users to self-register in the experiment (when strategy is 'experiment_users')."
+                },
+                "link_platform_users": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Link experiment users to platform users (when strategy is 'hybrid'). Allows platform users to have experiment-specific profiles."
+                },
+                "oauth_providers": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "enum": ["google", "github", "microsoft", "custom"]
+                            },
+                            "client_id": {
+                                "type": "string",
+                                "description": "OAuth client ID (environment variable name or direct value)"
+                            },
+                            "client_secret": {
+                                "type": "string",
+                                "description": "OAuth client secret (environment variable name or direct value)"
+                            },
+                            "redirect_uri": {
+                                "type": "string",
+                                "format": "uri",
+                                "description": "OAuth redirect URI (defaults to experiment OAuth callback)"
+                            }
+                        },
+                        "required": ["name"]
+                    },
+                    "description": "OAuth providers for sub-authentication (when strategy is 'oauth' or 'hybrid')."
+                },
+                "anonymous_user_prefix": {
+                    "type": "string",
+                    "default": "guest",
+                    "description": "Prefix for anonymous user IDs (default: 'guest'). Used for anonymous_session strategy."
+                },
+                "user_id_field": {
+                    "type": "string",
+                    "default": "experiment_user_id",
+                    "description": "Field name in platform user JWT for storing experiment user ID (default: 'experiment_user_id'). Used for linking."
+                },
+                "demo_users": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "email": {
+                                "type": "string",
+                                "format": "email",
+                                "description": "Email address for demo user (defaults to platform demo email if not specified)"
+                            },
+                            "password": {
+                                "type": "string",
+                                "description": "Password for demo user (defaults to platform demo password if not specified, or plain text for demo purposes)"
+                            },
+                            "role": {
+                                "type": "string",
+                                "default": "user",
+                                "description": "Role for demo user in experiment (default: 'user')"
+                            },
+                            "auto_create": {
+                                "type": "boolean",
+                                "default": True,
+                                "description": "Automatically create this demo user if it doesn't exist (default: true)"
+                            },
+                            "link_to_platform": {
+                                "type": "boolean",
+                                "default": False,
+                                "description": "Link this demo user to platform demo user (if platform demo exists, default: false)"
+                            },
+                            "extra_data": {
+                                "type": "object",
+                                "description": "Additional data to store with demo user (e.g., store_id, preferences, etc.)"
+                            }
+                        },
+                        "required": []
+                    },
+                    "description": "Array of demo users to automatically create/link for this experiment. If empty, automatically uses platform demo user if available."
+                },
+                "auto_link_platform_demo": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Automatically link platform demo user to experiment demo user if platform demo exists (default: true). Works in combination with link_platform_users and demo_users."
+                },
+                "demo_user_seed_strategy": {
+                    "type": "string",
+                    "enum": ["auto", "manual", "disabled"],
+                    "default": "auto",
+                    "description": "Strategy for demo user seeding: 'auto' = automatically create/link on first access or actor init, 'manual' = require explicit creation via API, 'disabled' = no automatic demo user handling (default: 'auto')"
+                },
+                "allow_demo_access": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Enable automatic demo user access. When enabled, unauthenticated users are automatically logged in as demo user, providing seamless demo experience. Requires demo users to be configured via demo_users or auto_link_platform_demo. (default: false)"
+                }
+            },
+            "additionalProperties": False,
+            "description": "Sub-authentication configuration for experiment-specific user management. Enables experiments to have their own user accounts and sessions independent of platform authentication."
         },
         "data_scope": {
             "type": "array",
@@ -323,6 +577,317 @@ MANIFEST_SCHEMA = {
     }
 }
 
+# Schema for Version 1.0 (backward compatibility - simplified)
+# Version 1.0 had: slug, name, description, status, auth_required, data_scope, runtime_s3_uri, runtime_pip_deps, managed_indexes
+MANIFEST_SCHEMA_V1 = {
+    "type": "object",
+    "properties": {
+        "schema_version": {
+            "type": "string",
+            "pattern": "^1\\.0$",
+            "const": "1.0"
+        },
+        "slug": {
+            "type": "string",
+            "pattern": "^[a-z0-9_-]+$",
+            "description": "Experiment slug (lowercase alphanumeric, underscores, hyphens)"
+        },
+        "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Human-readable experiment name"
+        },
+        "description": {
+            "type": "string",
+            "description": "Experiment description"
+        },
+        "status": {
+            "type": "string",
+            "enum": ["active", "draft", "archived", "inactive"],
+            "default": "draft",
+            "description": "Experiment status"
+        },
+        "auth_required": {
+            "type": "boolean",
+            "default": False,
+            "description": "Whether authentication is required for this experiment"
+        },
+        "data_scope": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "minItems": 1,
+            "default": ["self"],
+            "description": "List of experiment slugs whose data this experiment can access"
+        },
+        "runtime_s3_uri": {
+            "type": "string",
+            "format": "uri",
+            "description": "S3 URI for runtime code (for production deployments)"
+        },
+        "runtime_pip_deps": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "List of pip dependencies for isolated runtime"
+        },
+        "managed_indexes": {
+            "type": "object",
+            "patternProperties": {
+                "^[a-zA-Z0-9_]+$": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/indexDefinition"
+                    },
+                    "minItems": 1
+                }
+            },
+            "description": "Collection name -> list of index definitions"
+        },
+        "developer_id": {
+            "type": "string",
+            "format": "email",
+            "description": "Email of the developer who owns this experiment"
+        }
+    },
+    "required": [],
+    "definitions": {
+        # Reuse same indexDefinition from V2
+        "indexDefinition": MANIFEST_SCHEMA_V2["definitions"]["indexDefinition"]
+    }
+}
+
+# Register schemas
+SCHEMA_REGISTRY["1.0"] = MANIFEST_SCHEMA_V1
+SCHEMA_REGISTRY["2.0"] = MANIFEST_SCHEMA_V2
+# Also register as default/legacy
+SCHEMA_REGISTRY["default"] = MANIFEST_SCHEMA_V2
+MANIFEST_SCHEMA = MANIFEST_SCHEMA_V2  # Backward compatibility
+
+
+def get_schema_version(manifest_data: Dict[str, Any]) -> str:
+    """
+    Detect schema version from manifest.
+    
+    Args:
+        manifest_data: Manifest dictionary
+        
+    Returns:
+        Schema version string (e.g., "1.0", "2.0")
+    """
+    version = manifest_data.get("schema_version")
+    if version:
+        return str(version)
+    
+    # Heuristic: If manifest has new fields, assume 2.0, otherwise 1.0
+    if any(field in manifest_data for field in ["auth_policy", "sub_auth", "collection_settings"]):
+        return "2.0"
+    
+    return DEFAULT_SCHEMA_VERSION
+
+
+def migrate_manifest(manifest_data: Dict[str, Any], target_version: str = CURRENT_SCHEMA_VERSION) -> Dict[str, Any]:
+    """
+    Migrate manifest from one schema version to another.
+    
+    Args:
+        manifest_data: Manifest dictionary to migrate
+        target_version: Target schema version (default: current)
+        
+    Returns:
+        Migrated manifest dictionary
+    """
+    current_version = get_schema_version(manifest_data)
+    
+    if current_version == target_version:
+        return manifest_data.copy()
+    
+    migrated = manifest_data.copy()
+    
+    # Migration path: 1.0 -> 2.0
+    if current_version == "1.0" and target_version == "2.0":
+        # V1.0 to V2.0: Add schema_version, new fields already present are kept
+        if "schema_version" not in migrated:
+            migrated["schema_version"] = "2.0"
+        
+        # No data transformation needed - V2.0 is backward compatible
+        # New fields (auth_policy, sub_auth, etc.) are optional
+        logger.debug(f"Migrated manifest from 1.0 to 2.0: {migrated.get('slug', 'unknown')}")
+    
+    # Future: Add more migration paths as needed
+    # Example: 2.0 -> 3.0, etc.
+    
+    migrated["schema_version"] = target_version
+    return migrated
+
+
+def get_schema_for_version(version: str) -> Dict[str, Any]:
+    """
+    Get schema definition for a specific version.
+    
+    Args:
+        version: Schema version string
+        
+    Returns:
+        Schema definition dictionary
+        
+    Raises:
+        ValueError: If version not found in registry
+    """
+    if version in SCHEMA_REGISTRY:
+        return SCHEMA_REGISTRY[version]
+    
+    # Try to find compatible version
+    major = version.split(".")[0]
+    for reg_version in sorted(SCHEMA_REGISTRY.keys(), reverse=True):
+        if reg_version.startswith(major + "."):
+            logger.warning(f"Schema version {version} not found, using compatible version {reg_version}")
+            return SCHEMA_REGISTRY[reg_version]
+    
+    # Fallback to current
+    logger.warning(f"Schema version {version} not found, using current version {CURRENT_SCHEMA_VERSION}")
+    return SCHEMA_REGISTRY[CURRENT_SCHEMA_VERSION]
+
+
+async def _validate_manifest_async(manifest_data: Dict[str, Any], use_cache: bool = True) -> Tuple[bool, Optional[str], Optional[List[str]]]:
+    """
+    Validate a manifest against the JSON Schema with versioning and caching support.
+    
+    This function:
+    1. Detects schema version from manifest (defaults to 1.0 if not specified)
+    2. Uses appropriate schema for validation
+    3. Caches validation results for performance
+    4. Supports parallel validation for scale
+    
+    Args:
+        manifest_data: The manifest data to validate
+        use_cache: Whether to use validation cache (default: True, set False to force re-validation)
+        
+    Returns:
+        Tuple of (is_valid, error_message, error_paths)
+        - is_valid: True if valid, False otherwise
+        - error_message: Human-readable error message (None if valid)
+        - error_paths: List of JSON paths with errors (None if valid)
+        
+    Note: This function does NOT validate developer_id against the database.
+          Use validate_manifest_with_db() for database validation.
+    """
+    # Check cache first
+    if use_cache:
+        cache_key = _get_manifest_hash(manifest_data) + "_" + get_schema_version(manifest_data)
+        if cache_key in _validation_cache:
+            return _validation_cache[cache_key]
+    
+    try:
+        # Get schema version
+        version = get_schema_version(manifest_data)
+        schema = get_schema_for_version(version)
+        
+        # Validate against appropriate schema
+        validate(instance=manifest_data, schema=schema)
+        
+        # Cache success result
+        result = (True, None, None)
+        if use_cache:
+            cache_key = _get_manifest_hash(manifest_data) + "_" + version
+            _validation_cache[cache_key] = result
+        
+        return result
+        
+    except ValidationError as e:
+        error_paths = []
+        error_messages = []
+        
+        # Extract error paths and messages
+        path_parts = list(e.absolute_path)
+        if path_parts:
+            error_paths.append(".".join(str(p) for p in path_parts))
+        else:
+            error_paths.append("root")
+        
+        error_messages.append(e.message)
+        
+        # Follow the error chain for nested errors
+        error = e
+        while hasattr(error, "context") and error.context:
+            for suberror in error.context:
+                subpath_parts = list(suberror.absolute_path)
+                if subpath_parts:
+                    error_paths.append(".".join(str(p) for p in subpath_parts))
+                error_messages.append(suberror.message)
+            break  # Only process first level of context
+        
+        error_message = "; ".join(set(error_messages))  # Deduplicate messages
+        
+        # Cache error result
+        result = (False, error_message, error_paths)
+        if use_cache:
+            cache_key = _get_manifest_hash(manifest_data) + "_" + version
+            _validation_cache[cache_key] = result
+        
+        return result
+        
+    except SchemaError as e:
+        error_message = f"Invalid schema definition: {e.message}"
+        result = (False, error_message, ["schema"])
+        if use_cache:
+            cache_key = _get_manifest_hash(manifest_data) + "_" + get_schema_version(manifest_data)
+            _validation_cache[cache_key] = result
+        return result
+        
+    except Exception as e:
+        error_message = f"Unexpected validation error: {str(e)}"
+        logger.error(f"Unexpected error during manifest validation: {e}", exc_info=True)
+        result = (False, error_message, None)
+        if use_cache:
+            cache_key = _get_manifest_hash(manifest_data) + "_" + get_schema_version(manifest_data)
+            _validation_cache[cache_key] = result
+        return result
+
+
+def clear_validation_cache():
+    """Clear the validation cache. Useful for testing or when schemas change."""
+    global _validation_cache
+    _validation_cache.clear()
+    logger.debug("Validation cache cleared")
+
+
+async def validate_manifests_parallel(
+    manifests: List[Dict[str, Any]],
+    use_cache: bool = True
+) -> List[Tuple[bool, Optional[str], Optional[List[str]], Optional[str]]]:
+    """
+    Validate multiple manifests in parallel for scale.
+    
+    Args:
+        manifests: List of manifest dictionaries to validate
+        use_cache: Whether to use validation cache
+        
+    Returns:
+        List of tuples: (is_valid, error_message, error_paths, slug)
+        Each tuple corresponds to the manifest at the same index
+    """
+    async def validate_one(manifest: Dict[str, Any]) -> Tuple[bool, Optional[str], Optional[List[str]], Optional[str]]:
+        slug = manifest.get("slug", "unknown")
+        is_valid, error, paths = await _validate_manifest_async(manifest, use_cache=use_cache)
+        return (is_valid, error, paths, slug)
+    
+    # Run validations in parallel
+    results = await asyncio.gather(*[validate_one(m) for m in manifests], return_exceptions=True)
+    
+    # Handle exceptions
+    validated_results = []
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            slug = manifests[i].get("slug", "unknown")
+            validated_results.append((False, f"Validation error: {str(result)}", None, slug))
+        else:
+            validated_results.append(result)
+    
+    return validated_results
+
 
 async def validate_developer_id(
     developer_id: str,
@@ -366,15 +931,17 @@ async def validate_developer_id(
 
 async def validate_manifest_with_db(
     manifest_data: Dict[str, Any],
-    db_validator: Callable[[str], Awaitable[bool]]
+    db_validator: Callable[[str], Awaitable[bool]],
+    use_cache: bool = True
 ) -> Tuple[bool, Optional[str], Optional[List[str]]]:
     """
-    Validate a manifest against the JSON Schema and check developer_id exists in system.
+    Validate a manifest against the JSON Schema (with versioning) and check developer_id exists in system.
     
     Args:
         manifest_data: The manifest data to validate
         db_validator: Async function that checks if developer_id exists and has developer role
                     Should accept developer_id (str) and return bool
+        use_cache: Whether to use validation cache (default: True)
         
     Returns:
         Tuple of (is_valid, error_message, error_paths)
@@ -382,45 +949,10 @@ async def validate_manifest_with_db(
         - error_message: Human-readable error message (None if valid)
         - error_paths: List of JSON paths with errors (None if valid)
     """
-    # First validate schema
-    try:
-        validate(instance=manifest_data, schema=MANIFEST_SCHEMA)
-    except ValidationError as e:
-        error_paths = []
-        error_messages = []
-        
-        # Extract error path and message
-        error_path = ".".join(str(p) for p in e.absolute_path) if e.absolute_path else "root"
-        error_paths.append(error_path)
-        
-        # Build human-readable message
-        if e.absolute_path:
-            field = ".".join(str(p) for p in e.absolute_path)
-            error_messages.append(f"Field '{field}': {e.message}")
-        else:
-            error_messages.append(f"Manifest validation error: {e.message}")
-        
-        # Collect all validation errors from the context
-        for error in e.context:
-            ctx_path = ".".join(str(p) for p in error.absolute_path) if error.absolute_path else "root"
-            error_paths.append(ctx_path)
-            if error.absolute_path:
-                ctx_field = ".".join(str(p) for p in error.absolute_path)
-                error_messages.append(f"Field '{ctx_field}': {error.message}")
-            else:
-                error_messages.append(error.message)
-        
-        combined_message = " | ".join(error_messages[:3])  # Limit to first 3 errors
-        if len(error_messages) > 3:
-            combined_message += f" (+ {len(error_messages) - 3} more errors)"
-        
-        return False, combined_message, error_paths
-    except SchemaError as e:
-        logger.error(f"Schema error (this is a bug): {e}")
-        return False, f"Internal schema validation error: {e}", None
-    except Exception as e:
-        logger.error(f"Unexpected validation error: {e}", exc_info=True)
-        return False, f"Unexpected validation error: {e}", None
+    # First validate schema (with versioning support) - use async version directly
+    is_valid, error_message, error_paths = await _validate_manifest_async(manifest_data, use_cache=use_cache)
+    if not is_valid:
+        return False, error_message, error_paths
     
     # Then validate developer_id if present
     if "developer_id" in manifest_data:
@@ -432,61 +964,39 @@ async def validate_manifest_with_db(
     return True, None, None
 
 
-def validate_manifest(manifest_data: Dict[str, Any]) -> Tuple[bool, Optional[str], Optional[List[str]]]:
+# Public API: Synchronous wrapper for backward compatibility
+# Most callers use this synchronously, so we provide a sync wrapper
+def validate_manifest(manifest_data: Dict[str, Any], use_cache: bool = True) -> Tuple[bool, Optional[str], Optional[List[str]]]:
     """
-    Validate a manifest against the JSON Schema.
+    Validate a manifest against the JSON Schema with versioning and caching support (synchronous wrapper).
+    
+    This function wraps the async validation for backward compatibility.
+    In async contexts, use _validate_manifest_async() directly for better performance.
     
     Args:
         manifest_data: The manifest data to validate
+        use_cache: Whether to use validation cache (default: True)
         
     Returns:
         Tuple of (is_valid, error_message, error_paths)
         - is_valid: True if valid, False otherwise
         - error_message: Human-readable error message (None if valid)
         - error_paths: List of JSON paths with errors (None if valid)
-        
-    Note: This function does NOT validate developer_id against the database.
-          Use validate_manifest_with_db() for database validation.
     """
+    import asyncio
     try:
-        validate(instance=manifest_data, schema=MANIFEST_SCHEMA)
-        return True, None, None
-    except ValidationError as e:
-        error_paths = []
-        error_messages = []
-        
-        # Extract error path and message
-        error_path = ".".join(str(p) for p in e.absolute_path) if e.absolute_path else "root"
-        error_paths.append(error_path)
-        
-        # Build human-readable message
-        if e.absolute_path:
-            field = ".".join(str(p) for p in e.absolute_path)
-            error_messages.append(f"Field '{field}': {e.message}")
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If we're in an async context, use a thread pool to run sync
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(lambda: asyncio.run(_validate_manifest_async(manifest_data, use_cache)))
+                return future.result()
         else:
-            error_messages.append(f"Manifest validation error: {e.message}")
-        
-        # Collect all validation errors from the context
-        for error in e.context:
-            ctx_path = ".".join(str(p) for p in error.absolute_path) if error.absolute_path else "root"
-            error_paths.append(ctx_path)
-            if error.absolute_path:
-                ctx_field = ".".join(str(p) for p in error.absolute_path)
-                error_messages.append(f"Field '{ctx_field}': {error.message}")
-            else:
-                error_messages.append(error.message)
-        
-        combined_message = " | ".join(error_messages[:3])  # Limit to first 3 errors
-        if len(error_messages) > 3:
-            combined_message += f" (+ {len(error_messages) - 3} more errors)"
-        
-        return False, combined_message, error_paths
-    except SchemaError as e:
-        logger.error(f"Schema error (this is a bug): {e}")
-        return False, f"Internal schema validation error: {e}", None
-    except Exception as e:
-        logger.error(f"Unexpected validation error: {e}", exc_info=True)
-        return False, f"Unexpected validation error: {e}", None
+            return loop.run_until_complete(_validate_manifest_async(manifest_data, use_cache))
+    except RuntimeError:
+        # No event loop, create one
+        return asyncio.run(_validate_manifest_async(manifest_data, use_cache))
 
 
 def validate_index_definition(index_def: Dict[str, Any], collection_name: str, index_name: str) -> Tuple[bool, Optional[str]]:

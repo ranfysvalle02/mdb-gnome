@@ -4,6 +4,19 @@
   "description": "A collaborative writing and research platform for collecting, organizing, and synthesizing stories and study notes with AI-powered features",
   "status": "active",
   "auth_required": true,
+  "sub_auth": {
+    "enabled": true,
+    "strategy": "hybrid",
+    "collection_name": "users",
+    "session_cookie_name": "storyweaver_session",
+    "session_ttl_seconds": 86400,
+    "allow_registration": true,
+    "link_platform_users": true,
+    "user_id_field": "experiment_user_id",
+    "auto_link_platform_demo": true,
+    "demo_user_seed_strategy": "auto",
+    "allow_demo_access": true
+  },
   "data_scope": ["self"],
   "managed_indexes": {
     "projects": [

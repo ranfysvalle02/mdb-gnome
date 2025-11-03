@@ -4,6 +4,17 @@
   "description": "Multi-business-type store application supporting restaurants, auto sales, auto services, and generic stores",
   "status": "active",
   "auth_required": false,
+  "sub_auth": {
+    "enabled": true,
+    "strategy": "experiment_users",
+    "collection_name": "users",
+    "session_cookie_name": "store_factory_session",
+    "session_ttl_seconds": 86400,
+    "allow_registration": false,
+    "auto_link_platform_demo": false,
+    "demo_user_seed_strategy": "disabled",
+    "allow_demo_access": false
+  },
   "data_scope": ["self"],
   "managed_indexes": {
     "stores": [
@@ -53,6 +64,16 @@
         "keys": [
           ["store_id", 1],
           ["date_submitted", -1]
+        ]
+      }
+    ],
+    "slideshow": [
+      {
+        "name": "slideshow_store_id_order_index",
+        "type": "regular",
+        "keys": [
+          ["store_id", 1],
+          ["order", 1]
         ]
       }
     ]

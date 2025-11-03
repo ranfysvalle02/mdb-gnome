@@ -40,7 +40,7 @@ async def _create_casbin_provider(settings: Dict[str, Any]) -> AuthorizationProv
     except KeyError as e:
         raise RuntimeError(f"Missing required setting for Casbin provider: {e}")
 
-    model_path = base_dir / "casbin_model.conf"
+    model_path = base_dir / "auth" / "casbin_model.conf"
     if not model_path.is_file():
         raise FileNotFoundError(f"Missing Casbin model file: {model_path}")
 

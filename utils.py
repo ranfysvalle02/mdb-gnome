@@ -1,11 +1,12 @@
-"""Utility functions for file I/O, path handling, and directory operations."""
+"""Utility functions for file I/O, path handling, directory operations, and security."""
 import os
 import json
+import re
 import asyncio
 import logging
 import datetime
 from pathlib import Path
-from typing import Any, List, Dict
+from typing import Any, List, Dict, Optional, Tuple
 from fastapi import HTTPException, status
 from config import AIOFILES_AVAILABLE
 
@@ -16,6 +17,10 @@ _dir_scan_cache: Dict[str, tuple] = {}
 _dir_scan_cache_lock = asyncio.Lock()
 DIR_SCAN_CACHE_TTL_SECONDS = 60
 
+
+# ============================================================================
+# File I/O Functions
+# ============================================================================
 
 async def read_file_async(file_path: Path, encoding: str = "utf-8") -> str:
     """Asynchronously read a text file."""
@@ -49,6 +54,10 @@ async def write_file_async(file_path: Path, content: bytes | str) -> None:
         else:
             await asyncio.to_thread(file_path.write_bytes, content)
 
+
+# ============================================================================
+# Directory Operations
+# ============================================================================
 
 def calculate_dir_size_sync(path: Path) -> int:
     """Synchronously calculate total size of all files in a directory tree."""
@@ -115,6 +124,10 @@ async def scan_directory(dir_path: Path, base_path: Path) -> List[Dict[str, Any]
     return tree
 
 
+# ============================================================================
+# Security Functions
+# ============================================================================
+
 def secure_path(base_dir: Path, relative_path_str: str) -> Path:
     """Securely resolve a relative path, preventing directory traversal."""
     try:
@@ -134,6 +147,122 @@ def secure_path(base_dir: Path, relative_path_str: str) -> Path:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error processing file path.")
 
 
+def validate_objectid(oid_string: str, field_name: str = "id") -> Tuple[bool, Optional[str]]:
+    """
+    Securely validate and convert a string to MongoDB ObjectId.
+    
+    Args:
+        oid_string: String to validate and convert
+        field_name: Name of the field (for error messages)
+    
+    Returns:
+        Tuple of (is_valid: bool, error_message: Optional[str])
+        If valid, returns (True, None). If invalid, returns (False, error_message).
+    
+    Security Notes:
+    - Validates ObjectId format before conversion
+    - Prevents ObjectId injection attacks
+    - Returns safe error messages (no information disclosure)
+    """
+    if not oid_string:
+        return False, f"{field_name} is required"
+    
+    if not isinstance(oid_string, str):
+        return False, f"{field_name} must be a string"
+    
+    # Validate ObjectId format: exactly 24 hexadecimal characters
+    if not re.match(r'^[0-9a-fA-F]{24}$', oid_string):
+        return False, f"Invalid {field_name} format"
+    
+    try:
+        from bson.objectid import ObjectId
+        # Verify it's a valid ObjectId (this will throw if invalid)
+        test_oid = ObjectId(oid_string)
+        # Double-check the string representation matches
+        if str(test_oid) != oid_string:
+            return False, f"Invalid {field_name} format"
+        return True, None
+    except Exception:
+        return False, f"Invalid {field_name} format"
+
+
+def safe_objectid(oid_string: str, field_name: str = "id"):
+    """
+    Securely convert a string to MongoDB ObjectId, raising HTTPException on failure.
+    
+    Args:
+        oid_string: String to convert to ObjectId
+        field_name: Name of the field (for error messages)
+    
+    Returns:
+        ObjectId instance
+    
+    Raises:
+        HTTPException: 400 if the string is not a valid ObjectId
+    
+    Security Notes:
+    - Validates format before conversion
+    - Prevents ObjectId injection attacks
+    - Returns generic error messages (no information disclosure)
+    """
+    is_valid, error_message = validate_objectid(oid_string, field_name)
+    if not is_valid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message or f"Invalid {field_name}")
+    
+    from bson.objectid import ObjectId
+    return ObjectId(oid_string)
+
+
+def sanitize_for_regex(text: str) -> str:
+    """
+    Escape special regex characters in a string to prevent regex injection.
+    
+    Args:
+        text: String to escape
+    
+    Returns:
+        Escaped string safe for use in regex patterns
+    
+    Security Notes:
+    - Escapes all regex special characters
+    - Prevents regex injection attacks
+    - Use this when building regex patterns from user input
+    """
+    return re.escape(text)
+
+
+def sanitize_filename(filename: str) -> str:
+    """
+    Sanitize a filename to prevent path traversal and other file system attacks.
+    
+    Args:
+        filename: Filename to sanitize
+    
+    Returns:
+        Sanitized filename (only the basename, with path components removed)
+    
+    Security Notes:
+    - Removes path components (prevents directory traversal)
+    - Returns only the basename
+    - Strips leading/trailing whitespace and dots
+    """
+    # Remove path components - only keep basename
+    safe_name = Path(filename).name
+    
+    # Remove leading/trailing dots and whitespace (can be used for hidden files)
+    safe_name = safe_name.strip('. ')
+    
+    # Empty filename after sanitization is invalid
+    if not safe_name:
+        raise ValueError("Filename is invalid after sanitization")
+    
+    return safe_name
+
+
+# ============================================================================
+# URL and Cookie Functions
+# ============================================================================
+
 def build_absolute_https_url(request, relative_url: str) -> str:
     """
     Build an absolute URL from a relative URL, handling proxy headers intelligently.
@@ -144,9 +273,6 @@ def build_absolute_https_url(request, relative_url: str) -> str:
     When behind a proxy (like Render.com), excludes internal application ports
     (e.g., port 10000) from URLs since the proxy handles port mapping externally.
     """
-    import re
-    from config import BASE_DIR
-    
     # Get the default application port (used internally, not externally)
     default_app_port = int(os.getenv("PORT", "10000"))
     
@@ -294,9 +420,12 @@ def should_use_secure_cookie(request) -> bool:
     return request.url.scheme == "https"
 
 
+# ============================================================================
+# JSON Serialization
+# ============================================================================
+
 def make_json_serializable(obj: Any) -> Any:
     """Recursively converts MongoDB objects (datetime, ObjectId, etc.) to JSON-serializable types."""
-    import datetime
     if isinstance(obj, datetime.datetime):
         return obj.isoformat()
     elif isinstance(obj, dict):
@@ -311,4 +440,3 @@ def make_json_serializable(obj: Any) -> Any:
         except Exception:
             return repr(obj)
     return obj
-

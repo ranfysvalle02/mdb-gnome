@@ -89,6 +89,37 @@
                 display: flex !important;
             }
         }
+        /* Slideshow Styles */
+        .slideshow-slide {
+            opacity: 0;
+            transition: opacity 1.5s ease-in-out;
+            pointer-events: none;
+        }
+        .slideshow-slide.active {
+            opacity: 1;
+            pointer-events: auto;
+            z-index: 10;
+        }
+        @keyframes fade-in {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .animate-fade-in {
+            animation: fade-in 1s ease-out;
+        }
+        /* Smooth transitions for background images */
+        .slideshow-slide > div {
+            transition: transform 8s ease-out;
+        }
+        .slideshow-slide.active > div {
+            transform: scale(1.05);
+        }
     </style>
 </head>
 <body>
@@ -106,7 +137,16 @@
                 <a href="#specials" class="nav-link text-white hover:text-yellow-400">Specials</a>
                 {% endif %}
                 <a href="#contact" class="nav-link text-white hover:text-yellow-400">Contact</a>
+                {% if user %}
+                <div class="flex items-center space-x-4">
+                    <a href="/experiments/store_factory/{{ store.slug_id }}/admin/dashboard" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md">Dashboard</a>
+                    <form action="/experiments/store_factory/{{ store.slug_id }}/admin/logout" method="POST" class="inline">
+                        <button type="submit" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md">Logout</button>
+                    </form>
+                </div>
+                {% else %}
                 <a href="/experiments/store_factory/{{ store.slug_id }}/admin/login" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md">Login</a>
+                {% endif %}
             </nav>
             <!-- Mobile Menu Toggle -->
             <button id="mobile-menu-toggle" aria-label="Toggle mobile menu">
@@ -123,16 +163,71 @@
             <a href="#specials" class="nav-link">Specials</a>
             {% endif %}
             <a href="#contact" class="nav-link">Contact</a>
+            {% if user %}
+            <a href="/experiments/store_factory/{{ store.slug_id }}/admin/dashboard" class="nav-link">Dashboard</a>
+            <form action="/experiments/store_factory/{{ store.slug_id }}/admin/logout" method="POST" class="inline-block">
+                <button type="submit" class="nav-link">Logout</button>
+            </form>
+            {% else %}
             <a href="/experiments/store_factory/{{ store.slug_id }}/admin/login" class="nav-link">Login</a>
+            {% endif %}
         </nav>
     </header>
     <main>
+        {% if store.slideshow_images and store.slideshow_images|length > 0 %}
+        <!-- Beautiful Slideshow Section -->
+        <section id="hero-slideshow" class="relative h-screen w-full overflow-hidden">
+            <div id="slideshow-container" class="relative h-full w-full">
+                {% for slide in store.slideshow_images %}
+                <div class="slideshow-slide absolute inset-0 w-full h-full {% if loop.index == 1 %}active{% endif %}" data-index="{{ loop.index0 }}">
+                    <div class="relative w-full h-full bg-cover bg-center" style="background-image: url('{{ slide.image_url }}');">
+                        <div class="absolute inset-0 bg-gradient-to-b from-black/60 via-black/40 to-black/60"></div>
+                        <div class="relative h-full flex items-center justify-center text-white px-4">
+                            <div class="text-center max-w-4xl mx-auto">
+                                <h1 class="text-4xl md:text-6xl lg:text-7xl font-extrabold mb-4 drop-shadow-2xl animate-fade-in">
+                                    {{ slide.caption or store.tagline or business_config.hero_text }}
+                                </h1>
+                                {% if not slide.caption %}
+                                <p class="text-lg md:text-xl lg:text-2xl mt-4 opacity-90 drop-shadow-lg">{{ store.about_text or 'Welcome to our store' }}</p>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            
+            <!-- Navigation Arrows -->
+            {% if store.slideshow_images|length > 1 %}
+            <button id="slideshow-prev" class="absolute left-4 top-1/2 -translate-y-1/2 z-20 bg-black/50 hover:bg-black/70 text-white p-4 rounded-full transition-all duration-300 hover:scale-110 focus:outline-none focus:ring-2 focus:ring-white/50">
+                <i class="fas fa-chevron-left text-2xl"></i>
+            </button>
+            <button id="slideshow-next" class="absolute right-4 top-1/2 -translate-y-1/2 z-20 bg-black/50 hover:bg-black/70 text-white p-4 rounded-full transition-all duration-300 hover:scale-110 focus:outline-none focus:ring-2 focus:ring-white/50">
+                <i class="fas fa-chevron-right text-2xl"></i>
+            </button>
+            
+            <!-- Dots Indicator -->
+            <div id="slideshow-dots" class="absolute bottom-8 left-1/2 -translate-x-1/2 z-20 flex gap-3">
+                {% for slide in store.slideshow_images %}
+                <button class="slideshow-dot w-3 h-3 rounded-full transition-all duration-300 {% if loop.index == 1 %}bg-white{% else %}bg-white/50 hover:bg-white/75{% endif %}" data-index="{{ loop.index0 }}" aria-label="Go to slide {{ loop.index }}"></button>
+                {% endfor %}
+            </div>
+            
+            <!-- Play/Pause Button -->
+            <button id="slideshow-play-pause" class="absolute bottom-8 right-8 z-20 bg-black/50 hover:bg-black/70 text-white p-3 rounded-full transition-all duration-300 hover:scale-110 focus:outline-none focus:ring-2 focus:ring-white/50">
+                <i id="play-pause-icon" class="fas fa-pause text-xl"></i>
+            </button>
+            {% endif %}
+        </section>
+        {% else %}
+        <!-- Fallback Hero Section -->
         <section id="hero" class="h-screen bg-cover bg-center flex items-center justify-center text-white" style="background-image: linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)), url('{{ store.hero_image_url or 'https://images.pexels.com/photos/376464/pexels-photo-376464.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2' }}');">
             <div class="text-center px-4">
                 <h1 class="text-4xl md:text-6xl font-extrabold">{{ store.tagline or business_config.hero_text }}</h1>
                 <p class="text-lg md:text-xl mt-4 max-w-2xl mx-auto">{{ store.about_text or 'Welcome to our store' }}</p>
             </div>
         </section>
+        {% endif %}
         <section id="{{ business_config.section_label.lower().replace(' ', '-') }}" class="py-16 bg-gray-800">
             <div class="container mx-auto px-6 text-center">
                 <h2 class="text-4xl font-extrabold mb-4 text-white">{{ business_config.section_label }}</h2>
@@ -228,6 +323,153 @@
         </div>
     </footer>
     <script src="/experiments/store_factory/static/js/navigation.js"></script>
+    {% if store.slideshow_images and store.slideshow_images|length > 1 %}
+    <script>
+        // Beautiful Slideshow Functionality
+        (function() {
+            const slides = document.querySelectorAll('.slideshow-slide');
+            const dots = document.querySelectorAll('.slideshow-dot');
+            const prevBtn = document.getElementById('slideshow-prev');
+            const nextBtn = document.getElementById('slideshow-next');
+            const playPauseBtn = document.getElementById('slideshow-play-pause');
+            const playPauseIcon = document.getElementById('play-pause-icon');
+            
+            let currentIndex = 0;
+            let isPlaying = true;
+            let slideshowInterval;
+            
+            function showSlide(index) {
+                // Remove active class from all slides and dots
+                slides.forEach(slide => slide.classList.remove('active'));
+                dots.forEach(dot => {
+                    dot.classList.remove('bg-white');
+                    dot.classList.add('bg-white/50');
+                });
+                
+                // Add active class to current slide and dot
+                if (slides[index]) {
+                    slides[index].classList.add('active');
+                }
+                if (dots[index]) {
+                    dots[index].classList.remove('bg-white/50');
+                    dots[index].classList.add('bg-white');
+                }
+                
+                currentIndex = index;
+            }
+            
+            function nextSlide() {
+                const nextIndex = (currentIndex + 1) % slides.length;
+                showSlide(nextIndex);
+            }
+            
+            function prevSlide() {
+                const prevIndex = (currentIndex - 1 + slides.length) % slides.length;
+                showSlide(prevIndex);
+            }
+            
+            function startSlideshow() {
+                if (slides.length <= 1) return;
+                
+                slideshowInterval = setInterval(() => {
+                    if (isPlaying) {
+                        nextSlide();
+                    }
+                }, 5000); // Change slide every 5 seconds
+            }
+            
+            function stopSlideshow() {
+                if (slideshowInterval) {
+                    clearInterval(slideshowInterval);
+                }
+            }
+            
+            // Event Listeners
+            if (nextBtn) {
+                nextBtn.addEventListener('click', () => {
+                    nextSlide();
+                    // Restart timer after manual navigation
+                    stopSlideshow();
+                    startSlideshow();
+                });
+            }
+            
+            if (prevBtn) {
+                prevBtn.addEventListener('click', () => {
+                    prevSlide();
+                    // Restart timer after manual navigation
+                    stopSlideshow();
+                    startSlideshow();
+                });
+            }
+            
+            dots.forEach((dot, index) => {
+                dot.addEventListener('click', () => {
+                    showSlide(index);
+                    // Restart timer after manual navigation
+                    stopSlideshow();
+                    startSlideshow();
+                });
+            });
+            
+            if (playPauseBtn) {
+                playPauseBtn.addEventListener('click', () => {
+                    isPlaying = !isPlaying;
+                    if (isPlaying) {
+                        playPauseIcon.classList.remove('fa-play');
+                        playPauseIcon.classList.add('fa-pause');
+                    } else {
+                        playPauseIcon.classList.remove('fa-pause');
+                        playPauseIcon.classList.add('fa-play');
+                    }
+                });
+            }
+            
+            // Keyboard navigation
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowLeft') {
+                    prevSlide();
+                    stopSlideshow();
+                    startSlideshow();
+                } else if (e.key === 'ArrowRight') {
+                    nextSlide();
+                    stopSlideshow();
+                    startSlideshow();
+                } else if (e.key === ' ') {
+                    e.preventDefault();
+                    isPlaying = !isPlaying;
+                    if (isPlaying) {
+                        playPauseIcon.classList.remove('fa-play');
+                        playPauseIcon.classList.add('fa-pause');
+                    } else {
+                        playPauseIcon.classList.remove('fa-pause');
+                        playPauseIcon.classList.add('fa-play');
+                    }
+                }
+            });
+            
+            // Pause on hover
+            const slideshowContainer = document.getElementById('slideshow-container');
+            if (slideshowContainer) {
+                slideshowContainer.addEventListener('mouseenter', () => {
+                    const wasPlaying = isPlaying;
+                    isPlaying = false;
+                    playPauseIcon.classList.remove('fa-pause');
+                    playPauseIcon.classList.add('fa-play');
+                });
+                
+                slideshowContainer.addEventListener('mouseleave', () => {
+                    isPlaying = true;
+                    playPauseIcon.classList.remove('fa-play');
+                    playPauseIcon.classList.add('fa-pause');
+                });
+            }
+            
+            // Start slideshow
+            startSlideshow();
+        })();
+    </script>
+    {% endif %}
 </body>
 </html>
 

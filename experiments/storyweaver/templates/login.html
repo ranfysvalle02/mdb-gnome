@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}Login - Story Weaver{% endblock %}
+
+{% block content %}
+<div class="max-w-md mx-auto mt-12">
+    <div class="content-card">
+        <h2 class="text-3xl font-bold mb-6 text-center">Login to Story Weaver</h2>
+        
+        {% if error %}
+        <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4" role="alert">
+            <span class="block sm:inline">{{ error }}</span>
+        </div>
+        {% endif %}
+        
+        <form method="POST" action="/experiments/storyweaver/login" class="space-y-4">
+            {% if next %}
+            <input type="hidden" name="next" value="{{ next }}">
+            {% endif %}
+            
+            <div>
+                <label for="email" class="block text-sm font-medium text-slate-700 mb-1">Email</label>
+                <input type="email" id="email" name="email" required 
+                       class="form-input w-full" 
+                       placeholder="your@email.com" 
+                       value="{{ email or '' }}">
+            </div>
+            
+            <div>
+                <label for="password" class="block text-sm font-medium text-slate-700 mb-1">Password</label>
+                <input type="password" id="password" name="password" required 
+                       class="form-input w-full" 
+                       placeholder="Enter your password">
+            </div>
+            
+            <div class="flex items-center justify-between">
+                <a href="/experiments/storyweaver/register" class="text-sm text-indigo-600 hover:text-indigo-800">
+                    Don't have an account? Register
+                </a>
+            </div>
+            
+            <button type="submit" class="btn btn-primary w-full mt-4">
+                Login
+            </button>
+        </form>
+        
+        <div class="mt-4 text-center">
+            <a href="/experiments/storyweaver/" class="text-sm text-slate-600 hover:text-slate-800">
+                ← Back to Workspace
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

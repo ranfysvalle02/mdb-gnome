@@ -401,6 +401,58 @@ class ExperimentActor:
         # Insert specials
         if default_specials:
             await self.db.specials.insert_many(default_specials)
+        
+        # Insert default slideshow images based on business type
+        default_slideshow = []
+        if business_type == 'restaurant':
+            default_slideshow = [
+                {"image_url": "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=1600&auto=format&fit=crop", "caption": "Delicious Food & Great Service"},
+                {"image_url": "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=1600&auto=format&fit=crop", "caption": "Fresh Ingredients Daily"},
+                {"image_url": "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=1600&auto=format&fit=crop", "caption": "Welcome to Our Restaurant"},
+                {"image_url": "https://images.unsplash.com/photo-1559339352-11d035aa65de?w=1600&auto=format&fit=crop", "caption": "Quality Meals, Every Time"}
+            ]
+        elif business_type == 'auto-sales':
+            default_slideshow = [
+                {"image_url": "https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?w=1600&auto=format&fit=crop", "caption": "Quality Vehicles at Great Prices"},
+                {"image_url": "https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?w=1600&auto=format&fit=crop", "caption": "Your Dream Car Awaits"},
+                {"image_url": "https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?w=1600&auto=format&fit=crop", "caption": "Trusted Auto Dealership"},
+                {"image_url": "https://images.unsplash.com/photo-1552519507-da3b142c6e3d?w=1600&auto=format&fit=crop", "caption": "Financing Options Available"}
+            ]
+        elif business_type == 'auto-services':
+            default_slideshow = [
+                {"image_url": "https://images.unsplash.com/photo-1605559424843-9e4c228bf1c2?w=1600&auto=format&fit=crop", "caption": "Professional Auto Services"},
+                {"image_url": "https://images.unsplash.com/photo-1486262715619-67b85e0b08d3?w=1600&auto=format&fit=crop", "caption": "Expert Technicians"},
+                {"image_url": "https://images.unsplash.com/photo-1581092160562-40aa08e78837?w=1600&auto=format&fit=crop", "caption": "Quality Service Guaranteed"},
+                {"image_url": "https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?w=1600&auto=format&fit=crop", "caption": "Your Vehicle in Good Hands"}
+            ]
+        elif business_type == 'other-services':
+            default_slideshow = [
+                {"image_url": "https://images.unsplash.com/photo-1497366216548-37526070297c?w=1600&auto=format&fit=crop", "caption": "Quality Services You Can Trust"},
+                {"image_url": "https://images.unsplash.com/photo-1556761175-5973dc0f32e7?w=1600&auto=format&fit=crop", "caption": "Professional Solutions"},
+                {"image_url": "https://images.unsplash.com/photo-1552664730-d307ca884978?w=1600&auto=format&fit=crop", "caption": "Expert Consultation Available"},
+                {"image_url": "https://images.unsplash.com/photo-1556761175-b413da4baf72?w=1600&auto=format&fit=crop", "caption": "Customer Satisfaction Guaranteed"}
+            ]
+        else:  # generic-store
+            default_slideshow = [
+                {"image_url": "https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=1600&auto=format&fit=crop", "caption": "Quality Products You'll Love"},
+                {"image_url": "https://images.unsplash.com/photo-1468495244123-6c6c332eeece?w=1600&auto=format&fit=crop", "caption": "Wide Selection Available"},
+                {"image_url": "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=1600&auto=format&fit=crop", "caption": "Shop with Confidence"},
+                {"image_url": "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=1600&auto=format&fit=crop", "caption": "Visit Us Today"}
+            ]
+        
+        # Insert default slideshow images
+        if default_slideshow:
+            slideshow_docs = []
+            for idx, slide_data in enumerate(default_slideshow, start=1):
+                slideshow_docs.append({
+                    "store_id": store_id,
+                    "image_url": slide_data["image_url"],
+                    "caption": slide_data["caption"],
+                    "order": idx,
+                    "date_added": now
+                })
+            if slideshow_docs:
+                await self.db.slideshow.insert_many(slideshow_docs)
 
     async def render_business_selection(self, request_context: Dict[str, Any]) -> str:
         """Render the business type selection page."""
@@ -462,7 +514,7 @@ class ExperimentActor:
             logger.error(f"[{self.write_scope}-Actor] Error rendering store list: {e}", exc_info=True)
             return f"<h1>Error</h1><pre>{e}</pre>"
 
-    async def render_store_home(self, store_slug: str, request_context: Dict[str, Any]) -> str:
+    async def render_store_home(self, store_slug: str, request_context: Dict[str, Any], user: Optional[Dict[str, Any]] = None) -> str:
         """Render the store homepage."""
         self._check_ready()
         
@@ -484,6 +536,11 @@ class ExperimentActor:
         if specials:
             store['specials'] = specials
         
+        # Get slideshow images for the store
+        slideshow_images = await self.db.slideshow.find({"store_id": store['_id']}).sort("order", 1).to_list(length=None)
+        if slideshow_images:
+            store['slideshow_images'] = slideshow_images
+        
         business_config = BUSINESS_TYPES.get(store.get('business_type', 'generic-store'), BUSINESS_TYPES['generic-store'])
         
         try:
@@ -494,6 +551,7 @@ class ExperimentActor:
                     "store": store,
                     "items": items,
                     "business_config": business_config,
+                    "user": user,
                     "now": datetime.datetime.utcnow()
                 }
             )
@@ -502,7 +560,7 @@ class ExperimentActor:
             logger.error(f"[{self.write_scope}-Actor] Error rendering store home: {e}", exc_info=True)
             return f"<h1>Error</h1><pre>{e}</pre>"
 
-    async def render_item_details(self, store_slug: str, item_id: str, request_context: Dict[str, Any]) -> str:
+    async def render_item_details(self, store_slug: str, item_id: str, request_context: Dict[str, Any], user: Optional[Dict[str, Any]] = None) -> str:
         """Render the item details page."""
         self._check_ready()
         
@@ -533,12 +591,32 @@ class ExperimentActor:
                     "store": store,
                     "item": item,
                     "business_config": business_config,
+                    "user": user,
                     "now": datetime.datetime.utcnow()
                 }
             )
             return response.body.decode("utf-8")
         except Exception as e:
             logger.error(f"[{self.write_scope}-Actor] Error rendering item details: {e}", exc_info=True)
+            return f"<h1>Error</h1><pre>{e}</pre>"
+
+    async def render_admin_login(self, store_slug: str, request_context: Dict[str, Any], error: Optional[str] = None, email: Optional[str] = None) -> str:
+        """Render the admin login page."""
+        self._check_ready()
+        
+        try:
+            response = self.templates.TemplateResponse(
+                "admin_login.html",
+                {
+                    "request": request_context,
+                    "store_slug": store_slug,
+                    "error": error,
+                    "email": email
+                }
+            )
+            return response.body.decode("utf-8")
+        except Exception as e:
+            logger.error(f"[{self.write_scope}-Actor] Error rendering admin login: {e}", exc_info=True)
             return f"<h1>Error</h1><pre>{e}</pre>"
 
     async def create_store(self, business_type: str, form_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -599,10 +677,18 @@ class ExperimentActor:
             result = await self.db.stores.insert_one(store_data)
             store_id = result.inserted_id
             
-            # Create admin user
+            # Create admin user (using sub-auth compatible format)
+            # Check if user already exists
+            existing_user = await self.db.users.find_one({
+                "email": form_data.get('email'),
+                "store_id": store_id
+            })
+            if existing_user:
+                return {"success": False, "error": "A user with this email already exists for this store."}
+            
             await self.db.users.insert_one({
                 "email": form_data.get('email'),
-                "password": form_data.get('password'),  # In production, hash this!
+                "password": form_data.get('password'),  # Plain text (sub_auth.authenticate_experiment_user supports this)
                 "role": "owner",
                 "store_id": store_id,
                 "date_created": now
@@ -654,23 +740,56 @@ class ExperimentActor:
             return {"success": False, "error": f"Error submitting inquiry: {str(e)}"}
 
     async def admin_login(self, store_slug: str, email: str, password: str) -> Dict[str, Any]:
-        """Handle admin login."""
+        """
+        Handle admin login using sub-auth compatible authentication.
+        Supports both plain text (for demo) and bcrypt hashed passwords.
+        """
         self._check_ready()
         
         store = await self.db.stores.find_one({"slug_id": store_slug})
         if not store:
             return {"success": False, "error": "Store not found."}
         
+        # Find user by email and store_id
         user = await self.db.users.find_one({
             "email": email,
-            "password": password,
             "store_id": store['_id']
         })
         
-        if user:
-            return {"success": True, "user_id": str(user['_id']), "store_id": str(store['_id'])}
-        else:
+        if not user:
             return {"success": False, "error": "Invalid email or password for this store."}
+        
+        # Check password (support both plain text for demo and bcrypt hash)
+        stored_password = user.get("password") or user.get("password_hash")
+        
+        if not stored_password:
+            return {"success": False, "error": "Invalid email or password for this store."}
+        
+        # If it's a bcrypt hash, verify it
+        try:
+            import bcrypt
+            if isinstance(stored_password, bytes) or (isinstance(stored_password, str) and stored_password.startswith("$2b$")):
+                if isinstance(stored_password, str):
+                    stored_password = stored_password.encode("utf-8")
+                if isinstance(password, str):
+                    password = password.encode("utf-8")
+                
+                if bcrypt.checkpw(password, stored_password):
+                    return {"success": True, "user_id": str(user['_id']), "store_id": str(store['_id'])}
+            else:
+                # Plain text password (for demo purposes)
+                if stored_password == password:
+                    logger.debug("Using plain text password for demo user - sub-auth compatible")
+                    return {"success": True, "user_id": str(user['_id']), "store_id": str(store['_id'])}
+        except ImportError:
+            # bcrypt not available, fall back to plain text comparison
+            if stored_password == password:
+                logger.warning("bcrypt not available, using plain text comparison")
+                return {"success": True, "user_id": str(user['_id']), "store_id": str(store['_id'])}
+        except Exception as e:
+            logger.error(f"Error checking password: {e}", exc_info=True)
+        
+        return {"success": False, "error": "Invalid email or password for this store."}
 
     async def get_store_by_slug(self, store_slug: str) -> Optional[Dict[str, Any]]:
         """Get a store by slug."""
@@ -701,6 +820,137 @@ class ExperimentActor:
     async def get_business_types(self) -> Dict[str, Any]:
         """Get all business types configuration."""
         return BUSINESS_TYPES
+
+    # --- Slideshow Management Methods ---
+    
+    async def get_slideshow_images(self, store_slug: str) -> List[Dict[str, Any]]:
+        """Get all slideshow images for a store."""
+        self._check_ready()
+        
+        store = await self.db.stores.find_one({"slug_id": store_slug})
+        if not store:
+            return []
+        
+        slideshow_images = await self.db.slideshow.find({"store_id": store['_id']}).sort("order", 1).to_list(length=None)
+        return slideshow_images
+    
+    async def add_slideshow_image(self, store_slug: str, image_url: str, caption: Optional[str] = None) -> Dict[str, Any]:
+        """Add a new slideshow image."""
+        self._check_ready()
+        
+        store = await self.db.stores.find_one({"slug_id": store_slug})
+        if not store:
+            return {"success": False, "error": "Store not found."}
+        
+        # Get the next order number
+        max_order_doc = await self.db.slideshow.find({"store_id": store['_id']}).sort("order", -1).limit(1).to_list(length=1)
+        next_order = (max_order_doc[0]['order'] + 1) if max_order_doc else 1
+        
+        slideshow_image = {
+            "store_id": store['_id'],
+            "image_url": image_url,
+            "caption": caption or "",
+            "order": next_order,
+            "date_added": datetime.datetime.utcnow()
+        }
+        
+        try:
+            result = await self.db.slideshow.insert_one(slideshow_image)
+            return {"success": True, "message": "Slideshow image added successfully.", "image_id": str(result.inserted_id)}
+        except Exception as e:
+            logger.error(f"[{self.write_scope}-Actor] Error adding slideshow image: {e}", exc_info=True)
+            return {"success": False, "error": f"Error adding slideshow image: {str(e)}"}
+    
+    async def delete_slideshow_image(self, store_slug: str, image_id: str) -> Dict[str, Any]:
+        """Delete a slideshow image."""
+        self._check_ready()
+        
+        try:
+            image_obj_id = ObjectId(image_id)
+        except InvalidId:
+            return {"success": False, "error": "Invalid image ID."}
+        
+        store = await self.db.stores.find_one({"slug_id": store_slug})
+        if not store:
+            return {"success": False, "error": "Store not found."}
+        
+        try:
+            result = await self.db.slideshow.delete_one({"_id": image_obj_id, "store_id": store['_id']})
+            if result.deleted_count > 0:
+                # Reorder remaining images
+                await self._reorder_slideshow_images(store['_id'])
+                return {"success": True, "message": "Slideshow image deleted successfully."}
+            else:
+                return {"success": False, "error": "Image not found or already deleted."}
+        except Exception as e:
+            logger.error(f"[{self.write_scope}-Actor] Error deleting slideshow image: {e}", exc_info=True)
+            return {"success": False, "error": f"Error deleting slideshow image: {str(e)}"}
+    
+    async def update_slideshow_order(self, store_slug: str, image_orders: List[Dict[str, str]]) -> Dict[str, Any]:
+        """Update the order of slideshow images."""
+        self._check_ready()
+        
+        store = await self.db.stores.find_one({"slug_id": store_slug})
+        if not store:
+            return {"success": False, "error": "Store not found."}
+        
+        try:
+            for idx, img_order in enumerate(image_orders, start=1):
+                try:
+                    image_obj_id = ObjectId(img_order['image_id'])
+                    await self.db.slideshow.update_one(
+                        {"_id": image_obj_id, "store_id": store['_id']},
+                        {"$set": {"order": idx}}
+                    )
+                except (InvalidId, KeyError) as e:
+                    logger.warning(f"Invalid image ID in order update: {e}")
+                    continue
+            
+            return {"success": True, "message": "Slideshow order updated successfully."}
+        except Exception as e:
+            logger.error(f"[{self.write_scope}-Actor] Error updating slideshow order: {e}", exc_info=True)
+            return {"success": False, "error": f"Error updating slideshow order: {str(e)}"}
+    
+    async def update_slideshow_image(self, store_slug: str, image_id: str, image_url: Optional[str] = None, caption: Optional[str] = None) -> Dict[str, Any]:
+        """Update a slideshow image."""
+        self._check_ready()
+        
+        try:
+            image_obj_id = ObjectId(image_id)
+        except InvalidId:
+            return {"success": False, "error": "Invalid image ID."}
+        
+        store = await self.db.stores.find_one({"slug_id": store_slug})
+        if not store:
+            return {"success": False, "error": "Store not found."}
+        
+        update_data = {}
+        if image_url is not None:
+            update_data["image_url"] = image_url
+        if caption is not None:
+            update_data["caption"] = caption
+        
+        if not update_data:
+            return {"success": False, "error": "No fields to update."}
+        
+        try:
+            result = await self.db.slideshow.update_one(
+                {"_id": image_obj_id, "store_id": store['_id']},
+                {"$set": update_data}
+            )
+            if result.modified_count > 0:
+                return {"success": True, "message": "Slideshow image updated successfully."}
+            else:
+                return {"success": False, "error": "Image not found or no changes made."}
+        except Exception as e:
+            logger.error(f"[{self.write_scope}-Actor] Error updating slideshow image: {e}", exc_info=True)
+            return {"success": False, "error": f"Error updating slideshow image: {str(e)}"}
+    
+    async def _reorder_slideshow_images(self, store_id: ObjectId):
+        """Internal helper to reorder slideshow images after deletion."""
+        slideshow_images = await self.db.slideshow.find({"store_id": store_id}).sort("order", 1).to_list(length=None)
+        for idx, img in enumerate(slideshow_images, start=1):
+            await self.db.slideshow.update_one({"_id": img['_id']}, {"$set": {"order": idx}})
 
     async def initialize(self):
         """
@@ -887,15 +1137,25 @@ class ExperimentActor:
                     logger.error(f"  ❌ Error creating store '{demo['slug_id']}': {e}", exc_info=True)
                     continue
                 
-                # Create admin user
+                # Create admin user using sub-auth compatible format
+                # Note: Using plain text password for demo users (sub_auth will handle hashing if needed)
                 try:
-                    await self.db.users.insert_one({
+                    # Check if user already exists
+                    existing_user = await self.db.users.find_one({
                         "email": demo['owner_email'],
-                        "password": demo['owner_password'],  # In production, hash this!
-                        "role": "owner",
-                        "store_id": store_id,
-                        "date_created": now
+                        "store_id": store_id
                     })
+                    if existing_user:
+                        logger.info(f"  ✓ Demo user '{demo['owner_email']}' already exists for '{demo['slug_id']}', skipping...")
+                    else:
+                        await self.db.users.insert_one({
+                            "email": demo['owner_email'],
+                            "password": demo['owner_password'],  # Plain text for demo (sub_auth.authenticate_experiment_user supports this)
+                            "role": "owner",
+                            "store_id": store_id,
+                            "date_created": now
+                        })
+                        logger.info(f"  ✓ Created demo user '{demo['owner_email']}' for '{demo['slug_id']}'")
                 except Exception as e:
                     logger.error(f"  ❌ Error creating admin user for '{demo['slug_id']}': {e}", exc_info=True)
                     continue
@@ -935,14 +1195,147 @@ class ExperimentActor:
                     except Exception as e:
                         logger.error(f"  ❌ Error inserting special '{special_data.get('title', 'unknown')}': {e}")
                 
+                # Create demo slideshow images based on business type
+                slideshow_inserted = 0
+                demo_slideshow = demo.get('slideshow', [])
+                if not demo_slideshow:
+                    # Generate default slideshow images based on business type
+                    if demo['business_type'] == 'restaurant':
+                        demo_slideshow = [
+                            {"image_url": "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=1600&auto=format&fit=crop", "caption": "Delicious Food & Great Service"},
+                            {"image_url": "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=1600&auto=format&fit=crop", "caption": "Fresh Ingredients Daily"},
+                            {"image_url": "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=1600&auto=format&fit=crop", "caption": "Welcome to Our Restaurant"},
+                            {"image_url": "https://images.unsplash.com/photo-1559339352-11d035aa65de?w=1600&auto=format&fit=crop", "caption": "Quality Meals, Every Time"}
+                        ]
+                    elif demo['business_type'] == 'auto-sales':
+                        demo_slideshow = [
+                            {"image_url": "https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?w=1600&auto=format&fit=crop", "caption": "Quality Vehicles at Great Prices"},
+                            {"image_url": "https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?w=1600&auto=format&fit=crop", "caption": "Your Dream Car Awaits"},
+                            {"image_url": "https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?w=1600&auto=format&fit=crop", "caption": "Trusted Auto Dealership"},
+                            {"image_url": "https://images.unsplash.com/photo-1552519507-da3b142c6e3d?w=1600&auto=format&fit=crop", "caption": "Financing Options Available"}
+                        ]
+                    elif demo['business_type'] == 'auto-services':
+                        demo_slideshow = [
+                            {"image_url": "https://images.unsplash.com/photo-1605559424843-9e4c228bf1c2?w=1600&auto=format&fit=crop", "caption": "Professional Auto Services"},
+                            {"image_url": "https://images.unsplash.com/photo-1486262715619-67b85e0b08d3?w=1600&auto=format&fit=crop", "caption": "Expert Technicians"},
+                            {"image_url": "https://images.unsplash.com/photo-1581092160562-40aa08e78837?w=1600&auto=format&fit=crop", "caption": "Quality Service Guaranteed"},
+                            {"image_url": "https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?w=1600&auto=format&fit=crop", "caption": "Your Vehicle in Good Hands"}
+                        ]
+                    elif demo['business_type'] == 'other-services':
+                        demo_slideshow = [
+                            {"image_url": "https://images.unsplash.com/photo-1497366216548-37526070297c?w=1600&auto=format&fit=crop", "caption": "Quality Services You Can Trust"},
+                            {"image_url": "https://images.unsplash.com/photo-1556761175-5973dc0f32e7?w=1600&auto=format&fit=crop", "caption": "Professional Solutions"},
+                            {"image_url": "https://images.unsplash.com/photo-1552664730-d307ca884978?w=1600&auto=format&fit=crop", "caption": "Expert Consultation Available"},
+                            {"image_url": "https://images.unsplash.com/photo-1556761175-b413da4baf72?w=1600&auto=format&fit=crop", "caption": "Customer Satisfaction Guaranteed"}
+                        ]
+                    else:  # generic-store
+                        demo_slideshow = [
+                            {"image_url": "https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=1600&auto=format&fit=crop", "caption": "Quality Products You'll Love"},
+                            {"image_url": "https://images.unsplash.com/photo-1468495244123-6c6c332eeece?w=1600&auto=format&fit=crop", "caption": "Wide Selection Available"},
+                            {"image_url": "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=1600&auto=format&fit=crop", "caption": "Shop with Confidence"},
+                            {"image_url": "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=1600&auto=format&fit=crop", "caption": "Visit Us Today"}
+                        ]
+                
+                for idx, slide_data in enumerate(demo_slideshow, start=1):
+                    try:
+                        await self.db.slideshow.insert_one({
+                            "store_id": store_id,
+                            "image_url": slide_data.get('image_url', ''),
+                            "caption": slide_data.get('caption', ''),
+                            "order": idx,
+                            "date_added": now
+                        })
+                        slideshow_inserted += 1
+                    except Exception as e:
+                        logger.error(f"  ❌ Error inserting slideshow image {idx}: {e}")
+                
                 created_count += 1
-                logger.info(f"    ✓ Created store with {items_inserted} items and {specials_inserted} specials")
+                logger.info(f"    ✓ Created store with {items_inserted} items, {specials_inserted} specials, and {slideshow_inserted} slideshow images")
             
             if created_count > 0:
                 logger.info(f"\n✅ Successfully created {created_count} demo store(s)!")
                 logger.info("    You can now access them from the business type selection page.")
             else:
                 logger.info("\n✅ All demo stores already exist.")
+            
+            # Check all existing stores and add slideshow images if missing
+            logger.info("\nChecking existing stores for slideshow images...")
+            all_stores = await self.db.stores.find({}).to_list(length=None)
+            slideshow_added_count = 0
+            
+            for store in all_stores:
+                store_id = store['_id']
+                business_type = store.get('business_type', 'generic-store')
+                
+                # Check if store already has slideshow images
+                existing_slideshow_count = await self.db.slideshow.count_documents({"store_id": store_id})
+                
+                if existing_slideshow_count == 0:
+                    # Store doesn't have slideshow images, add defaults based on business type
+                    logger.info(f"  Adding slideshow images to store: {store.get('name', store.get('slug_id', 'Unknown'))} ({business_type})")
+                    
+                    # Get default slideshow images for this business type
+                    default_slideshow = []
+                    if business_type == 'restaurant':
+                        default_slideshow = [
+                            {"image_url": "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=1600&auto=format&fit=crop", "caption": "Delicious Food & Great Service"},
+                            {"image_url": "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=1600&auto=format&fit=crop", "caption": "Fresh Ingredients Daily"},
+                            {"image_url": "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=1600&auto=format&fit=crop", "caption": "Welcome to Our Restaurant"},
+                            {"image_url": "https://images.unsplash.com/photo-1559339352-11d035aa65de?w=1600&auto=format&fit=crop", "caption": "Quality Meals, Every Time"}
+                        ]
+                    elif business_type == 'auto-sales':
+                        default_slideshow = [
+                            {"image_url": "https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?w=1600&auto=format&fit=crop", "caption": "Quality Vehicles at Great Prices"},
+                            {"image_url": "https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?w=1600&auto=format&fit=crop", "caption": "Your Dream Car Awaits"},
+                            {"image_url": "https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?w=1600&auto=format&fit=crop", "caption": "Trusted Auto Dealership"},
+                            {"image_url": "https://images.unsplash.com/photo-1552519507-da3b142c6e3d?w=1600&auto=format&fit=crop", "caption": "Financing Options Available"}
+                        ]
+                    elif business_type == 'auto-services':
+                        default_slideshow = [
+                            {"image_url": "https://images.unsplash.com/photo-1605559424843-9e4c228bf1c2?w=1600&auto=format&fit=crop", "caption": "Professional Auto Services"},
+                            {"image_url": "https://images.unsplash.com/photo-1486262715619-67b85e0b08d3?w=1600&auto=format&fit=crop", "caption": "Expert Technicians"},
+                            {"image_url": "https://images.unsplash.com/photo-1581092160562-40aa08e78837?w=1600&auto=format&fit=crop", "caption": "Quality Service Guaranteed"},
+                            {"image_url": "https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?w=1600&auto=format&fit=crop", "caption": "Your Vehicle in Good Hands"}
+                        ]
+                    elif business_type == 'other-services':
+                        default_slideshow = [
+                            {"image_url": "https://images.unsplash.com/photo-1497366216548-37526070297c?w=1600&auto=format&fit=crop", "caption": "Quality Services You Can Trust"},
+                            {"image_url": "https://images.unsplash.com/photo-1556761175-5973dc0f32e7?w=1600&auto=format&fit=crop", "caption": "Professional Solutions"},
+                            {"image_url": "https://images.unsplash.com/photo-1552664730-d307ca884978?w=1600&auto=format&fit=crop", "caption": "Expert Consultation Available"},
+                            {"image_url": "https://images.unsplash.com/photo-1556761175-b413da4baf72?w=1600&auto=format&fit=crop", "caption": "Customer Satisfaction Guaranteed"}
+                        ]
+                    else:  # generic-store
+                        default_slideshow = [
+                            {"image_url": "https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=1600&auto=format&fit=crop", "caption": "Quality Products You'll Love"},
+                            {"image_url": "https://images.unsplash.com/photo-1468495244123-6c6c332eeece?w=1600&auto=format&fit=crop", "caption": "Wide Selection Available"},
+                            {"image_url": "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=1600&auto=format&fit=crop", "caption": "Shop with Confidence"},
+                            {"image_url": "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=1600&auto=format&fit=crop", "caption": "Visit Us Today"}
+                        ]
+                    
+                    # Insert slideshow images
+                    now = datetime.datetime.utcnow()
+                    slideshow_docs = []
+                    for idx, slide_data in enumerate(default_slideshow, start=1):
+                        slideshow_docs.append({
+                            "store_id": store_id,
+                            "image_url": slide_data["image_url"],
+                            "caption": slide_data["caption"],
+                            "order": idx,
+                            "date_added": now
+                        })
+                    
+                    if slideshow_docs:
+                        try:
+                            await self.db.slideshow.insert_many(slideshow_docs)
+                            slideshow_added_count += 1
+                            logger.info(f"    ✓ Added {len(slideshow_docs)} slideshow images")
+                        except Exception as e:
+                            logger.error(f"    ❌ Error adding slideshow images: {e}")
+            
+            if slideshow_added_count > 0:
+                logger.info(f"\n✅ Added slideshow images to {slideshow_added_count} existing store(s)!")
+            else:
+                logger.info("\n✅ All stores already have slideshow images.")
                 
         except Exception as e:
             logger.error(f"[{self.write_scope}-Actor] Error during initialization: {e}", exc_info=True)

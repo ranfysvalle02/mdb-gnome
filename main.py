@@ -207,6 +207,7 @@ try:
     get_scoped_db,
     get_experiment_config,
     get_authz_provider,
+    require_experiment_access,
   )
   # ScopedMongoWrapper is imported above from async_mongo_wrapper
 except ImportError as e:
@@ -1904,10 +1905,14 @@ async def serve_export_file(filename: str, request: Request):
       raise HTTPException(status_code=400, detail="Invalid filename")
     
     # Check if export is invalidated in database
+    # SECURITY: Use exact match instead of regex to prevent NoSQL injection
+    # Escape the filename to ensure it's treated as a literal string
+    from utils import sanitize_for_regex
+    escaped_filename = sanitize_for_regex(safe_filename)
     export_log = await db.export_logs.find_one({
       "$or": [
-        {"local_file_path": {"$regex": safe_filename}},
-        {"b2_file_name": {"$regex": safe_filename}}
+        {"local_file_path": {"$regex": f"^{escaped_filename}$"}},
+        {"b2_file_name": {"$regex": f"^{escaped_filename}$"}}
       ]
     }, {"invalidated": 1, "slug_id": 1})
     
@@ -4602,11 +4607,28 @@ async def _register_experiments(app: FastAPI, active_cfgs: List[Dict[str, Any]],
       logger.error(f"[{slug}] 'bp' is not an APIRouter. Skipped.")
       continue
 
-    # Enforce auth if config says "auth_required", else allow optional
+    # Enforce intelligent auth based on manifest.json auth_policy or auth_required
     deps = []
-    if cfg.get("auth_required"):
+    # Check if auth_policy is defined (takes precedence over auth_required)
+    auth_policy = cfg.get("auth_policy")
+    if auth_policy:
+      # Use intelligent auth dependency that handles auth_policy
+      # Create a dependency function that captures the slug
+      def create_auth_dep(slug_id: str):
+        async def auth_dep(
+          request: Request,
+          user: Optional[Mapping[str, Any]] = Depends(get_current_user),
+          authz: AuthorizationProvider = Depends(get_authz_provider),
+        ) -> Dict[str, Any]:
+          return await require_experiment_access(request, slug_id, user, authz)
+        return auth_dep
+      
+      deps = [Depends(create_auth_dep(slug))]
+    elif cfg.get("auth_required"):
+      # Backward compatibility: use simple auth_required boolean
       deps = [Depends(get_current_user_or_redirect)]
     else:
+      # No auth required
       deps = [Depends(get_current_user)]
 
     prefix = f"/experiments/{slug}"
@@ -4678,9 +4700,12 @@ async def _call_actor_initialize(actor_handle: Any, slug: str):
   """
   try:
     logger.info(f"[{slug}] Calling actor initialize hook...")
-    await actor_handle.initialize.remote()
+    logger.critical(f"[{slug}] ⚡ ABOUT TO CALL initialize.remote() - this will show up!")
+    result = await actor_handle.initialize.remote()
+    logger.critical(f"[{slug}] ⚡ initialize.remote() RETURNED: {result}")
     logger.info(f"[{slug}] Actor initialize hook completed.")
   except Exception as e:
+    logger.critical(f"[{slug}] ❌ CRITICAL: Actor initialize hook FAILED: {e}")
     logger.error(f"[{slug}] Actor initialize hook failed: {e}", exc_info=True)
 
 

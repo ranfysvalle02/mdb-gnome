@@ -299,6 +299,319 @@ async def get_current_user_or_redirect(
     return dict(user)
 
 
+async def require_experiment_access(
+    request: Request,
+    slug_id: str,
+    user: Optional[Mapping[str, Any]] = Depends(get_current_user),
+    authz: AuthorizationProvider = Depends(get_authz_provider),
+) -> Dict[str, Any]:
+    """
+    FastAPI Dependency: Intelligently enforces experiment-level access based on manifest.json auth_policy.
+    
+    Supports multiple authorization strategies:
+    1. Role-based access (allowed_roles)
+    2. User-based access (allowed_users, denied_users)
+    3. Permission-based access (required_permissions)
+    4. Custom resource/action patterns for Casbin
+    
+    Falls back to auth_required boolean for backward compatibility.
+    
+    Usage:
+        @router.get("/")
+        async def index(
+            request: Request,
+            user: Dict[str, Any] = Depends(lambda: require_experiment_access(request, "my_experiment"))
+        ):
+            ...
+    
+    Args:
+        request: FastAPI Request object
+        slug_id: Experiment slug to check access for
+        user: Current user (from get_current_user dependency)
+        authz: Authorization provider (from get_authz_provider dependency)
+    
+    Returns:
+        Dict[str, Any]: The user dict if authorized
+    
+    Raises:
+        HTTPException: 401 if not authenticated (when required), 403 if not authorized
+    """
+    # Get experiment config from request state (set by middleware) or fetch it
+    db = getattr(request.app.state, "mongo_db", None)
+    if db is None:
+        logger.error("require_experiment_access: MongoDB connection not available.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server configuration error: Database connection not available.",
+        )
+    
+    # GOD-LEVEL ACCESS: Admins bypass ALL checks and get immediate access
+    # Check this FIRST before any other checks
+    if user:
+        user_email = user.get("email")
+        if user_email:
+            # Check if user is an admin (has admin_panel:access permission)
+            is_admin = await authz.check(
+                subject=user_email,
+                resource="admin_panel",
+                action="access",
+                user_object=dict(user)
+            )
+            
+            if is_admin:
+                logger.debug(
+                    f"require_experiment_access: Admin '{user_email}' granted GOD-LEVEL access to experiment '{slug_id}'"
+                )
+                return {
+                    **dict(user),
+                    "is_admin": True,
+                    "god_access": True  # Mark as admin bypass
+                }
+    
+    # Fetch experiment config (with caching via get_experiment_config)
+    config = await get_experiment_config(request, slug_id, {"auth_required": 1, "auth_policy": 1, "developer_id": 1})
+    
+    if not config:
+        logger.warning(f"require_experiment_access: Experiment '{slug_id}' not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Experiment '{slug_id}' not found.",
+        )
+    
+    # Get auth_policy or fall back to auth_required
+    auth_policy = config.get("auth_policy")
+    auth_required = config.get("auth_required", False)
+    developer_id = config.get("developer_id")
+    
+    # If no auth_policy, use backward-compatible auth_required boolean
+    if not auth_policy:
+        if auth_required:
+            if not user:
+                # Redirect to login
+                try:
+                    login_route_name = "login_get"
+                    login_url = request.url_for(login_route_name)
+                    original_path = request.url.path
+                    safe_next_path = _validate_next_url(original_path)
+                    redirect_url = f"{login_url}?next={safe_next_path}"
+                    raise HTTPException(
+                        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+                        headers={"Location": redirect_url},
+                        detail="Authentication required.",
+                    )
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    logger.error(f"require_experiment_access: Failed to generate login redirect: {e}", exc_info=True)
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Authentication required, but redirect failed.",
+                    )
+            return dict(user)  # Auth required and user is authenticated
+        else:
+            # No auth required, allow access (user may be None)
+            return dict(user) if user else {}
+    
+    # Process intelligent auth_policy
+    policy_required = auth_policy.get("required", True)
+    allow_anonymous = auth_policy.get("allow_anonymous", False)
+    owner_can_access = auth_policy.get("owner_can_access", True)
+    
+    # Check if authentication is required
+    if policy_required and not allow_anonymous:
+        if not user:
+            try:
+                login_route_name = "login_get"
+                login_url = request.url_for(login_route_name)
+                original_path = request.url.path
+                safe_next_path = _validate_next_url(original_path)
+                redirect_url = f"{login_url}?next={safe_next_path}"
+                raise HTTPException(
+                    status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+                    headers={"Location": redirect_url},
+                    detail="Authentication required to access this experiment.",
+                )
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"require_experiment_access: Failed to generate login redirect: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authentication required, but redirect failed.",
+                )
+    
+    # If anonymous access is allowed and no user, allow access
+    if not user:
+        if allow_anonymous:
+            logger.debug(f"require_experiment_access: Anonymous access allowed for '{slug_id}'")
+            return {}
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required to access this experiment.",
+            )
+    
+    user_email = user.get("email")
+    if not user_email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token.",
+        )
+    
+    # Check if user is the owner (developer_id)
+    if owner_can_access and developer_id and user_email == developer_id:
+        logger.debug(
+            f"require_experiment_access: Owner '{user_email}' granted access to experiment '{slug_id}'"
+        )
+        return dict(user)
+    
+    # Check denied_users (blacklist) - takes highest precedence
+    denied_users = auth_policy.get("denied_users", [])
+    if denied_users and user_email in denied_users:
+        logger.warning(
+            f"require_experiment_access: User '{user_email}' is in denied_users list for experiment '{slug_id}'"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to access this experiment.",
+        )
+    
+    # Check allowed_users (whitelist) - if provided, only these users can access
+    allowed_users = auth_policy.get("allowed_users", [])
+    if allowed_users:
+        if user_email in allowed_users:
+            logger.debug(
+                f"require_experiment_access: User '{user_email}' is in allowed_users list for experiment '{slug_id}'"
+            )
+            return dict(user)
+        else:
+            logger.warning(
+                f"require_experiment_access: User '{user_email}' not in allowed_users list for experiment '{slug_id}'"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to access this experiment.",
+            )
+    
+    # Check allowed_roles (role-based access)
+    allowed_roles = auth_policy.get("allowed_roles", [])
+    if allowed_roles:
+        has_role = False
+        for role in allowed_roles:
+            # Check if user has the role assigned directly via Casbin
+            if hasattr(authz, "has_role_for_user"):
+                has_role_direct = await authz.has_role_for_user(user_email, role)
+                if has_role_direct:
+                    has_role = True
+                    logger.debug(
+                        f"require_experiment_access: User '{user_email}' has role '{role}' for experiment '{slug_id}'"
+                    )
+                    break
+            
+            # Also check via permission check for role-based policies (e.g., admin role)
+            if not has_role:
+                role_check = await authz.check(
+                    subject=user_email,
+                    resource="experiments",
+                    action=role,  # Some roles are checked as permissions
+                    user_object=dict(user)
+                )
+                if role_check:
+                    has_role = True
+                    logger.debug(
+                        f"require_experiment_access: User '{user_email}' has role permission '{role}' for experiment '{slug_id}'"
+                    )
+                    break
+        
+        if not has_role:
+            logger.warning(
+                f"require_experiment_access: User '{user_email}' does not have any of the required roles {allowed_roles} for experiment '{slug_id}'"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"You do not have the required role to access this experiment. Required roles: {', '.join(allowed_roles)}",
+            )
+    
+    # Check required_permissions (permission-based access)
+    required_permissions = auth_policy.get("required_permissions", [])
+    if required_permissions:
+        for permission in required_permissions:
+            # Parse permission as "resource:action"
+            if ":" in permission:
+                perm_resource, perm_action = permission.split(":", 1)
+            else:
+                perm_resource = "experiments"
+                perm_action = permission
+            
+            has_perm = await authz.check(
+                subject=user_email,
+                resource=perm_resource,
+                action=perm_action,
+                user_object=dict(user)
+            )
+            
+            if not has_perm:
+                logger.warning(
+                    f"require_experiment_access: User '{user_email}' missing permission '{permission}' for experiment '{slug_id}'"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"You do not have the required permission '{permission}' to access this experiment.",
+                )
+    
+    # Check custom_resource and custom_actions (fine-grained Casbin checks)
+    custom_resource = auth_policy.get("custom_resource")
+    custom_actions = auth_policy.get("custom_actions", ["access"])
+    
+    if custom_resource:
+        # Use custom resource name
+        resource = custom_resource
+    else:
+        # Default to experiment:{slug} pattern
+        resource = f"experiment:{slug_id}"
+    
+    # Check if user has any of the required custom actions
+    has_custom_action = False
+    for action in custom_actions:
+        has_action = await authz.check(
+            subject=user_email,
+            resource=resource,
+            action=action,
+            user_object=dict(user)
+        )
+        if has_action:
+            has_custom_action = True
+            logger.debug(
+                f"require_experiment_access: User '{user_email}' has permission '{resource}:{action}' for experiment '{slug_id}'"
+            )
+            break
+    
+    # If custom_resource is specified but no action matches, deny access
+    # (This allows experiments to have fine-grained permissions)
+    if custom_resource and not has_custom_action:
+        logger.warning(
+            f"require_experiment_access: User '{user_email}' missing custom action permissions for '{resource}' on experiment '{slug_id}'"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"You do not have permission to access this experiment. Required: {resource} with one of {custom_actions}",
+        )
+    
+    # If no specific policies were set but auth_policy exists, default to requiring authentication
+    if not allowed_users and not allowed_roles and not required_permissions and not custom_resource:
+        # If we got here and user is authenticated, allow access
+        logger.debug(
+            f"require_experiment_access: User '{user_email}' authenticated, allowing access to experiment '{slug_id}' (no specific policies)"
+        )
+        return dict(user)
+    
+    # If we passed all checks, allow access
+    logger.debug(
+        f"require_experiment_access: User '{user_email}' granted access to experiment '{slug_id}'"
+    )
+    return dict(user)
+
+
 def require_permission(obj: str, act: str, force_login: bool = True):
     """
     Dependency Factory: Creates a dependency checking for a specific permission

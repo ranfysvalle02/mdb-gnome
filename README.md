@@ -1,6 +1,6 @@
 # g.nome  
   
-![](gnome.png)  
+![](assets/images/gnome.png)  
   
 The Missing Engine for Your Python and MongoDB Projects—a "WordPress-Like" platform built by a builder, for builders, designed to minimize the friction between idea and live application.  
   
@@ -10,7 +10,7 @@ You have a "digital garden" of scripts, tools, and prototypes. It's that little 
   
 Each one was a great idea. Each one lives in its own isolated folder. And each one, slowly, becomes a maintenance burden.  
   
-![](gnome-graveyard.png)  
+![](assets/images/gnome-graveyard.png)  
   
 I call this the "prototype graveyard." It's where good ideas go to die, not because they weren't useful, but because the cost of maintaining them became higher than the value they provided.  
   
@@ -52,7 +52,7 @@ This immediately solves the maintenance and authentication problem. But the real
   
 ## Core Features  
   
-![](mdb-gnome-isolation.png)  
+![](assets/images/mdb-gnome-isolation.png)  
   
 - **Centralized Admin Panel**: A single GUI at `/admin` to manage all your experiments. Activate/deactivate, require authentication, and configure data-sharing with a few clicks.  
   
@@ -370,7 +370,7 @@ document.addEventListener('DOMContentLoaded', () => {
   
 ### Step 5: Activation  
 
-![](mdb-genome-configure.png)  
+![](assets/images/mdb-genome-configure.png)  
 
 That's it. You now have a fully self-contained experiment. On the next server startup, g.nome will automatically discover it and create a database entry.
 
@@ -916,7 +916,7 @@ What about an experiment that does heavy CPU-bound work, like an image watermark
   
 ## Focus on Your Differentiation, Not Your Boilerplate  
   
-![](good-gnome.png)  
+![](assets/images/good-gnome.png)  
   
 This is the convention-over-configuration powerhouse I've always wanted. Python and MongoDB Atlas are an incredible combination for innovation. Python (with FastAPI) is expressive and blazing fast, while Atlas provides a scalable, serverless data platform.  
   
@@ -966,7 +966,7 @@ If these are set, g.nome will store experiment `.zip` files in your B2 bucket an
   
 ## Appendix A: Graduating from the Incubator  
   
-![](gnome-graduation.png)  
+![](assets/images/gnome-graduation.png)  
   
 g.nome is a perfect "incubator." But what happens when your `click_tracker` becomes so successful it needs to "graduate" into its own, fully independent production application?  
   
