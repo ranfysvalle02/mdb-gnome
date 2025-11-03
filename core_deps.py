@@ -309,6 +309,259 @@ def require_permission(obj: str, act: str, force_login: bool = True):
     return _check_permission
 
 
+# --- Experiment Ownership Authorization ---
+
+
+async def require_experiment_ownership_or_admin_dep(
+    request: Request,
+    slug_id: str,
+    user: Optional[Mapping[str, Any]] = Depends(get_current_user),
+    authz: AuthorizationProvider = Depends(get_authz_provider),
+) -> Dict[str, Any]:
+    """
+    FastAPI Dependency: Checks experiment ownership for path parameter slug_id.
+    
+    Usage:
+        @router.post("/api/{slug_id}/action")
+        async def action(
+            slug_id: str,
+            user: Dict[str, Any] = Depends(require_experiment_ownership_or_admin_dep)
+        ):
+            ...
+    """
+    return await require_experiment_ownership_or_admin(request, slug_id, user, authz)
+
+
+async def require_experiment_ownership_or_admin(
+    request: Request,
+    slug_id: str,
+    user: Optional[Mapping[str, Any]] = None,
+    authz: Optional[AuthorizationProvider] = None,
+) -> Dict[str, Any]:
+    """
+    FastAPI Dependency Helper: Ensures the user is either an admin or owns the experiment.
+    
+    This function checks:
+    1. If user is an admin (has admin_panel:access) -> allow
+    2. If user is a developer (has experiments:manage_own) -> check ownership
+    3. Otherwise -> deny
+    
+    Args:
+        request: FastAPI Request object
+        slug_id: The experiment slug to check ownership for
+        user: Current user (optional, will fetch if None)
+        authz: Authorization provider (optional, will fetch if None)
+    
+    Returns:
+        Dict[str, Any]: The user dict if authorized
+    
+    Raises:
+        HTTPException: 401 if not authenticated, 403 if not authorized
+    """
+    # Fetch dependencies if not provided
+    if user is None:
+        user_result = await get_current_user()
+        if user_result:
+            user = user_result
+    
+    if authz is None:
+        authz = await get_authz_provider(request)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required to access this resource."
+        )
+    
+    user_email = user.get("email")
+    if not user_email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token."
+        )
+    
+    # Check if user is an admin (full access)
+    is_admin = await authz.check(
+        subject=user_email,
+        resource="admin_panel",
+        action="access",
+        user_object=dict(user)
+    )
+    
+    if is_admin:
+        logger.debug(
+            f"require_experiment_ownership_or_admin: Admin '{user_email}' granted access to experiment '{slug_id}'"
+        )
+        return dict(user)
+    
+    # Check if user is a developer with manage_own permission
+    has_manage_own = await authz.check(
+        subject=user_email,
+        resource="experiments",
+        action="manage_own",
+        user_object=dict(user)
+    )
+    
+    if not has_manage_own:
+        logger.warning(
+            f"require_experiment_ownership_or_admin: User '{user_email}' does not have 'experiments:manage_own' permission for '{slug_id}'"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to manage experiments."
+        )
+    
+    # Developer with manage_own permission: check ownership
+    db = getattr(request.app.state, "mongo_db", None)
+    if not db:
+        logger.error("require_experiment_ownership_or_admin: MongoDB connection not available.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server configuration error: Database connection not available."
+        )
+    
+    try:
+        # Fetch experiment config to check ownership
+        config = await db.experiments_config.find_one(
+            {"slug": slug_id},
+            {"owner_email": 1}
+        )
+        
+        if not config:
+            logger.warning(
+                f"require_experiment_ownership_or_admin: Experiment '{slug_id}' not found"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Experiment '{slug_id}' not found."
+            )
+        
+        owner_email = config.get("owner_email")
+        
+        # If no owner_email is set (backward compatibility), deny access for developers
+        # Admins already passed the check above
+        if not owner_email:
+            logger.warning(
+                f"require_experiment_ownership_or_admin: Experiment '{slug_id}' has no owner, denying developer access"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"This experiment does not have an assigned owner. Only administrators can manage it."
+            )
+        
+        # Check if user owns the experiment
+        if owner_email != user_email:
+            logger.warning(
+                f"require_experiment_ownership_or_admin: User '{user_email}' attempted to access experiment '{slug_id}' owned by '{owner_email}'"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"You do not have permission to manage this experiment. It is owned by '{owner_email}'."
+            )
+        
+        logger.debug(
+            f"require_experiment_ownership_or_admin: Developer '{user_email}' granted access to their own experiment '{slug_id}'"
+        )
+        return dict(user)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"require_experiment_ownership_or_admin: Error checking ownership for '{slug_id}': {e}",
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error checking experiment ownership: {e}"
+        )
+
+
+async def get_user_experiments(
+    request: Request,
+    user: Optional[Mapping[str, Any]] = Depends(get_current_user),
+    authz: AuthorizationProvider = Depends(get_authz_provider),
+) -> List[Dict[str, Any]]:
+    """
+    Helper function to get experiments visible to the current user.
+    
+    - Admins see all experiments
+    - Developers see only their own experiments
+    - Demo users see all experiments (readonly)
+    - Other users see no experiments
+    
+    Returns:
+        List[Dict[str, Any]]: List of experiment configs visible to the user
+    """
+    if not user:
+        return []
+    
+    user_email = user.get("email")
+    if not user_email:
+        return []
+    
+    db = getattr(request.app.state, "mongo_db", None)
+    if not db:
+        logger.error("get_user_experiments: MongoDB connection not available.")
+        return []
+    
+    # Check if user is an admin (see all experiments)
+    is_admin = await authz.check(
+        subject=user_email,
+        resource="admin_panel",
+        action="access",
+        user_object=dict(user)
+    )
+    
+    if is_admin:
+        # Admins see all experiments
+        try:
+            experiments = await db.experiments_config.find().limit(500).to_list(length=None)
+            return experiments
+        except Exception as e:
+            logger.error(f"Error fetching all experiments for admin: {e}", exc_info=True)
+            return []
+    
+    # Check if user is a developer (see own experiments only)
+    has_manage_own = await authz.check(
+        subject=user_email,
+        resource="experiments",
+        action="manage_own",
+        user_object=dict(user)
+    )
+    
+    if has_manage_own:
+        # Developers see only their own experiments
+        try:
+            experiments = await db.experiments_config.find(
+                {"owner_email": user_email}
+            ).limit(500).to_list(length=None)
+            return experiments
+        except Exception as e:
+            logger.error(f"Error fetching owned experiments for developer: {e}", exc_info=True)
+            return []
+    
+    # Check if user has demo role (see all experiments, readonly)
+    has_view = await authz.check(
+        subject=user_email,
+        resource="experiments",
+        action="view",
+        user_object=dict(user)
+    )
+    
+    if has_view:
+        # Demo users see all experiments (readonly)
+        try:
+            experiments = await db.experiments_config.find().limit(500).to_list(length=None)
+            return experiments
+        except Exception as e:
+            logger.error(f"Error fetching experiments for demo user: {e}", exc_info=True)
+            return []
+    
+    # No access
+    return []
+
+
 # --- Request-Scoped Config Caching ---
 
 # Application-level cache for experiment configs with TTL and LRU eviction

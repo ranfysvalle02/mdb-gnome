@@ -150,3 +150,35 @@ class CasbinAdapter:
         except Exception:
             logger.warning("Failed to save policy", exc_info=True)
             return False
+
+    async def has_policy(self, *params) -> bool:
+        """Check if a policy exists."""
+        try:
+            # Run in thread pool to prevent blocking
+            result = await asyncio.to_thread(self._enforcer.has_policy, *params)
+            return result
+        except Exception:
+            logger.warning("Failed to check policy", exc_info=True)
+            return False
+
+    async def has_role_for_user(self, *params) -> bool:
+        """Check if a user has a role."""
+        try:
+            # Run in thread pool to prevent blocking
+            result = await asyncio.to_thread(self._enforcer.has_role_for_user, *params)
+            return result
+        except Exception:
+            logger.warning("Failed to check role for user", exc_info=True)
+            return False
+
+    async def remove_role_for_user(self, *params) -> bool:
+        """Helper to pass-through role removal."""
+        try:
+            result = await self._enforcer.remove_role_for_user(*params)
+            # Clear cache when roles are modified
+            if result:
+                await self.clear_cache()
+            return result
+        except Exception:
+            logger.warning("Failed to remove role for user", exc_info=True)
+            return False

@@ -88,6 +88,56 @@ ADMIN_PASSWORD_DEFAULT = os.getenv("ADMIN_PASSWORD", "password123")
 if ADMIN_PASSWORD_DEFAULT == "password123":
     logger.warning("⚠️ Using default admin password.")
 
+# Demo user configuration via ENABLE_DEMO env var
+# Format: ENABLE_DEMO=email:password
+# Example: ENABLE_DEMO=demo@demo.com:demo123
+# If not set, demo user is disabled
+ENABLE_DEMO_RAW = os.getenv("ENABLE_DEMO", "")
+
+DEMO_ENABLED = False
+DEMO_EMAIL_DEFAULT = None
+DEMO_PASSWORD_DEFAULT = None
+
+if ENABLE_DEMO_RAW:
+    try:
+        # Parse EMAIL:PASSWORD format
+        if ":" in ENABLE_DEMO_RAW:
+            email, password = ENABLE_DEMO_RAW.split(":", 1)
+            DEMO_EMAIL_DEFAULT = email.strip()
+            DEMO_PASSWORD_DEFAULT = password.strip()
+            DEMO_ENABLED = True
+            
+            if not DEMO_EMAIL_DEFAULT or not DEMO_PASSWORD_DEFAULT:
+                logger.warning("⚠️ ENABLE_DEMO format invalid. Expected EMAIL:PASSWORD. Demo user disabled.")
+                DEMO_ENABLED = False
+                DEMO_EMAIL_DEFAULT = None
+                DEMO_PASSWORD_DEFAULT = None
+            else:
+                logger.info(f"✔️ Demo user enabled: {DEMO_EMAIL_DEFAULT}")
+        else:
+            logger.warning("⚠️ ENABLE_DEMO format invalid. Expected EMAIL:PASSWORD format. Demo user disabled.")
+    except Exception as e:
+        logger.error(f"⚠️ Error parsing ENABLE_DEMO: {e}. Demo user disabled.", exc_info=True)
+        DEMO_ENABLED = False
+        DEMO_EMAIL_DEFAULT = None
+        DEMO_PASSWORD_DEFAULT = None
+else:
+    logger.debug("ENABLE_DEMO not set. Demo user disabled.")
+
+# Legacy support: Also check DEMO_EMAIL and DEMO_PASSWORD if ENABLE_DEMO not set
+if not DEMO_ENABLED:
+    legacy_email = os.getenv("DEMO_EMAIL", "")
+    legacy_password = os.getenv("DEMO_PASSWORD", "")
+    
+    if legacy_email and legacy_password:
+        DEMO_EMAIL_DEFAULT = legacy_email
+        DEMO_PASSWORD_DEFAULT = legacy_password
+        DEMO_ENABLED = True
+        logger.info(f"✔️ Demo user enabled via legacy env vars: {DEMO_EMAIL_DEFAULT}")
+        logger.warning("⚠️ Consider using ENABLE_DEMO=email:password format instead of separate DEMO_EMAIL and DEMO_PASSWORD.")
+    elif legacy_email or legacy_password:
+        logger.warning("⚠️ Only one of DEMO_EMAIL or DEMO_PASSWORD set. Both required. Demo user disabled.")
+
 # Backblaze B2 Configuration
 try:
     from b2sdk.v2 import InMemoryAccountInfo, B2Api

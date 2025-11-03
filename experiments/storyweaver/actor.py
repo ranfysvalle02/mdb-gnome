@@ -53,6 +53,8 @@ class ExperimentActor:
     """
 
     def __init__(self, mongo_uri: str, db_name: str, write_scope: str, read_scopes: List[str]):
+        self.mongo_uri = mongo_uri
+        self.db_name = db_name
         self.write_scope = write_scope
         self.read_scopes = read_scopes
         self.is_atlas = "mongodb+srv" in mongo_uri if mongo_uri else False
@@ -178,14 +180,53 @@ class ExperimentActor:
             logger.error(f"Error calling OpenAI for tag suggestions: {e}", exc_info=True)
             return []
 
-    def _get_ai_study_notes(self, topic: str, project_goal: str, num_notes: int = 5):
+    def _search_web(self, query: str, max_results: int = 5) -> str:
+        """Search the web using DuckDuckGo and return a formatted summary of results."""
+        try:
+            from duckduckgo_search import DDGS
+            
+            with DDGS() as ddgs:
+                results = list(ddgs.text(query, max_results=max_results))
+                
+            if not results:
+                return ""
+            
+            # Format search results as context for AI
+            search_context = f"Web search results for '{query}':\n\n"
+            for i, result in enumerate(results[:max_results], 1):
+                title = result.get('title', 'No title')
+                body = result.get('body', 'No description')
+                url = result.get('href', 'No URL')
+                search_context += f"{i}. {title}\n   {body[:200]}...\n   Source: {url}\n\n"
+            
+            return search_context
+        except ImportError:
+            logger.warning("duckduckgo-search package not installed. Web search disabled.")
+            return ""
+        except Exception as e:
+            logger.error(f"Error performing web search: {e}", exc_info=True)
+            return ""
+
+    def _get_ai_study_notes(self, topic: str, project_goal: str, num_notes: int = 5, use_web_search: bool = False):
         if not OPENAI_API_KEY:
             return []
         try:
             import openai
             openai.api_key = OPENAI_API_KEY
+            
+            # Perform web search if enabled
+            web_context = ""
+            if use_web_search:
+                logger.info(f"Performing web search for topic: {topic}")
+                web_context = self._search_web(topic, max_results=5)
+            
             system_prompt = f"You are an expert educator creating study materials for a project with the goal: '{project_goal}'. Generate {num_notes} concise, well-structured study notes. Each note should be a standalone piece of information. For key terms, use markdown bolding (e.g., **Term**). Return a JSON object: {{\"notes\": [\"Note 1 content...\", \"Note 2 content...\"]}}."
-            user_prompt = f"Generate {num_notes} study notes for the topic: '{topic}'."
+            
+            if web_context:
+                user_prompt = f"Generate {num_notes} study notes for the topic: '{topic}'.\n\n{web_context}\n\nUse the web search results above to enhance the accuracy and depth of the study notes. Ensure the notes are factually accurate based on the search results."
+            else:
+                user_prompt = f"Generate {num_notes} study notes for the topic: '{topic}'."
+            
             completion = openai.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
@@ -952,7 +993,7 @@ Based on these notes, write a complete song:
             logger.error(f"Error getting contributors: {e}", exc_info=True)
             return ['All Contributors']
 
-    async def generate_notes(self, user_id: str, project_id: str, topic: str, num_notes: int = 5):
+    async def generate_notes(self, user_id: str, project_id: str, topic: str, num_notes: int = 5, use_web_search: bool = False):
         """Generate AI study notes."""
         self._check_ready()
         try:
@@ -960,7 +1001,7 @@ Based on these notes, write a complete song:
             if not project:
                 return {"error": "Project not found or unauthorized."}
             
-            generated_notes_content = self._get_ai_study_notes(topic, project.get('project_goal', ''), num_notes)
+            generated_notes_content = self._get_ai_study_notes(topic, project.get('project_goal', ''), num_notes, use_web_search=use_web_search)
             if not generated_notes_content:
                 return {"error": "AI failed to generate notes."}
             
@@ -1118,4 +1159,38 @@ Based on these notes, write a complete song:
         except Exception as e:
             logger.error(f"Error generating song: {e}", exc_info=True)
             return {"error": str(e)}
+
+    async def initialize(self):
+        """
+        Post-initialization hook: seeds demo content for demo users.
+        This is called automatically when the actor starts up.
+        Only seeds if a demo user with demo role exists and has no projects yet.
+        """
+        if not self.db:
+            logger.warning(f"[{self.write_scope}-Actor] Skipping initialize - DB not ready.")
+            return
+        
+        logger.info(f"[{self.write_scope}-Actor] Starting post-initialization setup...")
+        logger.info("Checking for demo user seeding...")
+        
+        try:
+            from .demo_seed import check_and_seed_demo
+            
+            # check_and_seed_demo will use config if demo_email is None
+            success = await check_and_seed_demo(
+                db=self.db,
+                mongo_uri=self.mongo_uri,
+                db_name=self.db_name,
+                demo_email=None  # Will use config.DEMO_EMAIL_DEFAULT if enabled
+            )
+            
+            if success:
+                logger.info(f"[{self.write_scope}-Actor] Demo seeding check completed.")
+            else:
+                logger.warning(f"[{self.write_scope}-Actor] Demo seeding check failed or was skipped.")
+                
+        except Exception as e:
+            logger.error(f"[{self.write_scope}-Actor] Error during initialization: {e}", exc_info=True)
+        
+        logger.info(f"[{self.write_scope}-Actor] Post-initialization setup complete.")
 

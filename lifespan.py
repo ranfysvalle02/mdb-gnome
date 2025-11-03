@@ -69,7 +69,7 @@ def init_templates():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI application lifespan (startup and shutdown)."""
-    from database import ensure_db_indices, seed_admin, seed_db_from_local_files
+    from database import ensure_db_indices, seed_admin, seed_demo_user, seed_db_from_local_files
     from experiment_routes import reload_active_experiments
     from export_helpers import cleanup_old_exports
     
@@ -215,6 +215,7 @@ async def lifespan(app: FastAPI):
     try:
         await ensure_db_indices(db)
         await seed_admin(app)
+        await seed_demo_user(app)
         await seed_db_from_local_files(db)
         logger.info("✔️ Essential database setup completed.")
     except Exception as e:

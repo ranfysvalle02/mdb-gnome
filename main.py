@@ -193,6 +193,8 @@ else:
 # Core application dependencies
 try:
   from core_deps import (
+    require_experiment_ownership_or_admin_dep,
+    get_user_experiments,
     get_current_user,
     get_current_user_or_redirect,
     require_admin,
@@ -545,7 +547,13 @@ async def logout(request: Request):
   user_email = token_data.get("email") if token_data else "Unknown/Expired"
   logger.info(f"User logging out: {user_email}")
   response = RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
-  response.delete_cookie("token")
+  # Delete cookie with same parameters used when setting it
+  response.delete_cookie(
+    key="token",
+    httponly=True,
+    secure=should_use_secure_cookie(request),
+    samesite="lax",
+  )
   return response
 
 
@@ -1935,7 +1943,7 @@ app.include_router(public_api_router)
 
 @admin_router.get("/package/{slug_id}", name="package_experiment")
 @limiter.limit("20 per minute")  # More lenient limit for authenticated admin users
-async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any] = Depends(require_admin)):
+async def package_experiment(request: Request, slug_id: str, user: Dict[str, Any] = Depends(require_experiment_ownership_or_admin_dep)):
   """
   NOTE: This is the original, restricted admin route.
   It is kept for separation, even though it currently mirrors the public logic.
@@ -2183,15 +2191,18 @@ async def admin_dashboard(request: Request, user: Dict[str, Any] = Depends(requi
   db: AsyncIOMotorDatabase = request.app.state.mongo_db
   error_message: Optional[str] = None
 
-  # Fetch configs and export counts in parallel (independent queries)
+  # Fetch configs based on user role (admins see all, developers see own, demo see all readonly)
+  try:
+    user_experiments = await get_user_experiments(request, user)
+  except Exception as e:
+    error_message = f"Error fetching experiment configs from DB: {e}"
+    logger.error(error_message, exc_info=True)
+    user_experiments = []
+  
+  # Fetch export counts in parallel (independent query)
   async def fetch_configs():
-    try:
-      # Limit to 500 experiment configs to prevent accidental large result sets
-      return await db.experiments_config.find().limit(500).to_list(length=None)
-    except Exception as e:
-      error_message = f"Error fetching experiment configs from DB: {e}"
-      logger.error(error_message, exc_info=True)
-      return []
+    # Already filtered by get_user_experiments
+    return user_experiments
   
   async def fetch_export_counts():
     try:
@@ -2268,7 +2279,7 @@ async def save_manifest(
   request: Request,
   slug_id: str,
   data: Dict[str, str] = Body(...),
-  user: Dict[str, Any] = Depends(require_admin)
+  user: Dict[str, Any] = Depends(require_experiment_ownership_or_admin_dep)
 ):
   db: AsyncIOMotorDatabase = request.app.state.mongo_db
   content = data.get("content")
@@ -2340,7 +2351,7 @@ async def save_manifest(
 
 
 @admin_router.post("/api/reload-experiment/{slug_id}", response_class=JSONResponse)
-async def reload_experiment(request: Request, slug_id: str, user: Dict[str, Any] = Depends(require_admin)):
+async def reload_experiment(request: Request, slug_id: str, user: Dict[str, Any] = Depends(require_experiment_ownership_or_admin_dep)):
   admin_email = user.get('email', 'Unknown Admin')
   logger.info(f"Admin '{admin_email}' triggered manual reload for '{slug_id}'.")
   try:
@@ -2356,7 +2367,7 @@ async def delete_experiment(
   request: Request,
   slug_id: str,
   body: Dict[str, str] = Body(...),
-  user: Dict[str, Any] = Depends(require_admin)
+  user: Dict[str, Any] = Depends(require_experiment_ownership_or_admin_dep)
 ):
   """
   Destructively delete an experiment and all associated data.
@@ -2558,7 +2569,7 @@ async def delete_experiment(
 
 
 @admin_router.get("/api/index-status/{slug_id}", response_class=JSONResponse)
-async def get_index_status(request: Request, slug_id: str, user: Dict[str, Any] = Depends(require_admin)):
+async def get_index_status(request: Request, slug_id: str, user: Dict[str, Any] = Depends(require_experiment_ownership_or_admin_dep)):
   no_cache_headers = {
     "Cache-Control": "no-cache, no-store, must-revalidate",
     "Pragma": "no-cache",
@@ -2640,7 +2651,7 @@ async def get_index_status(request: Request, slug_id: str, user: Dict[str, Any] 
 
 
 @admin_router.get("/api/get-file-content/{slug_id}", response_class=JSONResponse)
-async def get_file_content(slug_id: str, path: str = Query(...), user: Dict[str, Any] = Depends(require_admin)):
+async def get_file_content(slug_id: str, path: str = Query(...), user: Dict[str, Any] = Depends(require_experiment_ownership_or_admin_dep)):
   experiment_path = (EXPERIMENTS_DIR / slug_id).resolve()
   try:
     file_path = _secure_path(experiment_path, path)
@@ -3368,12 +3379,26 @@ async def upload_experiment_zip(
 
   try:
     db: AsyncIOMotorDatabase = request.app.state.mongo_db
+    # Check if experiment already exists to preserve ownership
+    existing_config = await db.experiments_config.find_one({"slug": slug_id}, {"owner_email": 1})
+    
     config_data = {
       **parsed_manifest,
       "slug": slug_id,
       "runtime_s3_uri": runtime_uri,
       "runtime_pip_deps": parsed_reqs,
     }
+    
+    # Set ownership on creation (preserve existing ownership if experiment already exists)
+    if not existing_config or not existing_config.get("owner_email"):
+      # New experiment: set owner to the uploader
+      config_data["owner_email"] = admin_email
+      logger.info(f"[{slug_id}] Setting owner to '{admin_email}' (new experiment or no owner)")
+    else:
+      # Existing experiment: preserve existing ownership
+      config_data["owner_email"] = existing_config.get("owner_email")
+      logger.debug(f"[{slug_id}] Preserving existing owner '{existing_config.get('owner_email')}'")
+    
     await db.experiments_config.update_one({"slug": slug_id}, {"$set": config_data}, upsert=True)
     if using_b2:
       logger.info(f"[{slug_id}] Updated DB config with new B2 runtime.")

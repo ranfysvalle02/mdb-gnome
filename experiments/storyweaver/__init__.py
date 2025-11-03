@@ -456,7 +456,8 @@ async def generate_notes(
             user.get("user_id"),
             data.get("project_id"),
             data.get("topic"),
-            data.get("num_notes", 5)
+            data.get("num_notes", 5),
+            data.get("use_web_search", False)
         )
         return JSONResponse(result)
     except Exception as e:

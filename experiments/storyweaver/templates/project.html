@@ -9,194 +9,298 @@
     data-project-type="{{ project.project_type }}"
     data-is-atlas="{{ is_atlas }}">
 </div>
-<main class="space-y-12">
-    <div class="text-center">
-        <h2 class="text-4xl font-extrabold text-slate-900">{{ project.name }}</h2>
-        <p class="mt-2 text-lg text-slate-600 max-w-2xl mx-auto italic">"{{ project.project_goal }}"</p>
+
+<main class="space-y-8">
+    <!-- Hero Section -->
+    <div class="text-center mb-12">
+        <h1 class="text-5xl md:text-6xl font-extrabold mb-4 bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+            {{ project.name }}
+        </h1>
+        <p class="mt-4 text-xl md:text-2xl text-slate-600 max-w-3xl mx-auto font-light italic leading-relaxed">
+            "{{ project.project_goal }}"
+        </p>
     </div>
-    <div class="space-y-8">
-        {% if project.project_type == 'study' %}
-        <div class="content-card">
-            <h3 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">🧠</span> Generate Study Notes</h3>
-             <form id="generate-notes-form" class="space-y-4">
-                <div>
-                    <label for="note-topic-input" class="block text-sm font-medium text-slate-700 mb-1">Topic</label>
-                    <input type="text" id="note-topic-input" required class="form-input" placeholder="e.g., 'The Krebs Cycle', 'Key Events of the Renaissance'">
+
+    <!-- Primary Actions Section -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+        <!-- Add Note Card (Always visible) -->
+        <div class="lg:col-span-2">
+            <div class="content-card h-full">
+                <div class="flex items-center gap-3 mb-6">
+                    <div class="w-12 h-12 rounded-full bg-gradient-to-br from-purple-100 to-pink-100 flex items-center justify-center text-2xl">
+                        ✍️
+                    </div>
+                    <h2 class="text-2xl font-bold text-slate-900">Add a Note</h2>
                 </div>
-                <div class="text-right pt-2"><button type="submit" class="btn btn-accent">Generate Notes</button></div>
-            </form>
-        </div>
-        {% endif %}
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <div class="space-y-8">
-                <div class="content-card">
-                    <h3 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">✍️</span> Add a New Note</h3>
-                    <form id="note-form" class="space-y-4">
-                        <div><textarea id="note-content" rows="6" class="form-textarea" placeholder="Add your thoughts, research, or memories..."></textarea></div>
-                        <div>
-                            <label for="note-tags-input" class="block text-sm font-medium text-slate-700 mb-1">Tags <span class="text-slate-500 font-normal">(comma separated)</span></label>
-                            <div class="flex items-center space-x-2">
-                                <input type="text" id="note-tags-input" class="form-input" placeholder="research, chapter 1, key point">
-                                <button type="button" id="suggest-tags-btn" class="btn btn-accent flex-shrink-0 h-[46px] disabled:opacity-50">Suggest</button>
-                            </div>
-                            <div id="tag-suggestions-container" class="mt-3 flex flex-wrap gap-2"></div>
-                        </div>
-                        <div class="text-right pt-2"><button type="submit" class="btn btn-primary">Add Note</button></div>
-                    </form>
-                </div>
-            </div>
-            <div class="content-card">
-                <h3 class="text-2xl font-bold mb-5 flex items-center gap-3"><span class="text-3xl">💌</span> Invite & Share</h3>
-                <form id="token-form" class="space-y-4">
-                     <p class="text-sm font-semibold text-slate-800">Invite a Specific Contributor</p>
-                    <div><label for="contributor-label-input" class="block text-sm font-medium text-slate-700 mb-1">Contributor's Name</label><input type="text" id="contributor-label-input" required class="form-input"></div>
-                    <div><label for="prompt-textarea" class="block text-sm font-medium text-slate-700 mb-1">Prompt</label><textarea id="prompt-textarea" rows="3" required class="form-textarea" placeholder="e.g., 'What do you remember about the summer of '82?'"></textarea></div>
-                    <div class="flex justify-end pt-2"><button type="submit" class="btn btn-primary">Generate Invite Link</button></div>
-                    <div id="token-result" class="pt-4"></div>
-                </form>
-                <hr class="my-6">
-                <form id="shared-token-form" class="space-y-4">
-                     <p class="text-sm font-semibold text-slate-800">Share with a Group</p>
-                    <div><label for="shared-prompt-textarea" class="block text-sm font-medium text-slate-700 mb-1">Prompt for the Group</label><textarea id="shared-prompt-textarea" rows="3" required class="form-textarea" placeholder="e.g., 'What is your favorite memory from the event?'"></textarea></div>
-                    <div class="flex justify-end pt-2"><button type="submit" class="btn btn-secondary">Generate Share Link</button></div>
-                    <div id="shared-token-result" class="pt-4"></div>
-                </form>
-            </div>
-        </div>
-    </div>
-    <div class="content-card">
-        <h3 class="text-2xl font-bold mb-2 flex items-center gap-3"><span class="text-3xl">🤖</span> AI Actions & Search</h3>
-        <p class="text-slate-600 mb-6">Select notes from your project to search or use as inspiration for AI-powered creations.</p>
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
-            <div class="ai-action-card">
-                <h4 class="ai-action-title">📖 Weave a Story</h4>
-                <div class="space-y-4">
+                <form id="note-form" class="space-y-4">
                     <div>
-                        <label for="story-tone-select" class="ai-action-label">Narrative Tone</label>
-                        <select id="story-tone-select" class="form-select">
+                        <textarea id="note-content" rows="5" class="form-textarea" placeholder="Add your thoughts, research, or memories..."></textarea>
+                    </div>
+                    <div>
+                        <label for="note-tags-input" class="block text-sm font-medium text-slate-700 mb-2">
+                            Tags <span class="text-slate-500 font-normal">(comma separated)</span>
+                        </label>
+                        <div class="flex items-center gap-2">
+                            <input type="text" id="note-tags-input" class="form-input flex-1" placeholder="research, chapter 1, key point">
+                            <button type="button" id="suggest-tags-btn" class="btn btn-accent flex-shrink-0 h-[46px] px-4 disabled:opacity-50">
+                                Suggest
+                            </button>
+                        </div>
+                        <div id="tag-suggestions-container" class="mt-3 flex flex-wrap gap-2"></div>
+                    </div>
+                    <div class="flex justify-end pt-2">
+                        <button type="submit" class="btn btn-primary px-8">Add Note</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Quick Actions Sidebar -->
+        <div class="space-y-6">
+            {% if project.project_type == 'study' %}
+            <!-- Generate Notes Card -->
+            <div class="content-card">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-100 to-teal-100 flex items-center justify-center text-xl">
+                        🧠
+                    </div>
+                    <h3 class="text-lg font-bold text-slate-900">Generate Notes</h3>
+                </div>
+                <form id="generate-notes-form" class="space-y-4">
+                    <div>
+                        <label for="note-topic-input" class="block text-sm font-medium text-slate-700 mb-1">Topic</label>
+                        <input type="text" id="note-topic-input" required class="form-input text-sm" placeholder="e.g., 'The Krebs Cycle'">
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <input type="checkbox" id="use-web-search-checkbox" class="w-4 h-4 text-emerald-600 bg-gray-100 border-gray-300 rounded focus:ring-emerald-500">
+                        <label for="use-web-search-checkbox" class="text-sm font-medium text-slate-700 cursor-pointer">
+                            🔍 Search web
+                        </label>
+                    </div>
+                    <button type="submit" class="btn btn-accent w-full text-sm py-2">Generate</button>
+                </form>
+            </div>
+            {% endif %}
+
+            <!-- Collapsible Invite & Share -->
+            <div class="content-card">
+                <button id="invite-toggle" class="w-full flex items-center justify-between mb-4 group">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-100 to-purple-100 flex items-center justify-center text-xl">
+                            💌
+                        </div>
+                        <h3 class="text-lg font-bold text-slate-900">Invite & Share</h3>
+                    </div>
+                    <svg class="w-5 h-5 text-slate-500 transition-transform group-hover:rotate-180" id="invite-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </button>
+                <div id="invite-content" class="hidden space-y-4 pt-2 border-t border-slate-200">
+                    <!-- Specific Contributor Invite -->
+                    <div class="space-y-3">
+                        <p class="text-xs font-semibold text-slate-600 uppercase tracking-wide">Invite Contributor</p>
+                        <form id="token-form" class="space-y-3">
+                            <div>
+                                <label for="contributor-label-input" class="block text-xs font-medium text-slate-700 mb-1">Name</label>
+                                <input type="text" id="contributor-label-input" required class="form-input text-sm" placeholder="Contributor name">
+                            </div>
+                            <div>
+                                <label for="prompt-textarea" class="block text-xs font-medium text-slate-700 mb-1">Prompt</label>
+                                <textarea id="prompt-textarea" rows="2" required class="form-textarea text-sm" placeholder="What should they write about?"></textarea>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-full text-sm py-2">Generate Link</button>
+                            <div id="token-result" class="text-xs"></div>
+                        </form>
+                    </div>
+                    <hr class="my-4">
+                    <!-- Shared Link -->
+                    <div class="space-y-3">
+                        <p class="text-xs font-semibold text-slate-600 uppercase tracking-wide">Open Share</p>
+                        <form id="shared-token-form" class="space-y-3">
+                            <div>
+                                <label for="shared-prompt-textarea" class="block text-xs font-medium text-slate-700 mb-1">Group Prompt</label>
+                                <textarea id="shared-prompt-textarea" rows="2" required class="form-textarea text-sm" placeholder="What should they contribute?"></textarea>
+                            </div>
+                            <button type="submit" class="btn btn-secondary w-full text-sm py-2">Generate Link</button>
+                            <div id="shared-token-result" class="text-xs"></div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Tools Section -->
+    <div class="content-card">
+        <div class="flex items-center gap-3 mb-6">
+            <div class="w-12 h-12 rounded-full bg-gradient-to-br from-cyan-100 to-blue-100 flex items-center justify-center text-2xl">
+                🤖
+            </div>
+            <div>
+                <h2 class="text-2xl font-bold text-slate-900">AI Tools</h2>
+                <p class="text-sm text-slate-600 mt-1">Select notes to transform with AI</p>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="ai-action-card">
+                <div class="text-3xl mb-3">📖</div>
+                <h4 class="ai-action-title text-lg">Weave a Story</h4>
+                <div class="space-y-3 mb-4">
+                    <div>
+                        <label for="story-tone-select" class="ai-action-label text-xs">Tone</label>
+                        <select id="story-tone-select" class="form-select text-sm">
                             {% for tone in story_tones %}<option value="{{ tone }}">{{ tone }}</option>{% endfor %}
                         </select>
                     </div>
-                     <div>
-                        <label for="story-format-select" class="ai-action-label">Format</label>
-                        <select id="story-format-select" class="form-select">
+                    <div>
+                        <label for="story-format-select" class="ai-action-label text-xs">Format</label>
+                        <select id="story-format-select" class="form-select text-sm">
                             {% for format in story_formats %}<option value="{{ format }}">{{ format }}</option>{% endfor %}
                         </select>
                     </div>
                 </div>
-                <div class="pt-4 mt-auto text-right">
-                    <button type="button" id="launch-story-builder-btn" class="btn btn-secondary w-full">Select Notes & Create</button>
-                </div>
+                <button type="button" id="launch-story-builder-btn" class="btn btn-secondary w-full text-sm py-2 mt-auto">Select & Create</button>
             </div>
+            
             <div class="ai-action-card">
-                <h4 class="ai-action-title">🎵 Create a Song</h4>
-                <div class="space-y-4">
+                <div class="text-3xl mb-3">🎵</div>
+                <h4 class="ai-action-title text-lg">Create a Song</h4>
+                <div class="space-y-3 mb-4">
                     <div>
-                        <label for="song-genre-select" class="ai-action-label">Genre</label>
-                        <select id="song-genre-select" class="form-select">
+                        <label for="song-genre-select" class="ai-action-label text-xs">Genre</label>
+                        <select id="song-genre-select" class="form-select text-sm">
                             {% for genre in song_genres %}<option value="{{ genre }}">{{ genre }}</option>{% endfor %}
                         </select>
                     </div>
                     <div>
-                        <label for="song-mood-select" class="ai-action-label">Mood</label>
-                        <select id="song-mood-select" class="form-select">
+                        <label for="song-mood-select" class="ai-action-label text-xs">Mood</label>
+                        <select id="song-mood-select" class="form-select text-sm">
                             {% for mood in song_moods %}<option value="{{ mood }}">{{ mood }}</option>{% endfor %}
                         </select>
                     </div>
                 </div>
-                <div class="pt-4 mt-auto text-right">
-                    <button type="button" id="launch-song-builder-btn" class="btn btn-secondary w-full">Select Notes & Write</button>
-                </div>
+                <button type="button" id="launch-song-builder-btn" class="btn btn-secondary w-full text-sm py-2 mt-auto">Select & Write</button>
             </div>
+            
             <div class="ai-action-card">
-                <h4 class="ai-action-title">🧠 Generate a Quiz</h4>
-                <p class="text-sm text-slate-600 flex-grow">Test knowledge based on your notes. Customize question types, difficulty, and more.</p>
-                <div class="pt-4 mt-auto text-right">
-                    <button type="button" data-modal-target="quiz-options-modal" class="btn btn-accent w-full">Configure & Generate</button>
-                </div>
+                <div class="text-3xl mb-3">🧠</div>
+                <h4 class="ai-action-title text-lg">Generate Quiz</h4>
+                <p class="text-xs text-slate-600 mb-4 flex-grow">Test knowledge with customizable quizzes</p>
+                <button type="button" data-modal-target="quiz-options-modal" class="btn btn-accent w-full text-sm py-2 mt-auto">Configure</button>
             </div>
+            
             <div class="ai-action-card">
-                <h4 class="ai-action-title">📚 Generate Study Guide</h4>
-                <p class="text-sm text-slate-600 flex-grow">Synthesize your notes into a structured guide with key concepts, themes, and questions.</p>
-                <div class="pt-4 mt-auto text-right">
-                    <button type="button" id="launch-study-guide-btn" class="btn btn-secondary-outline w-full">Select Notes & Generate</button>
-                </div>
+                <div class="text-3xl mb-3">📚</div>
+                <h4 class="ai-action-title text-lg">Study Guide</h4>
+                <p class="text-xs text-slate-600 mb-4 flex-grow">Synthesize notes into a structured guide</p>
+                <button type="button" id="launch-study-guide-btn" class="btn btn-secondary-outline w-full text-sm py-2 mt-auto">Generate</button>
             </div>
         </div>
     </div>
+
+    <!-- Notes Section -->
+    <div class="content-card">
+        <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-xl">
+                    📝
+                </div>
+                <h2 class="text-2xl font-bold text-slate-900">Project Notes</h2>
+            </div>
+            <select id="contributor-filter" class="form-select w-full sm:w-auto text-sm max-w-xs"></select>
+        </div>
+        <div id="notes-container" class="space-y-4"></div>
+        <div id="loading-indicator" class="text-center p-8 text-slate-500 hidden">
+            <div class="spinner mx-auto mb-2"></div>
+            Loading notes...
+        </div>
+    </div>
+
+    <!-- Quizzes Section (Collapsible) -->
     {% if quizzes %}
-    <div id="project-quizzes">
-        <h3 class="text-4xl font-bold mb-8">Generated Quizzes</h3>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {% for quiz in quizzes %}
-            <div class="content-card flex flex-col">
-                <div class="flex-grow">
-                    <div class="flex justify-between items-start">
-                        <h4 class="text-xl font-bold text-slate-800">{{ quiz.title }}</h4>
+    <div class="content-card">
+        <button id="quizzes-toggle" class="w-full flex items-center justify-between mb-4 group">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-100 to-blue-100 flex items-center justify-center text-xl">
+                    🎯
+                </div>
+                <h2 class="text-xl font-bold text-slate-900">Quizzes <span class="text-sm font-normal text-slate-500">({{ quizzes|length }})</span></h2>
+            </div>
+            <svg class="w-5 h-5 text-slate-500 transition-transform group-hover:rotate-180" id="quizzes-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+        </button>
+        <div id="quizzes-content" class="hidden">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-slate-200">
+                {% for quiz in quizzes %}
+                <div class="bg-slate-50 rounded-lg p-4 border border-slate-200 hover:shadow-md transition-shadow">
+                    <div class="flex justify-between items-start mb-2">
+                        <h4 class="font-bold text-slate-800">{{ quiz.title }}</h4>
                         <span class="text-xs font-semibold bg-cyan-100 text-cyan-800 px-2 py-1 rounded-full">{{ quiz.question_type }}</span>
                     </div>
-                    <p class="text-xs text-slate-500 mt-1 mb-4">Created: {{ quiz.created_at.strftime('%B %d, %Y, %-I:%M %p') if quiz.created_at and quiz.created_at.strftime else 'Date Missing' }}</p>
+                    <p class="text-xs text-slate-500 mb-4">Created: {{ quiz.created_at.strftime('%B %d, %Y') if quiz.created_at else 'Date Missing' }}</p>
+                    <div class="flex items-center gap-2">
+                        <a href="/experiments/storyweaver/quiz/{{ quiz.share_token }}" target="_blank" class="btn btn-secondary-outline text-xs py-1 px-3 flex-1 text-center">View</a>
+                        <button class="btn btn-primary text-xs py-1 px-3 copy-link-btn" data-url="/experiments/storyweaver/quiz/{{ quiz.share_token }}">Share</button>
+                    </div>
                 </div>
-                <div class="flex items-center justify-end gap-3 mt-4 pt-4 border-t">
-                    <a href="/experiments/storyweaver/quiz/{{ quiz.share_token }}" target="_blank" class="btn btn-secondary-outline text-sm py-2 px-4">View Quiz</a>
-                    <button class="btn btn-primary text-sm py-2 px-4 copy-link-btn" data-url="/experiments/storyweaver/quiz/{{ quiz.share_token }}">Share</button>
-                </div>
+                {% endfor %}
             </div>
-            {% endfor %}
         </div>
     </div>
     {% endif %}
+
+    <!-- Invitations Section (Collapsible) -->
     {% if invited_users or shared_invites %}
-    <div id="project-invitations">
-        <h3 class="text-4xl font-bold mb-8">Generated Invitations & Share Links</h3>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {% for invite in invited_users %}
-            <div class="content-card flex flex-col">
-                <div class="flex-grow">
-                    <div class="flex justify-between items-start">
-                        <h4 class="text-xl font-bold text-slate-800">{{ invite.label }}</h4>
-                        <span class="text-xs font-semibold bg-indigo-100 text-indigo-800 px-2 py-1 rounded-full">Specific Invite</span>
-                    </div>
-                    <p class="text-sm text-slate-600 italic mt-2">Prompt: "{{ invite.prompt }}"</p>
-                    <p class="text-xs text-slate-500 mt-1 mb-4">Created: {{ invite.created_at.strftime('%B %d, %Y, %-I:%M %p') if invite.created_at and invite.created_at.strftime else 'Date Missing' }}</p>
+    <div class="content-card">
+        <button id="invitations-toggle" class="w-full flex items-center justify-between mb-4 group">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-100 to-purple-100 flex items-center justify-center text-xl">
+                    🔗
                 </div>
-                <div class="flex items-center justify-end gap-3 mt-4 pt-4 border-t">
-                    <input type="text" readonly value="/experiments/storyweaver/invite/{{ invite.token }}" class="form-input-minimal flex-grow text-xs truncate">
-                    <button class="btn btn-primary text-sm py-2 px-4 copy-link-btn" data-url="/experiments/storyweaver/invite/{{ invite.token }}">Copy Link</button>
-                </div>
+                <h2 class="text-xl font-bold text-slate-900">Invitations & Links</h2>
             </div>
-            {% endfor %}
-            {% for invite in shared_invites %}
-            <div class="content-card flex flex-col">
-                <div class="flex-grow">
-                    <div class="flex justify-between items-start">
-                        <h4 class="text-xl font-bold text-slate-800">Share Link</h4>
-                        <span class="text-xs font-semibold bg-green-100 text-green-800 px-2 py-1 rounded-full">Open Share</span>
+            <svg class="w-5 h-5 text-slate-500 transition-transform group-hover:rotate-180" id="invitations-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+        </button>
+        <div id="invitations-content" class="hidden">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-slate-200">
+                {% for invite in invited_users %}
+                <div class="bg-slate-50 rounded-lg p-4 border border-slate-200">
+                    <div class="flex justify-between items-start mb-2">
+                        <h4 class="font-bold text-slate-800">{{ invite.label }}</h4>
+                        <span class="text-xs font-semibold bg-indigo-100 text-indigo-800 px-2 py-1 rounded-full">Specific</span>
                     </div>
-                    <p class="text-sm text-slate-600 italic mt-2">Prompt: "{{ invite.prompt }}"</p>
-                    <p class="text-xs text-slate-500 mt-1 mb-4">Created: {{ invite.created_at.strftime('%B %d, %Y, %-I:%M %p') if invite.created_at and invite.created_at.strftime else 'Date Missing' }}</p>
+                    <p class="text-xs text-slate-600 italic mb-3">"{{ invite.prompt }}"</p>
+                    <div class="flex items-center gap-2">
+                        <input type="text" readonly value="/experiments/storyweaver/invite/{{ invite.token }}" class="form-input-minimal flex-1 text-xs truncate">
+                        <button class="btn btn-primary text-xs py-1 px-3 copy-link-btn" data-url="/experiments/storyweaver/invite/{{ invite.token }}">Copy</button>
+                    </div>
                 </div>
-                <div class="flex items-center justify-end gap-3 mt-4 pt-4 border-t">
-                    <input type="text" readonly value="/experiments/storyweaver/share/{{ invite.token }}" class="form-input-minimal flex-grow text-xs truncate">
-                    <button class="btn btn-primary text-sm py-2 px-4 copy-link-btn" data-url="/experiments/storyweaver/share/{{ invite.token }}">Copy Link</button>
+                {% endfor %}
+                {% for invite in shared_invites %}
+                <div class="bg-slate-50 rounded-lg p-4 border border-slate-200">
+                    <div class="flex justify-between items-start mb-2">
+                        <h4 class="font-bold text-slate-800">Share Link</h4>
+                        <span class="text-xs font-semibold bg-green-100 text-green-800 px-2 py-1 rounded-full">Open</span>
+                    </div>
+                    <p class="text-xs text-slate-600 italic mb-3">"{{ invite.prompt }}"</p>
+                    <div class="flex items-center gap-2">
+                        <input type="text" readonly value="/experiments/storyweaver/share/{{ invite.token }}" class="form-input-minimal flex-1 text-xs truncate">
+                        <button class="btn btn-primary text-xs py-1 px-3 copy-link-btn" data-url="/experiments/storyweaver/share/{{ invite.token }}">Copy</button>
+                    </div>
                 </div>
+                {% endfor %}
             </div>
-            {% endfor %}
         </div>
     </div>
     {% endif %}
-    <div id="project-notes">
-        <div class="flex flex-col sm:flex-row sm:justify-between items-start sm:items-center mb-8 space-y-4 sm:space-y-0">
-            <h3 class="text-4xl font-bold">Project Notes</h3>
-            <select id="contributor-filter" class="form-select w-full sm:w-auto"></select>
-        </div>
-        <div id="notes-container" class="space-y-6"></div>
-        <div id="loading-indicator" class="text-center p-4 text-slate-500 hidden">Loading...</div>
-    </div>
 </main>
 {% endblock %}
 
 {% block modals %}
+    <!-- Modals remain the same -->
     <div id="note-selection-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 hidden z-50">
         <div class="bg-slate-50 rounded-xl shadow-2xl max-w-7xl w-full h-[90vh] flex flex-col modal-animated">
             <header class="flex-shrink-0 p-4 border-b flex justify-between items-center">
@@ -318,6 +422,29 @@ document.addEventListener('DOMContentLoaded', () => {
     const projectType = jsData.dataset.projectType;
     
     console.log('Project data:', { projectId, projectName, projectType });
+    
+    // Collapsible sections
+    function setupCollapsible(toggleId, contentId, arrowId) {
+        const toggle = document.getElementById(toggleId);
+        const content = document.getElementById(contentId);
+        const arrow = document.getElementById(arrowId);
+        if (toggle && content && arrow) {
+            toggle.addEventListener('click', () => {
+                const isHidden = content.classList.contains('hidden');
+                if (isHidden) {
+                    content.classList.remove('hidden');
+                    arrow.style.transform = 'rotate(180deg)';
+                } else {
+                    content.classList.add('hidden');
+                    arrow.style.transform = 'rotate(0deg)';
+                }
+            });
+        }
+    }
+    
+    setupCollapsible('invite-toggle', 'invite-content', 'invite-arrow');
+    setupCollapsible('quizzes-toggle', 'quizzes-content', 'quizzes-arrow');
+    setupCollapsible('invitations-toggle', 'invitations-content', 'invitations-arrow');
     
     // Load initial notes
     loadNotes(projectId, 1);
@@ -475,11 +602,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (result.status === 'success') {
                     const fullUrl = window.location.origin + result.invite_url;
                     resultDiv.innerHTML = `
-                        <div class="p-4 bg-indigo-50 border border-indigo-200 rounded-lg">
-                            <p class="text-sm font-semibold mb-2">Invite link for ${result.label}:</p>
+                        <div class="p-3 bg-indigo-50 border border-indigo-200 rounded-lg text-xs">
+                            <p class="font-semibold mb-2">Invite link for ${result.label}:</p>
                             <div class="flex items-center gap-2">
-                                <input type="text" readonly value="${fullUrl}" class="form-input-minimal flex-grow text-xs">
-                                <button class="btn btn-primary text-sm py-1 px-3 copy-link-btn" data-url="${fullUrl}">Copy</button>
+                                <input type="text" readonly value="${fullUrl}" class="form-input-minimal flex-1 text-xs">
+                                <button class="btn btn-primary text-xs py-1 px-2 copy-link-btn" data-url="${fullUrl}">Copy</button>
                             </div>
                         </div>
                     `;
@@ -546,11 +673,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (result.status === 'success') {
                     const fullUrl = window.location.origin + result.shared_url;
                     resultDiv.innerHTML = `
-                        <div class="p-4 bg-green-50 border border-green-200 rounded-lg">
-                            <p class="text-sm font-semibold mb-2">Share link:</p>
+                        <div class="p-3 bg-green-50 border border-green-200 rounded-lg text-xs">
+                            <p class="font-semibold mb-2">Share link:</p>
                             <div class="flex items-center gap-2">
-                                <input type="text" readonly value="${fullUrl}" class="form-input-minimal flex-grow text-xs">
-                                <button class="btn btn-secondary text-sm py-1 px-3 copy-link-btn" data-url="${fullUrl}">Copy</button>
+                                <input type="text" readonly value="${fullUrl}" class="form-input-minimal flex-1 text-xs">
+                                <button class="btn btn-secondary text-xs py-1 px-2 copy-link-btn" data-url="${fullUrl}">Copy</button>
                             </div>
                         </div>
                     `;
@@ -601,6 +728,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
             try {
+                const useWebSearch = document.getElementById('use-web-search-checkbox')?.checked || false;
                 const response = await fetch('/experiments/storyweaver/api/generate-notes', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -608,7 +736,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     body: JSON.stringify({
                         project_id: projectId,
                         topic: topic,
-                        num_notes: 5
+                        num_notes: 5,
+                        use_web_search: useWebSearch
                     })
                 });
                 
@@ -659,18 +788,16 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log('Loaded notes:', notes);
             
             if (notes.length === 0) {
-                container.innerHTML = '<div class="no-notes-message"><p>No notes yet. Add your first note above!</p></div>';
+                container.innerHTML = '<div class="no-notes-message"><p class="text-slate-500">No notes yet. Add your first note above!</p></div>';
             } else {
                 container.innerHTML = notes.map(note => `
-                    <div class="note-card animate-fade-in" data-note-id="${note._id}">
-                        <div class="flex justify-between items-start mb-2">
-                            <div>
-                                <span class="contributor-tag">${note.contributor_label || 'Me'}</span>
-                                ${note.tags && note.tags.length > 0 ? note.tags.map(tag => `<span class="tag">${tag}</span>`).join(' ') : ''}
-                            </div>
-                            <button class="note-delete-btn" data-note-id="${note._id}" title="Delete note">&times;</button>
+                    <div class="note-card animate-fade-in relative" data-note-id="${note._id}">
+                        <button class="note-delete-btn absolute top-2 right-2" data-note-id="${note._id}" title="Delete note">&times;</button>
+                        <div class="flex flex-wrap items-center gap-2 mb-3">
+                            <span class="contributor-tag">${note.contributor_label || 'Me'}</span>
+                            ${note.tags && note.tags.length > 0 ? note.tags.map(tag => `<span class="tag">${tag}</span>`).join(' ') : ''}
                         </div>
-                        <p class="note-content">${escapeHtml(note.content)}</p>
+                        <p class="note-content mb-3">${escapeHtml(note.content)}</p>
                         <small class="note-timestamp">${note.formatted_timestamp || 'Date missing'}</small>
                     </div>
                 `).join('');
@@ -692,7 +819,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                     setTimeout(() => {
                                         btn.closest('.note-card').remove();
                                         if (container.children.length === 0) {
-                                            container.innerHTML = '<div class="no-notes-message"><p>No notes yet. Add your first note above!</p></div>';
+                                            container.innerHTML = '<div class="no-notes-message"><p class="text-slate-500">No notes yet. Add your first note above!</p></div>';
                                         }
                                     }, 300);
                                 } else {
@@ -743,6 +870,27 @@ document.addEventListener('DOMContentLoaded', () => {
         div.textContent = text;
         return div.innerHTML.replace(/\n/g, '<br>');
     }
+    
+    // Copy link functionality for all copy buttons
+    document.addEventListener('click', async (e) => {
+        if (e.target.classList.contains('copy-link-btn')) {
+            const url = e.target.dataset.url;
+            const fullUrl = window.location.origin + url;
+            try {
+                await navigator.clipboard.writeText(fullUrl);
+                const originalText = e.target.textContent;
+                e.target.textContent = 'Copied!';
+                setTimeout(() => {
+                    e.target.textContent = originalText;
+                }, 2000);
+            } catch (err) {
+                alert('Failed to copy. URL: ' + fullUrl);
+            }
+        }
+    });
+    
+    // AI action handlers (these would need to be loaded from main.js or defined here)
+    // For now, keeping them minimal - they should work with existing modal code
 });
 </script>
 {% endblock %}
