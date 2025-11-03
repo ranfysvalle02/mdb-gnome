@@ -117,12 +117,35 @@ class ExperimentActor:
             products = []
             categories = ["Electronics", "Clothing", "Food", "Books", "Tools"]
             
-            for i in range(20):
+            # Product name and description templates for variety in text search
+            product_types = [
+                ("Laptop", "High-performance laptop computer with fast processor and large memory"),
+                ("Smartphone", "Latest smartphone with advanced camera and long battery life"),
+                ("T-Shirt", "Comfortable cotton t-shirt available in multiple colors and sizes"),
+                ("Coffee", "Premium roasted coffee beans from various regions around the world"),
+                ("Novel", "Engaging fiction novel with compelling characters and plot twists"),
+                ("Hammer", "Durable construction hammer with ergonomic grip and balanced weight"),
+                ("Tablet", "Portable tablet device perfect for reading and entertainment"),
+                ("Jacket", "Weather-resistant jacket with multiple pockets and adjustable hood"),
+                ("Chocolate", "Artisan chocolate bars made with organic ingredients"),
+                ("Textbook", "Comprehensive textbook covering advanced topics and concepts"),
+                ("Screwdriver", "Professional screwdriver set with multiple bits and attachments"),
+                ("Headphones", "Premium wireless headphones with noise cancellation technology"),
+                ("Sneakers", "Comfortable running shoes designed for athletic performance"),
+                ("Pizza", "Gourmet pizza with fresh toppings and handmade dough"),
+                ("Biography", "Detailed biography documenting historical events and personal stories"),
+                ("Wrench", "Adjustable wrench tool for various mechanical applications"),
+            ]
+            
+            # Generate 10,000 products to really demonstrate index power
+            for i in range(10000):
+                product_type = random.choice(product_types)
+                category = random.choice(categories)
                 products.append({
-                    "sku": f"SKU-{i:04d}",
-                    "name": f"Product {i}",
-                    "description": f"This is a description for product {i} with various keywords",
-                    "category": random.choice(categories),
+                    "sku": f"SKU-{i:05d}",
+                    "name": f"{product_type[0]} {i % 100}",
+                    "description": f"{product_type[1]}. This {product_type[0].lower()} is perfect for {random.choice(['home use', 'professional use', 'students', 'enthusiasts', 'beginners', 'experts'])}. Features include quality materials, reliable performance, and excellent value.",
+                    "category": category,
                     "price": round(random.uniform(10.0, 1000.0), 2),
                     "location": {
                         "type": "Point",
@@ -132,10 +155,15 @@ class ExperimentActor:
                         ]
                     },
                     "in_stock": random.choice([True, False]),
-                    "created_at": datetime.datetime.utcnow()
+                    "created_at": datetime.datetime.utcnow() - datetime.timedelta(days=random.randint(0, 365))
                 })
             
-            await self.db.products.insert_many(products)
+            # Insert in batches for better performance with large datasets
+            batch_size = 1000
+            for i in range(0, len(products), batch_size):
+                batch = products[i:i + batch_size]
+                await self.db.products.insert_many(batch)
+            
             steps[-1]["status"] = "completed"
             steps[-1]["count"] = len(products)
             
@@ -149,16 +177,27 @@ class ExperimentActor:
             })
             
             sessions = []
-            for i in range(10):
+            # Generate 5,000 sessions to demonstrate TTL and partial indexes
+            for i in range(5000):
+                # Vary created_at times to show TTL index working over time
+                created_at = datetime.datetime.utcnow() - datetime.timedelta(
+                    hours=random.randint(0, 48), 
+                    minutes=random.randint(0, 59)
+                )
                 sessions.append({
-                    "user_id": f"user_{i}",
-                    "session_id": f"session_{i}",
-                    "active": i % 2 == 0,  # Half active, half inactive
-                    "created_at": datetime.datetime.utcnow(),
-                    "data": {"page_views": random.randint(1, 50)}
+                    "user_id": f"user_{random.randint(0, 999)}",
+                    "session_id": f"session_{i:05d}",
+                    "active": random.random() > 0.4,  # 60% active, 40% inactive
+                    "created_at": created_at,
+                    "data": {"page_views": random.randint(1, 200)}
                 })
             
-            await self.db.sessions.insert_many(sessions)
+            # Insert in batches for better performance with large datasets
+            batch_size = 1000
+            for i in range(0, len(sessions), batch_size):
+                batch = sessions[i:i + batch_size]
+                await self.db.sessions.insert_many(batch)
+            
             steps[-1]["status"] = "completed"
             steps[-1]["count"] = len(sessions)
             steps[-1]["note"] = f"{len([s for s in sessions if s['active']])} active sessions will be indexed by the partial index"
@@ -173,17 +212,31 @@ class ExperimentActor:
             })
             
             embeddings = []
-            for i in range(5):
+            # Generate 1,000 embeddings for vector search demonstration
+            document_topics = [
+                "machine learning", "artificial intelligence", "data science",
+                "web development", "database design", "software engineering",
+                "cloud computing", "cybersecurity", "mobile development",
+                "user interface design", "API development", "testing strategies"
+            ]
+            
+            for i in range(1000):
                 # Generate a simple 384-dimensional vector (for demo purposes)
                 vector = [random.uniform(-1.0, 1.0) for _ in range(384)]
+                topic = random.choice(document_topics)
                 embeddings.append({
-                    "document_id": f"doc_{i}",
+                    "document_id": f"doc_{i:05d}",
                     "embedding_vector": vector,
-                    "text": f"Sample document {i}",
-                    "metadata": {"type": "demo"}
+                    "text": f"Document about {topic}: comprehensive guide covering all aspects of {topic} including best practices, examples, and implementation strategies.",
+                    "metadata": {"type": "demo", "topic": topic, "index": i}
                 })
             
-            await self.db.embeddings.insert_many(embeddings)
+            # Insert in batches for better performance with large datasets
+            batch_size = 500  # Smaller batch for vector data
+            for i in range(0, len(embeddings), batch_size):
+                batch = embeddings[i:i + batch_size]
+                await self.db.embeddings.insert_many(batch)
+            
             steps[-1]["status"] = "completed"
             steps[-1]["count"] = len(embeddings)
             
@@ -199,23 +252,52 @@ class ExperimentActor:
             logs = []
             levels = ["INFO", "WARNING", "ERROR", "DEBUG"]
             messages = [
-                "Application started",
-                "User logged in",
-                "Database connection established",
-                "Error processing request",
-                "Cache miss occurred",
-                "Task completed successfully"
+                "Application started successfully",
+                "User logged in from remote location",
+                "Database connection established with connection pooling",
+                "Error processing request with invalid parameters",
+                "Cache miss occurred for frequently accessed data",
+                "Task completed successfully after processing large dataset",
+                "API request received from external client",
+                "Authentication token validated for secure endpoint",
+                "File upload completed with encryption enabled",
+                "Background job scheduled for asynchronous processing",
+                "Email notification sent to registered users",
+                "Payment transaction processed with encryption",
+                "System backup completed without errors",
+                "Memory usage exceeded threshold requiring cleanup",
+                "Network latency detected in distributed system",
+                "Configuration updated for production environment",
+                "Security audit performed on sensitive data",
+                "Load balancer redirected traffic to healthy server",
+                "Database index created for improved query performance",
+                "Session timeout occurred for inactive user"
             ]
             
-            for i in range(15):
+            # Generate 10,000 log entries over the past 30 days
+            for i in range(10000):
+                # Spread logs over the past 30 days
+                days_ago = random.randint(0, 30)
+                hours_ago = random.randint(0, 23)
+                minutes_ago = random.randint(0, 59)
                 logs.append({
-                    "timestamp": datetime.datetime.utcnow() - datetime.timedelta(seconds=i * 60),
+                    "timestamp": datetime.datetime.utcnow() - datetime.timedelta(
+                        days=days_ago, 
+                        hours=hours_ago, 
+                        minutes=minutes_ago,
+                        seconds=random.randint(0, 59)
+                    ),
                     "level": random.choice(levels),
                     "message": random.choice(messages),
-                    "source": f"service_{random.randint(1, 3)}"
+                    "source": f"service_{random.randint(1, 10)}"
                 })
             
-            await self.db.logs.insert_many(logs)
+            # Insert in batches for better performance with large datasets
+            batch_size = 1000
+            for i in range(0, len(logs), batch_size):
+                batch = logs[i:i + batch_size]
+                await self.db.logs.insert_many(batch)
+            
             steps[-1]["status"] = "completed"
             steps[-1]["count"] = len(logs)
             
@@ -247,16 +329,19 @@ class ExperimentActor:
             import time
             
             # Test unique index: find by SKU with timing
+            # Use a mid-range SKU to demonstrate index efficiency with large dataset
+            test_sku = "SKU-05000"
             start_time = time.time()
-            product_by_sku = await self.db.products.find_one({"sku": "SKU-0001"})
+            product_by_sku = await self.db.products.find_one({"sku": test_sku})
             unique_query_time = (time.time() - start_time) * 1000  # Convert to milliseconds
             
             # Get explain plan for unique index query
             try:
-                explain_result = await self.db.raw.products.find({"sku": "SKU-0001"}).explain()
+                explain_result = await self.db.raw.products.find({"sku": test_sku}).explain("executionStats")
                 unique_explain = self._extract_explain_info(explain_result)
+                logger.debug(f"[IndexingDemo] Unique index explain: {unique_explain}")
             except Exception as e:
-                logger.warning(f"Could not get explain plan: {e}")
+                logger.warning(f"Could not get explain plan: {e}", exc_info=True)
                 unique_explain = None
             
             # Test compound index: find by category and price range with timing
@@ -272,10 +357,11 @@ class ExperimentActor:
                 explain_result = await self.db.raw.products.find({
                     "category": "Electronics",
                     "price": {"$gte": 100.0}
-                }).sort("price", -1).limit(5).explain()
+                }).sort("price", -1).limit(5).explain("executionStats")
                 compound_explain = self._extract_explain_info(explain_result)
+                logger.debug(f"[IndexingDemo] Compound index explain: {compound_explain}")
             except Exception as e:
-                logger.warning(f"Could not get explain plan: {e}")
+                logger.warning(f"Could not get explain plan: {e}", exc_info=True)
                 compound_explain = None
             
             return {
@@ -286,7 +372,7 @@ class ExperimentActor:
                     {
                         "name": "Unique Index Lookup",
                         "index": "product_sku_unique",
-                        "query": '{"sku": "SKU-0001"}',
+                        "query": f'{{"sku": "{test_sku}"}}',
                         "explanation": "The unique index on SKU ensures fast O(log n) lookups and prevents duplicate SKUs. Without an index, MongoDB would scan every document.",
                         "performance": {
                             "execution_time_ms": round(unique_query_time, 2),
@@ -325,21 +411,81 @@ class ExperimentActor:
     def _extract_explain_info(self, explain_result: Dict[str, Any]) -> Dict[str, Any]:
         """
         Extract key information from MongoDB explain() result.
+        Traverses nested stages to find index usage.
         """
         try:
             execution_stats = explain_result.get("executionStats", {})
             winning_plan = explain_result.get("queryPlanner", {}).get("winningPlan", {})
             
+            # Recursively find index name in nested stages
+            def find_index_name(plan: Dict[str, Any]) -> Optional[str]:
+                """Recursively search for indexName in plan stages."""
+                if not plan or not isinstance(plan, dict):
+                    return None
+                
+                # Check current stage for indexName
+                if "indexName" in plan:
+                    return plan.get("indexName")
+                
+                # Check nested inputStage(s)
+                if "inputStage" in plan:
+                    result = find_index_name(plan["inputStage"])
+                    if result:
+                        return result
+                
+                # Check inputStages (for stages like OR, SORT_MERGE, etc.)
+                if "inputStages" in plan:
+                    for stage in plan.get("inputStages", []):
+                        result = find_index_name(stage)
+                        if result:
+                            return result
+                
+                return None
+            
+            index_name = find_index_name(winning_plan)
+            
+            # Determine stage name (look for IXSCAN, FETCH, etc.)
+            def find_stage_type(plan: Dict[str, Any]) -> str:
+                """Find the most relevant stage type."""
+                if not plan or not isinstance(plan, dict):
+                    return "unknown"
+                
+                stage = plan.get("stage", "")
+                if stage in ["IXSCAN", "FETCH", "SORT"]:
+                    return stage
+                
+                # Check nested stages
+                if "inputStage" in plan:
+                    nested_stage = find_stage_type(plan["inputStage"])
+                    if nested_stage != "unknown":
+                        return nested_stage
+                
+                if "inputStages" in plan:
+                    for stage in plan.get("inputStages", []):
+                        nested_stage = find_stage_type(stage)
+                        if nested_stage != "unknown":
+                            return nested_stage
+                
+                return stage or "unknown"
+            
+            stage_type = find_stage_type(winning_plan)
+            
+            # Determine if it's a collection scan
+            is_collection_scan = (
+                stage_type == "COLLSCAN" or 
+                (not index_name and execution_stats.get("totalDocsExamined", 0) > execution_stats.get("nReturned", 0))
+            )
+            
             return {
                 "execution_time_ms": execution_stats.get("executionTimeMillis", 0),
                 "total_docs_examined": execution_stats.get("totalDocsExamined", 0),
                 "total_docs_returned": execution_stats.get("nReturned", 0),
-                "index_used": winning_plan.get("indexName") or "Collection Scan",
-                "stage": winning_plan.get("stage", "unknown"),
+                "index_used": index_name if index_name else ("Collection Scan (No Index)" if is_collection_scan else "Collection Scan"),
+                "stage": stage_type,
                 "efficiency": round(execution_stats.get("nReturned", 0) / max(execution_stats.get("totalDocsExamined", 1), 1) * 100, 1) if execution_stats.get("totalDocsExamined", 0) > 0 else 100
             }
         except Exception as e:
-            logger.warning(f"Error extracting explain info: {e}")
+            logger.warning(f"Error extracting explain info: {e}", exc_info=True)
             return None
     
     async def test_text_index(self) -> Dict[str, Any]:
@@ -363,10 +509,11 @@ class ExperimentActor:
             try:
                 explain_result = await self.db.raw.products.find({
                     "$text": {"$search": "description keywords"}
-                }).limit(5).explain()
+                }).limit(5).explain("executionStats")
                 text_explain = self._extract_explain_info(explain_result)
+                logger.debug(f"[IndexingDemo] Text index explain: {text_explain}")
             except Exception as e:
-                logger.warning(f"Could not get explain plan: {e}")
+                logger.warning(f"Could not get explain plan: {e}", exc_info=True)
                 text_explain = None
             
             return {
@@ -438,10 +585,11 @@ class ExperimentActor:
                             "$maxDistance": 50000
                         }
                     }
-                }).limit(5).explain()
+                }).limit(5).explain("executionStats")
                 geo_explain = self._extract_explain_info(explain_result)
+                logger.debug(f"[IndexingDemo] Geospatial index explain: {geo_explain}")
             except Exception as e:
-                logger.warning(f"Could not get explain plan: {e}")
+                logger.warning(f"Could not get explain plan: {e}", exc_info=True)
                 geo_explain = None
             
             return {
@@ -504,10 +652,11 @@ class ExperimentActor:
             try:
                 explain_result = await self.db.raw.sessions.find({
                     "active": True
-                }).limit(5).explain()
+                }).limit(5).explain("executionStats")
                 partial_explain = self._extract_explain_info(explain_result)
+                logger.debug(f"[IndexingDemo] Partial index explain: {partial_explain}")
             except Exception as e:
-                logger.warning(f"Could not get explain plan: {e}")
+                logger.warning(f"Could not get explain plan: {e}", exc_info=True)
                 partial_explain = None
             
             return {
@@ -666,10 +815,11 @@ class ExperimentActor:
             try:
                 explain_result = await self.db.raw.sessions.find({
                     "session_id": "old_session"
-                }).explain()
+                }).explain("executionStats")
                 ttl_explain = self._extract_explain_info(explain_result)
+                logger.debug(f"[IndexingDemo] TTL index explain: {ttl_explain}")
             except Exception as e:
-                logger.warning(f"Could not get explain plan: {e}")
+                logger.warning(f"Could not get explain plan: {e}", exc_info=True)
                 ttl_explain = None
             
             return {
