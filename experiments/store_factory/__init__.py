@@ -822,31 +822,338 @@ async def download_store(
     store_slug: str,
     actor: "ray.actor.ActorHandle" = Depends(get_actor_handle)
 ):
-    """Download store data as JSON file."""
+    """Download store as standalone Docker package (Dockerfile, docker-compose.yml, main.py, and data)."""
     try:
+        from pathlib import Path
+        import zipfile
+        import io
+        from config import BASE_DIR
+        from export_helpers import make_intelligent_standalone_main_py
+        from fastapi.templating import Jinja2Templates
+        
+        # Get store data from actor
         result = await actor.export_store_data.remote(store_slug)
         if not result.get("success"):
             return JSONResponse(result, status_code=404)
         
         export_data = result.get("data", {})
         store_name = export_data.get("export_metadata", {}).get("store_name", store_slug)
+        store_slug_clean = export_data.get("export_metadata", {}).get("store_slug", store_slug)
         
-        # Create a safe filename
-        safe_name = "".join(c for c in store_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        # Get experiment slug (store_factory)
+        slug_id = getattr(request.state, "slug_id", "store_factory")
+        experiment_path = BASE_DIR / "experiments" / slug_id
+        source_dir = BASE_DIR
+        
+        # Get templates for generating standalone main.py
+        templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+        
+        # Generate standalone main.py
+        standalone_main_source = make_intelligent_standalone_main_py(slug_id, templates)
+        
+        # Prepare db_config.json (experiment config)
+        db_data = {
+            "slug": slug_id,
+            "name": "Store Factory",
+            "description": f"Standalone store: {store_name}",
+            "status": "active",
+            "auth_required": False,
+            "sub_auth": {
+                "enabled": True,
+                "strategy": "experiment_users",
+                "collection_name": "users",
+                "session_cookie_name": "store_factory_session",
+                "session_ttl_seconds": 86400,
+                "allow_registration": False
+            },
+            "data_scope": ["self"],
+            "managed_indexes": {
+                "stores": [{"name": "stores_slug_id_index", "type": "regular", "keys": {"slug_id": 1}, "options": {"unique": True}}],
+                "items": [{"name": "items_item_code_store_id_index", "type": "regular", "keys": [["item_code", 1], ["store_id", 1]], "options": {"unique": True}}],
+                "specials": [{"name": "specials_store_id_date_created_index", "type": "regular", "keys": [["store_id", 1], ["date_created", -1]]}],
+                "slideshow": [{"name": "slideshow_store_id_order_index", "type": "regular", "keys": [["store_id", 1], ["order", 1]]}]
+            }
+        }
+        
+        # Prepare db_collections.json (store data in collection format)
+        # Collection names need to be prefixed with experiment slug
+        collections_data = {
+            f"{slug_id}_stores": [export_data.get("store", {})],
+            f"{slug_id}_items": export_data.get("items", []),
+            f"{slug_id}_specials": export_data.get("specials", []),
+            f"{slug_id}_slideshow": export_data.get("slideshow_images", [])
+        }
+        
+        # Generate requirements
+        local_reqs_path = experiment_path / "requirements.txt"
+        base_requirements = [
+            "fastapi",
+            "uvicorn[standard]",
+            "motor>=3.0.0",
+            "pymongo==4.15.3",
+            "python-multipart",
+            "jinja2",
+            "ray[default]>=2.9.0",
+        ]
+        
+        all_requirements = base_requirements.copy()
+        if local_reqs_path.is_file():
+            with open(local_reqs_path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        all_requirements.append(line)
+        
+        requirements_content = "\n".join(all_requirements)
+        
+        # Generate Dockerfile
+        def create_dockerfile(slug_id: str, experiment_path: Path) -> str:
+            dockerfile_lines = [
+                "# --- Stage 1: Build dependencies ---",
+                "FROM python:3.10-slim-bookworm as builder",
+                "WORKDIR /app",
+                "",
+                "# Install build deps",
+                "RUN apt-get update && apt-get install -y build-essential && rm -rf /var/lib/apt/lists/*",
+                "",
+                "# Create requirements file"
+            ]
+            
+            for req in all_requirements:
+                escaped_req = req.replace("'", "'\"'\"'")
+                dockerfile_lines.append(f"RUN echo '{escaped_req}' >> /tmp/requirements.txt")
+            
+            dockerfile_lines.extend([
+                "",
+                "# Install dependencies",
+                "RUN python -m venv /opt/venv && \\",
+                "    . /opt/venv/bin/activate && \\",
+                "    pip install --upgrade pip && \\",
+                "    pip install -r /tmp/requirements.txt",
+                "",
+                "# --- Stage 2: Final image ---",
+                "FROM python:3.10-slim-bookworm",
+                "WORKDIR /app",
+                "",
+                "# Copy venv from builder",
+                "COPY --from=builder /opt/venv /opt/venv",
+                'ENV PATH="/opt/venv/bin:$PATH"',
+                "",
+                "# Copy core MongoDB wrapper",
+                "COPY async_mongo_wrapper.py /app/async_mongo_wrapper.py",
+                "COPY mongo_connection_pool.py /app/mongo_connection_pool.py",
+                "COPY experiment_db.py /app/experiment_db.py",
+                "",
+                "# Copy experiment code",
+                f"COPY experiments/{slug_id} /app/experiments/{slug_id}",
+                "COPY experiments/__init__.py /app/experiments/__init__.py",
+                "",
+                "# Copy configuration files",
+                "COPY db_config.json /app/db_config.json",
+                "COPY db_collections.json /app/db_collections.json",
+                "",
+                "# Copy standalone main application",
+                "COPY main.py /app/main.py",
+                "",
+                "# Create non-root user",
+                "RUN addgroup --system app && adduser --system --group app",
+                "RUN chown -R app:app /app",
+                "USER app",
+                "",
+                "ARG APP_PORT=8000",
+                "ENV PORT=$APP_PORT",
+                "",
+                "EXPOSE ${APP_PORT}",
+                "",
+                "CMD python main.py",
+            ])
+            
+            return "\n".join(dockerfile_lines)
+        
+        dockerfile_content = create_dockerfile(slug_id, experiment_path)
+        
+        # Generate docker-compose.yml
+        sanitized_slug = slug_id.lstrip("_").replace("_", "-")
+        if sanitized_slug and sanitized_slug[0].isdigit():
+            sanitized_slug = f"app-{sanitized_slug}"
+        if not sanitized_slug or sanitized_slug.startswith("-"):
+            sanitized_slug = f"app-{slug_id.lstrip('_').replace('_', '-')}" or "app-store-factory"
+        
+        docker_compose_content = f"""services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: {sanitized_slug}-app
+    platform: linux/arm64
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/
+      - DB_NAME=labs_db
+      - PORT=8000
+      - LOG_LEVEL=INFO
+    volumes:
+      - .:/app
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mongo:
+    image: mongodb/mongodb-atlas-local:latest
+    container_name: {sanitized_slug}-mongo
+    platform: linux/arm64
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  mongo-data:
+"""
+        
+        # Generate README
+        safe_store_name = store_name.replace(' ', '_')
+        business_type = export_data.get('export_metadata', {}).get('business_type', 'generic-store')
+        export_date = export_data.get('export_metadata', {}).get('exported_at', datetime.datetime.now().isoformat())
+        
+        readme_content = f"""# Standalone Store Export: {store_name}
+
+This is a standalone Docker package for the store **{store_name}**.
+
+## Quick Start
+
+1. **Extract the ZIP file**
+   ```bash
+   unzip {safe_store_name}_{store_slug_clean}_*.zip
+   cd {safe_store_name}_{store_slug_clean}_*
+   ```
+
+2. **Start with Docker Compose**
+   ```bash
+   docker-compose up
+   ```
+
+3. **Access the store**
+   - Open http://localhost:8000 in your browser
+   - The store will be available at http://localhost:8000/experiments/store_factory/{store_slug_clean}
+
+## What's Included
+
+- **main.py** - Standalone FastAPI application
+- **Dockerfile** - Docker container configuration
+- **docker-compose.yml** - Docker Compose setup with MongoDB
+- **db_config.json** - Store configuration
+- **db_collections.json** - Store data (items, specials, slideshow, etc.)
+- **experiments/store_factory/** - Complete store factory code
+- **requirements.txt** - Python dependencies
+
+## Store Information
+
+- **Store Name**: {store_name}
+- **Store Slug**: {store_slug_clean}
+- **Business Type**: {business_type}
+- **Export Date**: {export_date}
+
+## Running Without Docker
+
+If you prefer to run without Docker:
+
+1. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. Start MongoDB (or use MongoDB Atlas)
+
+3. Set environment variables:
+   ```bash
+   export MONGO_URI="mongodb://localhost:27017/"
+   export DB_NAME="labs_db"
+   export PORT=8000
+   ```
+
+4. Run the application:
+   ```bash
+   python main.py
+   ```
+
+## Notes
+
+- The store data is pre-seeded in the database
+- MongoDB Atlas Local is used for local development
+- Ray is required and included in the package
+- All store data (items, specials, slideshow images) is included
+
+Enjoy your standalone store!
+"""
+        
+        # Create ZIP file
+        zip_buffer = io.BytesIO()
+        EXCLUSION_PATTERNS = ["__pycache__", ".DS_Store", "*.pyc", "*.tmp", ".git", ".idea", ".vscode"]
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            # Include experiment directory
+            if experiment_path.is_dir():
+                import os
+                import fnmatch
+                for folder_name, _, file_names in os.walk(experiment_path):
+                    if Path(folder_name).name in EXCLUSION_PATTERNS:
+                        continue
+                    
+                    for file_name in file_names:
+                        if any(fnmatch.fnmatch(file_name, p) for p in EXCLUSION_PATTERNS):
+                            continue
+                        
+                        file_path = Path(folder_name) / file_name
+                        try:
+                            arcname = f"experiments/{slug_id}/{file_path.relative_to(experiment_path)}"
+                            zf.write(file_path, arcname)
+                        except Exception as e:
+                            logger.warning(f"Failed to include {file_path}: {e}")
+            
+            # Include platform files
+            for platform_file in ["async_mongo_wrapper.py", "mongo_connection_pool.py", "experiment_db.py"]:
+                platform_path = source_dir / platform_file
+                if platform_path.is_file():
+                    zf.write(platform_path, platform_file)
+            
+            # Include experiments/__init__.py
+            experiments_init = source_dir / "experiments" / "__init__.py"
+            if experiments_init.is_file():
+                zf.write(experiments_init, "experiments/__init__.py")
+            
+            # Add generated files
+            zf.writestr("Dockerfile", dockerfile_content)
+            zf.writestr("docker-compose.yml", docker_compose_content)
+            zf.writestr("db_config.json", json.dumps(db_data, indent=2))
+            zf.writestr("db_collections.json", json.dumps(collections_data, indent=2))
+            zf.writestr("main.py", standalone_main_source)
+            zf.writestr("requirements.txt", requirements_content)
+            zf.writestr("README.md", readme_content)
+        
+        zip_buffer.seek(0)
+        
+        # Create filename
+        safe_name = "".join(c for c in store_name if c.isalnum() or c in (' ', '-', '_')).rstrip().replace(' ', '_')
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{safe_name}_{store_slug}_{timestamp}.json"
-        
-        # Convert to JSON string with pretty formatting
-        json_str = json.dumps(export_data, indent=2, ensure_ascii=False)
+        filename = f"{safe_name}_{store_slug_clean}_{timestamp}.zip"
         
         return Response(
-            content=json_str,
-            media_type="application/json",
+            content=zip_buffer.getvalue(),
+            media_type="application/zip",
             headers={
                 "Content-Disposition": f'attachment; filename="{filename}"'
             }
         )
     except Exception as e:
-        logger.error(f"Actor call failed for export_store_data: {e}", exc_info=True)
+        logger.error(f"Failed to create standalone export: {e}", exc_info=True)
         return JSONResponse({"success": False, "error": f"Failed to export store: {e}"}, status_code=500)
 
