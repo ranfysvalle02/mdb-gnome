@@ -1,0 +1,61 @@
+{
+  "slug": "pwd_zero",
+  "name": "Password Manager",
+  "description": "A secure password manager with encryption, master password protection, and password generation",
+  "status": "active",
+  "auth_required": false,
+  "sub_auth": {
+    "enabled": true,
+    "strategy": "experiment_users",
+    "collection_name": "users",
+    "session_cookie_name": "pwd_zero_session",
+    "session_ttl_seconds": 86400,
+    "allow_registration": true,
+    "link_platform_users": false,
+    "user_id_field": "experiment_user_id",
+    "auto_link_platform_demo": false,
+    "demo_user_seed_strategy": "auto",
+    "allow_demo_access": true,
+    "demo_users": [
+      {
+        "username": "demouser",
+        "email": "demouser@pwdmanager.com",
+        "password": "DemoMasterPassword123!",
+        "role": "demo",
+        "extra_data": {
+          "is_demo": true
+        }
+      }
+    ]
+  },
+  "data_scope": ["self"],
+  "managed_indexes": {
+    "users": [
+      {
+        "name": "users_username_index",
+        "type": "regular",
+        "keys": { "username": 1 },
+        "options": { "unique": true }
+      }
+    ],
+    "passwords": [
+      {
+        "name": "passwords_user_id_website_index",
+        "type": "regular",
+        "keys": [
+          ["user_id", 1],
+          ["website", 1]
+        ]
+      },
+      {
+        "name": "passwords_user_id_created_at_index",
+        "type": "regular",
+        "keys": [
+          ["user_id", 1],
+          ["created_at", -1]
+        ]
+      }
+    ]
+  }
+}
+

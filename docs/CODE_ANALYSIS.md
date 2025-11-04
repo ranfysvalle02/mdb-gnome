@@ -88,7 +88,9 @@ The main FastAPI application that:
 - `/admin/*` - Admin panel for experiment management
 - `/experiments/{slug}/*` - Dynamically loaded experiment routes
 
-### 2. Lifespan Management (`lifespan.py`)
+**Note**: All modules are at root level (e.g., `config.py`, `lifespan.py`, `core_deps.py`, etc.)
+
+### 2. Lifespan Management (`lifespan.py` - at root level)
 
 Manages application startup and shutdown lifecycle:
 
@@ -107,7 +109,7 @@ Manages application startup and shutdown lifecycle:
 2. Close MongoDB connection
 3. Shutdown Ray cluster connection
 
-### 3. Experiment Loader (`experiment_routes.py`)
+### 3. Experiment Loader (`experiment_routes.py` - at root level)
 
 Dynamic module loading system that:
 
@@ -132,7 +134,7 @@ For each active experiment:
   └── Create/update indexes from manifest.json
 ```
 
-### 4. Database Wrapper (`async_mongo_wrapper.py`)
+### 4. Database Wrapper (`async_mongo_wrapper.py` - at root level)
 
 Provides automatic data sandboxing through two wrapper classes:
 
@@ -165,7 +167,7 @@ async def index(db: ScopedMongoWrapper = Depends(get_scoped_db)):
 1. **Physical Layer**: Collection names prefixed with slug (`{slug}_{collection}`)
 2. **Logical Layer**: Documents tagged with `experiment_id` field for cross-experiment access
 
-### 5. Core Dependencies (`core_deps.py`)
+### 5. Core Dependencies (`core_deps.py` - at root level)
 
 FastAPI dependency injection helpers:
 
@@ -187,7 +189,7 @@ FastAPI dependency injection helpers:
 #### Template Dependencies
 - `_ensure_templates()` - Validates global Jinja2 templates are loaded
 
-### 6. Middleware (`middleware.py`)
+### 6. Middleware (`middleware.py` - at root level)
 
 #### `ExperimentScopeMiddleware`
 - Intercepts requests to `/experiments/{slug}/...`
@@ -208,7 +210,7 @@ FastAPI dependency injection helpers:
 - Prevents mixed content issues
 - Only enforces when request actually came via HTTPS
 
-### 7. Authorization Provider (`authz_provider.py`)
+### 7. Authorization Provider (`authz_provider.py` - at root level)
 
 Pluggable authorization system using Python Protocol:
 
@@ -223,10 +225,12 @@ class AuthorizationProvider(Protocol):
 - Implements 5-minute TTL cache for authorization results
 - Provides helper methods: `add_policy()`, `add_role_for_user()`, etc.
 
-**Authorization Factory (`authz_factory.py`)**
+**Authorization Factory (`authz_factory.py` - at root level)**
 - Creates appropriate provider based on `AUTHZ_PROVIDER` environment variable
 - Default: `casbin` (uses Casbin with MongoDB adapter)
 - Stores policies in MongoDB collection
+
+**Note**: All modules (`authz_provider.py`, `authz_factory.py`, `sub_auth.py`, `role_management.py`) are at root level. The `auth/` directory contains only `casbin_model.conf` configuration file.
 
 ---
 

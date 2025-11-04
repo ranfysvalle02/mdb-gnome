@@ -93,11 +93,6 @@
             }
           ]
         }
-      },
-      {
-        "name": "id_regular_index",
-        "type": "regular",
-        "keys": { "_id": 1 }
       }
     ]
   }

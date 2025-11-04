@@ -1,0 +1,83 @@
+{
+  "slug": "event_zero",
+  "name": "Tix & Lodging Platform",
+  "description": "A ticket and lodging platform with MongoDB integration for managing events, hotels, bookings, and tickets",
+  "status": "active",
+  "auth_required": false,
+  "sub_auth": {
+    "enabled": true,
+    "strategy": "experiment_users",
+    "collection_name": "users",
+    "session_cookie_name": "event_zero_session",
+    "session_ttl_seconds": 86400,
+    "allow_registration": false,
+    "auto_link_platform_demo": false,
+    "demo_user_seed_strategy": "auto",
+    "allow_demo_access": false,
+    "demo_users": [
+      {
+        "email": "admin@example.com",
+        "password": "password123",
+        "role": "admin",
+        "auto_create": true,
+        "link_to_platform": false,
+        "extra_data": {
+          "_id": "usr_admin"
+        }
+      },
+      {
+        "email": "alice@example.com",
+        "password": "password123",
+        "role": "buyer",
+        "auto_create": true,
+        "link_to_platform": false,
+        "extra_data": {
+          "_id": "usr_buyer"
+        }
+      }
+    ]
+  },
+  "data_scope": ["self"],
+  "managed_indexes": {
+    "users": [
+      {
+        "name": "users_email_index",
+        "type": "regular",
+        "keys": { "email": 1 },
+        "options": { "unique": true }
+      }
+    ],
+    "events": [
+      {
+        "name": "events_published_index",
+        "type": "regular",
+        "keys": { "is_published": 1 }
+      }
+    ],
+    "bookings": [
+      {
+        "name": "bookings_user_id_index",
+        "type": "regular",
+        "keys": { "user_id": 1 }
+      },
+      {
+        "name": "bookings_event_id_index",
+        "type": "regular",
+        "keys": { "event_id": 1 }
+      }
+    ],
+    "tickets": [
+      {
+        "name": "tickets_booking_id_index",
+        "type": "regular",
+        "keys": { "booking_id": 1 }
+      },
+      {
+        "name": "tickets_event_id_index",
+        "type": "regular",
+        "keys": { "event_id": 1 }
+      }
+    ]
+  }
+}
+

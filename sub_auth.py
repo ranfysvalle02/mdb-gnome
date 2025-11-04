@@ -109,25 +109,31 @@ async def get_experiment_sub_user(
         # Get collection name
         collection_name = sub_auth.get("collection_name", "users")
         
-        # Convert user_id to ObjectId if needed
-        try:
-            from bson.objectid import ObjectId
-            if not isinstance(user_id, ObjectId):
+        # Convert user_id to ObjectId only if it's a valid ObjectId string
+        # Some experiments use string IDs (like event_zero with usr_buyer) which aren't ObjectIds
+        from bson.objectid import ObjectId
+        if isinstance(user_id, str):
+            # Check if it's a valid ObjectId string (24 hex characters)
+            if len(user_id) == 24 and all(c in '0123456789abcdefABCDEF' for c in user_id):
+                try:
+                    user_id = ObjectId(user_id)
+                except Exception:
+                    # If conversion fails, keep as string
+                    pass
+            # If it's not a valid ObjectId format, keep as string
+        elif not isinstance(user_id, ObjectId):
+            # If it's not a string or ObjectId, try to convert (for backward compatibility)
+            try:
                 user_id = ObjectId(user_id)
-        except Exception as e:
-            logger.warning(f"Invalid user_id format: {user_id}: {e}")
-            return None
+            except Exception as e:
+                logger.warning(f"Invalid user_id format: {user_id}: {e}")
+                return None
         
         # Fetch user from experiment-specific users collection
-        # ExperimentDB provides cleaner MongoDB-style API via attribute access or collection() method
-        # For backward compatibility, also support ScopedMongoWrapper via getattr
-        if hasattr(db, 'collection'):
-            # ExperimentDB: use collection() method for cleaner API
-            user = await db.collection(collection_name).find_one({"_id": user_id})
-        else:
-            # ScopedMongoWrapper: use getattr for attribute access
-            collection = getattr(db, collection_name)
-            user = await collection.find_one({"_id": user_id})
+        # Use getattr for attribute access (works with both ExperimentDB and ScopedMongoWrapper)
+        # ExperimentDB and ScopedMongoWrapper both support attribute access via getattr
+        collection = getattr(db, collection_name)
+        user = await collection.find_one({"_id": user_id})
         if not user:
             logger.warning(f"Experiment user {user_id} not found in collection {collection_name}")
             return None
@@ -436,15 +442,9 @@ async def create_experiment_user(
                 logger.warning(f"Invalid store_id format: {store_id}: {e}")
                 return None
         
-        # ExperimentDB provides cleaner MongoDB-style API via attribute access or collection() method
-        # For backward compatibility, also support ScopedMongoWrapper via getattr
-        if hasattr(db, 'collection'):
-            # ExperimentDB: use collection() method for cleaner API
-            existing = await db.collection(collection_name).find_one(query)
-        else:
-            # ScopedMongoWrapper: use getattr for attribute access
-            collection = getattr(db, collection_name)
-            existing = await collection.find_one(query)
+        # Use getattr for attribute access (works with both ExperimentDB and ScopedMongoWrapper)
+        collection = getattr(db, collection_name)
+        existing = await collection.find_one(query)
         if existing:
             return None
         
@@ -470,15 +470,9 @@ async def create_experiment_user(
             user_doc["store_id"] = ObjectId(store_id)
         
         # Insert user
-        # ExperimentDB provides cleaner MongoDB-style API via attribute access or collection() method
-        # For backward compatibility, also support ScopedMongoWrapper via getattr
-        if hasattr(db, 'collection'):
-            # ExperimentDB: use collection() method for cleaner API
-            result = await db.collection(collection_name).insert_one(user_doc)
-        else:
-            # ScopedMongoWrapper: use getattr for attribute access
-            collection = getattr(db, collection_name)
-            result = await collection.insert_one(user_doc)
+        # Use getattr for attribute access (works with both ExperimentDB and ScopedMongoWrapper)
+        collection = getattr(db, collection_name)
+        result = await collection.insert_one(user_doc)
         user_doc["_id"] = result.inserted_id
         user_doc["experiment_user_id"] = str(result.inserted_id)
         
@@ -786,18 +780,39 @@ async def ensure_demo_users_exist(
                 except Exception as e:
                     logger.warning(f"Could not link platform demo for {email}: {e}")
             
-            # Add extra data
+            # Handle custom _id from extra_data if provided
+            custom_id = extra_data.pop("_id", None)
+            
+            # Add extra data (excluding _id which we handle separately)
             user_doc.update(extra_data)
             
             # Insert user
             try:
                 # Use getattr to access collection (works with ScopedMongoWrapper and ExperimentDB)
                 collection = getattr(db, collection_name)
-                result = await collection.insert_one(user_doc)
-                user_doc["_id"] = result.inserted_id
-                user_doc["experiment_user_id"] = str(result.inserted_id)
+                
+                # If custom _id is provided, use it (MongoDB allows setting _id during insert)
+                if custom_id:
+                    user_doc["_id"] = custom_id
+                    # Use insert_one with custom _id, or use replace_one with upsert if it might exist
+                    try:
+                        result = await collection.insert_one(user_doc)
+                    except Exception as e:
+                        # If user already exists with this _id, just fetch it
+                        if "duplicate" in str(e).lower() or "E11000" in str(e):
+                            existing = await collection.find_one({"_id": custom_id})
+                            if existing:
+                                created_users.append(existing)
+                                logger.info(f"Demo user {email} already exists with _id={custom_id} for {slug_id}")
+                                continue
+                        raise
+                else:
+                    result = await collection.insert_one(user_doc)
+                
+                user_doc["_id"] = result.inserted_id if not custom_id else custom_id
+                user_doc["experiment_user_id"] = str(user_doc["_id"])
                 created_users.append(user_doc)
-                logger.info(f"Created demo user {email} for {slug_id}")
+                logger.info(f"Created demo user {email} for {slug_id} with _id={user_doc['_id']}")
             except Exception as e:
                 logger.error(f"Error creating demo user {email} for {slug_id}: {e}", exc_info=True)
                 

@@ -6,6 +6,8 @@ motor>=3.0.0
 pymongo==4.15.3
 PyJWT[crypto]
 bcrypt
+werkzeug
+cryptography
 jinja2
 httpx
 pillow
@@ -19,3 +21,4 @@ matplotlib
 aiofiles
 slowapi>=0.1.9
 jsonschema>=4.0.0
+qrcode[pil]>=7.4.2

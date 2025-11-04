@@ -28,7 +28,8 @@ This document describes the reorganization of the mdb-gnome project structure.
 - `docs/` - All documentation
 - `assets/images/` - Image assets
 - `scripts/` - Utility scripts
-- `core/`, `auth/`, `middleware/`, `utils/`, `config/`, `database/` - Created for future organization (currently empty)
+- `core/`, `middleware/`, `utils/`, `config/`, `database/` - Created for future organization (currently empty)
+- `auth/` - Contains only `casbin_model.conf` (configuration file)
 
 ## Current Structure
 
@@ -42,7 +43,16 @@ mdb-gnome/
 ├── anyscale-service.yaml      # Deployment config
 │
 ├── main.py                    # Main application
-├── *.py                       # Python modules (at root for now)
+├── *.py                       # Python modules (all at root level)
+│   ├── config.py              # Configuration
+│   ├── database.py            # Database initialization
+│   ├── core_deps.py           # Core dependencies
+│   ├── lifespan.py            # Lifespan management
+│   ├── experiment_routes.py   # Experiment routes
+│   ├── middleware.py          # Middleware
+│   ├── authz_provider.py      # Auth provider
+│   ├── utils.py               # Utilities
+│   └── ...                    # Other modules
 │
 ├── docs/                      # ✨ NEW: All documentation
 │   ├── SECURITY.md
@@ -64,25 +74,33 @@ mdb-gnome/
 └── temp_exports/              # Temporary files (unchanged)
 ```
 
-## Why Python Modules Stay at Root (For Now)
+## Why Python Modules Stay at Root
 
-**Current State**: Python modules remain at root level for backwards compatibility.
+**Current State**: All Python modules remain at root level for backwards compatibility.
+
+**Actual Structure**:
+- All core modules (`config.py`, `database.py`, `lifespan.py`, `core_deps.py`, etc.) are at root
+- All auth modules (`authz_provider.py`, `authz_factory.py`, `sub_auth.py`, etc.) are at root
+- All middleware (`middleware.py`, `request_id_middleware.py`, `rate_limit.py`) are at root
+- All utilities (`utils.py`, `export_helpers.py`, `b2_utils.py`, etc.) are at root
+- All database modules (`async_mongo_wrapper.py`, `mongo_connection_pool.py`) are at root
 
 **Reason**: Many imports throughout the codebase reference modules directly:
 ```python
 from config import BASE_DIR
 from core_deps import get_current_user
 from database import seed_admin
+from sub_auth import get_experiment_sub_user
 ```
 
-**Future Organization**: Python modules can be organized into:
-- `core/` - Core application modules
-- `auth/` - Authentication & authorization
-- `middleware/` - Middleware modules
-- `utils/` - Utility modules
-- `database/` - Database modules
+**Future Organization** (Optional): Python modules could be organized into:
+- `core/` - Core application modules (currently empty)
+- `auth/` - Authentication & authorization (currently contains only `casbin_model.conf`)
+- `middleware/` - Middleware modules (currently empty)
+- `utils/` - Utility modules (currently empty)
+- `database/` - Database modules (currently empty)
 
-**Migration Path**: See `docs/PROJECT_STRUCTURE.md` for detailed migration plan.
+**Migration Path**: See `docs/PROJECT_STRUCTURE.md` for detailed migration plan. This would be a breaking change requiring comprehensive testing.
 
 ## Image Path Updates
 

@@ -62,7 +62,14 @@ These files remain at root as they are standard or frequently referenced:
 ## Python Modules Organization
 
 ### Current State
-**All Python modules remain at root** to maintain backwards compatibility with existing imports throughout the codebase.
+**All Python modules remain at root level** to maintain backwards compatibility with existing imports throughout the codebase.
+
+**Actual Structure**:
+- All core modules (`config.py`, `database.py`, `lifespan.py`, `core_deps.py`, `experiment_routes.py`, `experiment_db.py`, `manifest_schema.py`) are at root level
+- All auth modules (`authz_provider.py`, `authz_factory.py`, `sub_auth.py`, `role_management.py`, `experiment_auth_restrictions.py`) are at root level
+- All middleware (`middleware.py`, `request_id_middleware.py`, `rate_limit.py`) are at root level
+- All utilities (`utils.py`, `export_helpers.py`, `b2_utils.py`, `index_management.py`, `background_tasks.py`, `ray_decorator.py`) are at root level
+- All database modules (`async_mongo_wrapper.py`, `mongo_connection_pool.py`) are at root level
 
 **Reason**: Many imports reference modules directly:
 ```python
@@ -74,11 +81,12 @@ from sub_auth import get_experiment_sub_user
 
 ### Future Organization (Prepared)
 Empty directories have been created for future organization:
-- `core/` - Core application modules
-- `auth/` - Authentication & authorization modules
-- `middleware/` - Middleware modules
-- `utils/` - Utility modules
-- `config/` - Configuration files (future)
+- `core/` - Empty (reserved for future)
+- `auth/` - Contains only `casbin_model.conf` (configuration file)
+- `middleware/` - Empty (reserved for future)
+- `utils/` - Empty (reserved for future)
+- `config/` - Empty (reserved for future)
+- `database/` - Empty (reserved for future)
 
 **Note**: Moving Python modules to these directories would require updating all imports throughout the codebase and experiments. This is a breaking change that should be done carefully with comprehensive testing.
 

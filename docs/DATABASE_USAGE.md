@@ -12,18 +12,18 @@ The ecosystem provides a **magical database abstraction** (`ExperimentDB`) that 
 
 ## Key Components
 
-### 1. `ExperimentDB` Class (`experiment_db.py`)
+### 1. `ExperimentDB` Class (`experiment_db.py` - at root level)
    - High-level MongoDB-style database interface
    - Wraps `ScopedMongoWrapper` with a familiar Motor/pymongo API
    - Use this for **all database operations** in routes and actors
 
-### 2. `create_actor_database()` Factory (`experiment_db.py`)
+### 2. `create_actor_database()` Factory (`experiment_db.py` - at root level)
    - Factory function for Ray actors
    - Handles connection pooling and scoping automatically
    - Returns an `ExperimentDB` instance
    - **Always use this in Ray actors** for database initialization
 
-### 3. `get_experiment_db()` Dependency (`core_deps.py`)
+### 3. `get_experiment_db()` Dependency (`core_deps.py` - at root level)
    - FastAPI dependency for routes
    - Returns an `ExperimentDB` instance
    - Use this when **routes need direct database access**
