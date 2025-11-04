@@ -13,6 +13,9 @@ httpx
 pillow
 casbin>=1.43.0
 casbin-motor-adapter>=0.4.0
+# Optional: OSO authorization provider dependencies
+# For OSO Cloud (recommended for production): pip install oso-cloud
+# For OSO library (local development): pip install oso
 gunicorn
 ray[default]==2.50.0
 b2sdk
