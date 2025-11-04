@@ -56,11 +56,23 @@
                 <h2 class="text-3xl font-bold text-white mb-6">Existing Stores</h2>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {% for store in existing_stores %}
-                    <a href="/experiments/store_factory/{{ store.slug_id }}" 
-                       class="bg-gray-700 border border-gray-600 rounded-xl p-6 block hover:border-indigo-400">
-                        <h3 class="text-2xl font-bold text-white">{{ store.name }}</h3>
-                        <p class="text-gray-300 mt-2">{{ store.tagline or 'No tagline set' }}</p>
-                    </a>
+                    <div class="bg-gray-700 border border-gray-600 rounded-xl p-6">
+                        <a href="/experiments/store_factory/{{ store.slug_id }}" 
+                           class="block hover:border-indigo-400 mb-4">
+                            <h3 class="text-2xl font-bold text-white">{{ store.name }}</h3>
+                            <p class="text-gray-300 mt-2">{{ store.tagline or 'No tagline set' }}</p>
+                        </a>
+                        <div class="flex gap-3">
+                            <a href="/experiments/store_factory/{{ store.slug_id }}" 
+                               class="flex-1 text-center bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition">
+                                <i class="fas fa-eye mr-2"></i>View
+                            </a>
+                            <a href="/experiments/store_factory/{{ store.slug_id }}/download" 
+                               class="flex-1 text-center bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition">
+                                <i class="fas fa-download mr-2"></i>Download
+                            </a>
+                        </div>
+                    </div>
                     {% endfor %}
                 </div>
             </div>

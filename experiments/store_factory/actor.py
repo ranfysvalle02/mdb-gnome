@@ -1342,3 +1342,51 @@ class ExperimentActor:
         
         logger.info(f"[{self.write_scope}-Actor] Post-initialization setup complete.")
 
+    async def export_store_data(self, store_slug: str) -> Dict[str, Any]:
+        """
+        Export all data for a store as a JSON-compatible dictionary.
+        Includes store info, items, specials, and slideshow images.
+        Excludes sensitive data like user passwords.
+        """
+        self._check_ready()
+        
+        store = await self.db.stores.find_one({"slug_id": store_slug})
+        if not store:
+            return {"success": False, "error": "Store not found."}
+        
+        store_id = store['_id']
+        
+        # Get all related data
+        items = await self.db.items.find({"store_id": store_id}).sort("date_added", 1).to_list(length=None)
+        specials = await self.db.specials.find({"store_id": store_id}).sort("date_created", 1).to_list(length=None)
+        slideshow_images = await self.db.slideshow.find({"store_id": store_id}).sort("order", 1).to_list(length=None)
+        
+        # Convert ObjectIds to strings for JSON serialization
+        def convert_objectid(obj):
+            if isinstance(obj, ObjectId):
+                return str(obj)
+            elif isinstance(obj, dict):
+                return {k: convert_objectid(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_objectid(item) for item in obj]
+            elif isinstance(obj, datetime.datetime):
+                return obj.isoformat()
+            return obj
+        
+        # Prepare export data
+        export_data = {
+            "store": convert_objectid(store),
+            "items": convert_objectid(items),
+            "specials": convert_objectid(specials),
+            "slideshow_images": convert_objectid(slideshow_images),
+            "export_metadata": {
+                "exported_at": datetime.datetime.utcnow().isoformat(),
+                "store_slug": store_slug,
+                "store_name": store.get('name', ''),
+                "business_type": store.get('business_type', ''),
+                "version": "1.0"
+            }
+        }
+        
+        return {"success": True, "data": export_data}
+

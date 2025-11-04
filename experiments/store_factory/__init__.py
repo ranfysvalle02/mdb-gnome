@@ -6,9 +6,11 @@ FastAPI routes that delegate to the Ray Actor.
 import logging
 import ray
 from fastapi import APIRouter, Request, HTTPException, Depends, Form, Query
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from starlette import status
 from typing import Optional, Dict, Any
+import json
+import datetime
 
 from .actor import ExperimentActor
 
@@ -810,4 +812,41 @@ async def update_slideshow_image(
     except Exception as e:
         logger.error(f"Actor call failed for update_slideshow_image: {e}", exc_info=True)
         return JSONResponse({"success": False, "error": f"Actor failed to update slideshow image: {e}"}, status_code=500)
+
+
+# --- Store Export/Download Routes ---
+
+@bp.get("/{store_slug}/download")
+async def download_store(
+    request: Request,
+    store_slug: str,
+    actor: "ray.actor.ActorHandle" = Depends(get_actor_handle)
+):
+    """Download store data as JSON file."""
+    try:
+        result = await actor.export_store_data.remote(store_slug)
+        if not result.get("success"):
+            return JSONResponse(result, status_code=404)
+        
+        export_data = result.get("data", {})
+        store_name = export_data.get("export_metadata", {}).get("store_name", store_slug)
+        
+        # Create a safe filename
+        safe_name = "".join(c for c in store_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{safe_name}_{store_slug}_{timestamp}.json"
+        
+        # Convert to JSON string with pretty formatting
+        json_str = json.dumps(export_data, indent=2, ensure_ascii=False)
+        
+        return Response(
+            content=json_str,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            }
+        )
+    except Exception as e:
+        logger.error(f"Actor call failed for export_store_data: {e}", exc_info=True)
+        return JSONResponse({"success": False, "error": f"Failed to export store: {e}"}, status_code=500)
 
