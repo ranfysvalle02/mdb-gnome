@@ -845,28 +845,280 @@ async def download_store(
         experiment_path = BASE_DIR / "experiments" / slug_id
         source_dir = BASE_DIR
         
-        # Get templates for generating standalone main.py
-        templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+        # Create a minimal standalone main.py for just this store
+        # This will be a simplified FastAPI app that only serves this one store
+        store_data = export_data.get("store", {})
+        business_type = export_data.get("export_metadata", {}).get("business_type", "generic-store")
         
-        # Generate standalone main.py
-        standalone_main_source = make_intelligent_standalone_main_py(slug_id, templates)
+        # Read the store_factory actor to get business types
+        actor_file = experiment_path / "actor.py"
+        business_types_code = ""
+        if actor_file.is_file():
+            with open(actor_file, "r") as f:
+                content = f.read()
+                # Extract BUSINESS_TYPES dict
+                start_idx = content.find("BUSINESS_TYPES = {")
+                if start_idx != -1:
+                    bracket_count = 0
+                    end_idx = start_idx
+                    for i, char in enumerate(content[start_idx:], start_idx):
+                        if char == "{":
+                            bracket_count += 1
+                        elif char == "}":
+                            bracket_count -= 1
+                            if bracket_count == 0:
+                                end_idx = i + 1
+                                break
+                    business_types_code = content[start_idx:end_idx]
         
-        # Prepare db_config.json (experiment config)
+        # Generate minimal standalone main.py for this store only
+        standalone_main_source = f"""#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+\"\"\"
+Standalone Store: {store_name}
+This is a minimal standalone FastAPI application for just this store.
+\"\"\"
+
+import os
+import sys
+import json
+import logging
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+from contextlib import asynccontextmanager
+from datetime import datetime
+
+from fastapi import FastAPI, Request, HTTPException, status
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from bson.objectid import ObjectId
+from bson.errors import InvalidId
+
+# Logging
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s | %(levelname)-8s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("standalone")
+
+# Paths
+BASE_DIR = Path(__file__).resolve().parent
+TEMPLATES_DIR = BASE_DIR / "templates"
+STATIC_DIR = BASE_DIR / "static"
+
+# Environment
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017/")
+DB_NAME = os.getenv("DB_NAME", "labs_db")
+PORT = int(os.getenv("PORT", "8000"))
+
+# Load data
+def _load_json(path: Path, default: Any) -> Any:
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+DB_CONFIG = _load_json(BASE_DIR / "db_config.json", {{}})
+DB_COLLECTIONS = _load_json(BASE_DIR / "db_collections.json", {{}})
+
+# Store data (pre-loaded from export)
+STORE_SLUG = "{store_slug_clean}"
+STORE_DATA = None
+if DB_COLLECTIONS:
+    # Get store from collections
+    stores_key = f"{{DB_CONFIG.get('slug', 'store_factory')}}_stores"
+    if stores_key in DB_COLLECTIONS and DB_COLLECTIONS[stores_key]:
+        STORE_DATA = DB_COLLECTIONS[stores_key][0]
+
+# Business types (minimal - just what we need)
+{business_types_code if business_types_code else "BUSINESS_TYPES = {}"}
+BUSINESS_CONFIG = BUSINESS_TYPES.get("{business_type}", BUSINESS_TYPES.get('generic-store', {{}}))
+
+# MongoDB
+mongo_client: Optional[AsyncIOMotorClient] = None
+mongo_db: Optional[AsyncIOMotorDatabase] = None
+
+async def connect_mongodb():
+    global mongo_client, mongo_db
+    try:
+        mongo_client = AsyncIOMotorClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        await mongo_client.admin.command("ping")
+        mongo_db = mongo_client[DB_NAME]
+        logger.info(f"MongoDB connected: {{DB_NAME}}")
+        
+        # Seed database
+        await seed_database()
+    except Exception as e:
+        logger.error(f"MongoDB connection failed: {{e}}")
+        raise
+
+async def seed_database():
+    if not mongo_db:
+        return
+    
+    for collection_name, docs in DB_COLLECTIONS.items():
+        try:
+            collection = mongo_db[collection_name]
+            existing = await collection.count_documents({{}})
+            if existing == 0 and docs:
+                logger.info(f"Seeding {{collection_name}} with {{len(docs)}} documents")
+                for doc in docs:
+                    if "_id" in doc and isinstance(doc["_id"], str):
+                        try:
+                            doc["_id"] = ObjectId(doc["_id"])
+                        except:
+                            pass
+                await collection.insert_many(docs)
+        except Exception as e:
+            logger.error(f"Error seeding {{collection_name}}: {{e}}")
+
+async def close_mongodb():
+    global mongo_client
+    if mongo_client:
+        mongo_client.close()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await connect_mongodb()
+    yield
+    await close_mongodb()
+
+app = FastAPI(
+    title=f"{{STORE_DATA.get('name', 'Store') if STORE_DATA else 'Store'}}",
+    description="Standalone store application",
+    lifespan=lifespan
+)
+
+# Templates
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR)) if TEMPLATES_DIR.is_dir() else None
+
+# Static files
+if STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# Helper to get store data
+async def get_store():
+    if not mongo_db or not STORE_DATA:
+        return None
+    
+    stores_key = f"{{DB_CONFIG.get('slug', 'store_factory')}}_stores"
+    collection = mongo_db[stores_key]
+    store = await collection.find_one({{"slug_id": STORE_SLUG}})
+    
+    if store and not store.get('logo_url'):
+        store['logo_url'] = "/static/img/logo.png"
+    
+    return store
+
+# Helper to get items
+async def get_items(store_id):
+    if not mongo_db:
+        return []
+    
+    items_key = f"{{DB_CONFIG.get('slug', 'store_factory')}}_items"
+    collection = mongo_db[items_key]
+    items = await collection.find({{"store_id": ObjectId(store_id) if isinstance(store_id, str) else store_id}}).sort("date_added", -1).to_list(length=None)
+    return items
+
+# Helper to get specials
+async def get_specials(store_id):
+    if not mongo_db:
+        return []
+    
+    specials_key = f"{{DB_CONFIG.get('slug', 'store_factory')}}_specials"
+    collection = mongo_db[specials_key]
+    specials = await collection.find({{"store_id": ObjectId(store_id) if isinstance(store_id, str) else store_id}}).sort("date_created", -1).limit(3).to_list(length=None)
+    return specials
+
+# Helper to get slideshow
+async def get_slideshow(store_id):
+    if not mongo_db:
+        return []
+    
+    slideshow_key = f"{{DB_CONFIG.get('slug', 'store_factory')}}_slideshow"
+    collection = mongo_db[slideshow_key]
+    slideshow = await collection.find({{"store_id": ObjectId(store_id) if isinstance(store_id, str) else store_id}}).sort("order", 1).to_list(length=None)
+    return slideshow
+
+# Routes
+@app.get("/", response_class=HTMLResponse)
+async def root(request: Request):
+    return RedirectResponse(url=f"/{STORE_SLUG}", status_code=302)
+
+@app.get("/{STORE_SLUG}", response_class=HTMLResponse)
+async def store_home(request: Request):
+    store = await get_store()
+    if not store:
+        return HTMLResponse("<h1>Store not found</h1>", status_code=404)
+    
+    items = await get_items(store['_id'])
+    specials = await get_specials(store['_id'])
+    slideshow = await get_slideshow(store['_id'])
+    
+    store['specials'] = specials
+    store['slideshow_images'] = slideshow
+    
+    if not templates:
+        return HTMLResponse("<h1>Templates not available</h1>", status_code=500)
+    
+    context = {{
+        "request": request,
+        "store": store,
+        "items": items[:12],
+        "business_config": BUSINESS_CONFIG,
+        "user": None,
+        "now": datetime.utcnow()
+    }}
+    
+    return templates.TemplateResponse("store_home.html", context)
+
+@app.get("/{STORE_SLUG}/item/{{item_id}}", response_class=HTMLResponse)
+async def item_details(request: Request, item_id: str):
+    store = await get_store()
+    if not store:
+        return HTMLResponse("<h1>Store not found</h1>", status_code=404)
+    
+    try:
+        item_obj_id = ObjectId(item_id)
+    except InvalidId:
+        return HTMLResponse("<h1>Invalid item ID</h1>", status_code=400)
+    
+    items = await get_items(store['_id'])
+    item = next((i for i in items if i['_id'] == item_obj_id), None)
+    
+    if not item:
+        return HTMLResponse("<h1>Item not found</h1>", status_code=404)
+    
+    if not templates:
+        return HTMLResponse("<h1>Templates not available</h1>", status_code=500)
+    
+    context = {{
+        "request": request,
+        "store": store,
+        "item": item,
+        "business_config": BUSINESS_CONFIG,
+        "user": None,
+        "now": datetime.utcnow()
+    }}
+    
+    return templates.TemplateResponse("item_details.html", context)
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=PORT, log_level="info")
+"""
+        
+        # Prepare db_config.json (minimal config for this store only)
         db_data = {
-            "slug": slug_id,
-            "name": "Store Factory",
+            "slug": slug_id,  # Keep slug for collection naming
+            "name": store_name,  # Store name, not "Store Factory"
             "description": f"Standalone store: {store_name}",
             "status": "active",
-            "auth_required": False,
-            "sub_auth": {
-                "enabled": True,
-                "strategy": "experiment_users",
-                "collection_name": "users",
-                "session_cookie_name": "store_factory_session",
-                "session_ttl_seconds": 86400,
-                "allow_registration": False
-            },
-            "data_scope": ["self"],
             "managed_indexes": {
                 "stores": [{"name": "stores_slug_id_index", "type": "regular", "keys": {"slug_id": 1}, "options": {"unique": True}}],
                 "items": [{"name": "items_item_code_store_id_index", "type": "regular", "keys": [["item_code", 1], ["store_id", 1]], "options": {"unique": True}}],
@@ -904,10 +1156,19 @@ async def download_store(
                     if line and not line.startswith("#"):
                         all_requirements.append(line)
         
-        requirements_content = "\n".join(all_requirements)
+        # Minimal requirements (no Ray needed for simple store)
+        minimal_requirements = [
+            "fastapi",
+            "uvicorn[standard]",
+            "motor>=3.0.0",
+            "pymongo==4.15.3",
+            "python-multipart",
+            "jinja2",
+        ]
+        requirements_content = "\n".join(minimal_requirements)
         
-        # Generate Dockerfile
-        def create_dockerfile(slug_id: str, experiment_path: Path) -> str:
+        # Generate Dockerfile (minimal - no Ray needed for simple store)
+        def create_dockerfile() -> str:
             dockerfile_lines = [
                 "# --- Stage 1: Build dependencies ---",
                 "FROM python:3.10-slim-bookworm as builder",
@@ -919,7 +1180,7 @@ async def download_store(
                 "# Create requirements file"
             ]
             
-            for req in all_requirements:
+            for req in minimal_requirements:
                 escaped_req = req.replace("'", "'\"'\"'")
                 dockerfile_lines.append(f"RUN echo '{escaped_req}' >> /tmp/requirements.txt")
             
@@ -939,14 +1200,9 @@ async def download_store(
                 "COPY --from=builder /opt/venv /opt/venv",
                 'ENV PATH="/opt/venv/bin:$PATH"',
                 "",
-                "# Copy core MongoDB wrapper",
-                "COPY async_mongo_wrapper.py /app/async_mongo_wrapper.py",
-                "COPY mongo_connection_pool.py /app/mongo_connection_pool.py",
-                "COPY experiment_db.py /app/experiment_db.py",
-                "",
-                "# Copy experiment code",
-                f"COPY experiments/{slug_id} /app/experiments/{slug_id}",
-                "COPY experiments/__init__.py /app/experiments/__init__.py",
+                "# Copy templates and static files",
+                "COPY templates /app/templates",
+                "COPY static /app/static",
                 "",
                 "# Copy configuration files",
                 "COPY db_config.json /app/db_config.json",
@@ -970,7 +1226,7 @@ async def download_store(
             
             return "\n".join(dockerfile_lines)
         
-        dockerfile_content = create_dockerfile(slug_id, experiment_path)
+        dockerfile_content = create_dockerfile()
         
         # Generate docker-compose.yml
         sanitized_slug = slug_id.lstrip("_").replace("_", "-")
@@ -1043,17 +1299,22 @@ This is a standalone Docker package for the store **{store_name}**.
 
 3. **Access the store**
    - Open http://localhost:8000 in your browser
-   - The store will be available at http://localhost:8000/experiments/store_factory/{store_slug_clean}
+   - The store will be available at http://localhost:8000/{store_slug_clean}
 
 ## What's Included
 
-- **main.py** - Standalone FastAPI application
+This ZIP contains ONLY the files needed for **{store_name}**:
+
+- **main.py** - Minimal FastAPI application (serves only this store)
 - **Dockerfile** - Docker container configuration
 - **docker-compose.yml** - Docker Compose setup with MongoDB
-- **db_config.json** - Store configuration
-- **db_collections.json** - Store data (items, specials, slideshow, etc.)
-- **experiments/store_factory/** - Complete store factory code
-- **requirements.txt** - Python dependencies
+- **db_config.json** - Configuration for this store only
+- **db_collections.json** - Data for this store only (items, specials, slideshow)
+- **templates/** - Only store_home.html and item_details.html templates
+- **static/** - Static files (images, CSS, JS) for this store
+- **requirements.txt** - Minimal Python dependencies (FastAPI, MongoDB, Jinja2)
+
+**This is NOT the full Store Factory platform - it's just this one store!**
 
 ## Store Information
 
@@ -1089,8 +1350,8 @@ If you prefer to run without Docker:
 
 - The store data is pre-seeded in the database
 - MongoDB Atlas Local is used for local development
-- Ray is required and included in the package
-- All store data (items, specials, slideshow images) is included
+- This is a minimal standalone package - only this store, no store factory features
+- All store data (items, specials, slideshow images) for this store is included
 
 Enjoy your standalone store!
 """
@@ -1100,35 +1361,35 @@ Enjoy your standalone store!
         EXCLUSION_PATTERNS = ["__pycache__", ".DS_Store", "*.pyc", "*.tmp", ".git", ".idea", ".vscode"]
         
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-            # Include experiment directory
-            if experiment_path.is_dir():
-                import os
-                import fnmatch
-                for folder_name, _, file_names in os.walk(experiment_path):
-                    if Path(folder_name).name in EXCLUSION_PATTERNS:
-                        continue
+            # Only include templates and static files needed for this store
+            import os
+            import fnmatch
+            
+            # Include only store_home.html and item_details.html templates
+            templates_dir = experiment_path / "templates"
+            if templates_dir.is_dir():
+                for template_file in ["store_home.html", "item_details.html"]:
+                    template_path = templates_dir / template_file
+                    if template_path.is_file():
+                        zf.write(template_path, f"templates/{template_file}")
+            
+            # Include static files (logo, JS, CSS)
+            static_dir = experiment_path / "static"
+            if static_dir.is_dir():
+                for root, dirs, files in os.walk(static_dir):
+                    # Skip excluded directories
+                    dirs[:] = [d for d in dirs if d not in EXCLUSION_PATTERNS]
                     
-                    for file_name in file_names:
+                    for file_name in files:
                         if any(fnmatch.fnmatch(file_name, p) for p in EXCLUSION_PATTERNS):
                             continue
                         
-                        file_path = Path(folder_name) / file_name
+                        file_path = Path(root) / file_name
                         try:
-                            arcname = f"experiments/{slug_id}/{file_path.relative_to(experiment_path)}"
+                            arcname = f"static/{file_path.relative_to(static_dir)}"
                             zf.write(file_path, arcname)
                         except Exception as e:
                             logger.warning(f"Failed to include {file_path}: {e}")
-            
-            # Include platform files
-            for platform_file in ["async_mongo_wrapper.py", "mongo_connection_pool.py", "experiment_db.py"]:
-                platform_path = source_dir / platform_file
-                if platform_path.is_file():
-                    zf.write(platform_path, platform_file)
-            
-            # Include experiments/__init__.py
-            experiments_init = source_dir / "experiments" / "__init__.py"
-            if experiments_init.is_file():
-                zf.write(experiments_init, "experiments/__init__.py")
             
             # Add generated files
             zf.writestr("Dockerfile", dockerfile_content)
