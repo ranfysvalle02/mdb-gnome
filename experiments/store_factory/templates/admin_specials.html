@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Manage Specials - {{ store.name }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+</head>
+<body class="bg-gray-900 text-white min-h-screen">
+    <div class="container mx-auto px-6 py-10">
+        <div class="flex justify-between items-center mb-8">
+            <h1 class="text-4xl font-bold">Manage Specials</h1>
+            <div class="flex items-center space-x-4">
+                <a href="/{{ store.slug_id }}/admin/dashboard" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white font-bold rounded-lg">
+                    <i class="fas fa-arrow-left mr-2"></i>
+                    Back to Dashboard
+                </a>
+                <a href="/{{ store.slug_id }}" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg">
+                    <i class="fas fa-store mr-2"></i>
+                    View Store
+                </a>
+            </div>
+        </div>
+        
+        <div class="bg-gray-800 border border-gray-700 rounded-lg p-8 mb-6">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-bold">All Specials</h2>
+                <span class="text-gray-400">{{ specials|length }} special{{ 's' if specials|length != 1 else '' }}</span>
+            </div>
+            
+            {% if specials %}
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {% for special in specials %}
+                <div class="bg-gray-700 border border-gray-600 rounded-lg p-6">
+                    {% if special.image_url %}
+                    <img src="{{ special.image_url }}" alt="{{ special.title }}" class="w-full h-48 object-cover rounded mb-4">
+                    {% endif %}
+                    <h3 class="text-xl font-bold mb-2">{{ special.title }}</h3>
+                    {% if special.description %}
+                    <p class="text-gray-300 mb-4">{{ special.description }}</p>
+                    {% endif %}
+                    {% if special.discount_percent %}
+                    <p class="text-green-400 font-semibold mb-2">{{ special.discount_percent }}% Off</p>
+                    {% endif %}
+                    {% if special.valid_until %}
+                    <p class="text-gray-400 text-sm">
+                        Valid until: {{ special.valid_until.strftime('%Y-%m-%d') if special.valid_until.__class__.__name__ == 'datetime' else special.valid_until[:10] }}
+                    </p>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="text-center py-12">
+                <i class="fas fa-star text-6xl text-gray-600 mb-4"></i>
+                <p class="text-xl text-gray-400 mb-2">No specials yet</p>
+                <p class="text-gray-500">Start adding specials to promote your store!</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>
+

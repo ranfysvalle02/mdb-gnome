@@ -151,6 +151,131 @@
             position: relative;
             z-index: 1;
         }
+        
+        /* Mobile Navigation Styles */
+        #mobile-menu {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100vh;
+            background-color: rgba(17, 24, 39, 0.98);
+            backdrop-filter: blur(10px);
+            z-index: 1000;
+            padding-top: 80px;
+            overflow-y: auto;
+        }
+        
+        #mobile-menu.active {
+            display: block;
+        }
+        
+        #mobile-menu-toggle {
+            display: none;
+            flex-direction: column;
+            cursor: pointer;
+            padding: 0.5rem;
+            z-index: 1001;
+        }
+        
+        #mobile-menu-toggle span {
+            width: 25px;
+            height: 3px;
+            background-color: #e2e8f0;
+            margin: 3px 0;
+            transition: 0.3s;
+            border-radius: 2px;
+        }
+        
+        #mobile-menu-toggle.active span:nth-child(1) {
+            transform: rotate(-45deg) translate(-5px, 6px);
+        }
+        
+        #mobile-menu-toggle.active span:nth-child(2) {
+            opacity: 0;
+        }
+        
+        #mobile-menu-toggle.active span:nth-child(3) {
+            transform: rotate(45deg) translate(-5px, -6px);
+        }
+        
+        #mobile-menu a,
+        #mobile-menu button {
+            display: block;
+            width: 100%;
+            padding: 1rem 1.5rem;
+            color: #e2e8f0;
+            text-decoration: none;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            transition: background-color 0.3s ease;
+            background: none;
+            border: none;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: left;
+            font-size: 1rem;
+            cursor: pointer;
+        }
+        
+        #mobile-menu a:hover,
+        #mobile-menu button:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+        
+        /* Responsive breakpoints */
+        @media (max-width: 768px) {
+            #mobile-menu-toggle {
+                display: flex !important;
+            }
+            
+            .desktop-nav {
+                display: none !important;
+            }
+            
+            #mobile-menu.active {
+                display: block !important;
+            }
+            
+            /* Smaller text on mobile */
+            nav h1 {
+                font-size: 1.25rem !important;
+            }
+            
+            nav .fa-ticket-alt {
+                font-size: 1.5rem !important;
+            }
+            
+            /* Responsive headings */
+            h2 {
+                font-size: 1.5rem !important;
+            }
+            
+            /* Better modal padding on mobile */
+            .modal-content {
+                padding: 1.5rem !important;
+                max-height: 95vh !important;
+            }
+            
+            /* Better container padding */
+            .container {
+                padding-left: 1rem !important;
+                padding-right: 1rem !important;
+            }
+        }
+        
+        @media (min-width: 769px) {
+            #mobile-menu {
+                display: none !important;
+            }
+            
+            #mobile-menu-toggle {
+                display: none !important;
+            }
+            
+            .desktop-nav {
+                display: flex !important;
+            }
+        }
     </style>
 </head>
 <body class="min-h-screen relative">
@@ -173,46 +298,70 @@
                 <i class="fas fa-ticket-alt text-3xl text-purple-400 glow-purple"></i>
                 <h1 class="text-2xl font-bold text-white">Tix & Lodging</h1>
             </div>
-            <div class="flex items-center space-x-4">
-                <span id="user-email" class="text-gray-300 hidden"></span>
-                <button id="my-bookings-btn" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 hover:glow-purple transition-all hidden">
-                    <i class="fas fa-calendar-check mr-2"></i>My Bookings
+            <!-- Mobile Menu Toggle -->
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+            <!-- Desktop Navigation -->
+            <div class="desktop-nav flex items-center space-x-2 md:space-x-4">
+                <span id="user-email" class="text-gray-300 hidden text-sm md:text-base"></span>
+                <button id="my-bookings-btn" class="px-2 md:px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 hover:glow-purple transition-all hidden text-sm md:text-base">
+                    <i class="fas fa-calendar-check md:mr-2"></i><span class="hidden md:inline">My Bookings</span>
                 </button>
-                <button id="admin-btn" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 hover:glow-blue transition-all hidden">
-                    <i class="fas fa-cog mr-2"></i>Owner
+                <button id="admin-btn" class="px-2 md:px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 hover:glow-blue transition-all hidden text-sm md:text-base">
+                    <i class="fas fa-cog md:mr-2"></i><span class="hidden md:inline">Owner</span>
                 </button>
-                <button id="login-btn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 hover:glow-blue transition-all">
-                    <i class="fas fa-sign-in-alt mr-2"></i>Login
+                <button id="login-btn" class="px-2 md:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 hover:glow-blue transition-all text-sm md:text-base">
+                    <i class="fas fa-sign-in-alt md:mr-2"></i><span class="hidden md:inline">Login</span>
                 </button>
-                <button id="logout-btn" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all hidden">
-                    <i class="fas fa-sign-out-alt mr-2"></i>Logout
+                <button id="logout-btn" class="px-2 md:px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all hidden text-sm md:text-base">
+                    <i class="fas fa-sign-out-alt md:mr-2"></i><span class="hidden md:inline">Logout</span>
                 </button>
             </div>
         </div>
     </nav>
+    
+    <!-- Mobile Menu -->
+    <div id="mobile-menu">
+        <span id="mobile-user-email" class="block px-4 py-3 text-gray-300 border-b border-gray-700 hidden"></span>
+        <button id="mobile-my-bookings-btn" class="hidden">
+            <i class="fas fa-calendar-check mr-2"></i>My Bookings
+        </button>
+        <button id="mobile-admin-btn" class="hidden">
+            <i class="fas fa-cog mr-2"></i>Owner Dashboard
+        </button>
+        <button id="mobile-login-btn">
+            <i class="fas fa-sign-in-alt mr-2"></i>Login
+        </button>
+        <button id="mobile-logout-btn" class="hidden">
+            <i class="fas fa-sign-out-alt mr-2"></i>Logout
+        </button>
+    </div>
 
     <!-- Main Container -->
     <div class="container mx-auto px-4 py-8 max-w-7xl">
         <!-- Login Modal -->
-        <div id="login-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center hidden">
-            <div class="bg-gray-800/90 backdrop-blur-md rounded-lg p-8 max-w-md w-full mx-4 border border-gray-700">
-                <div class="text-center mb-8">
+        <div id="login-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center hidden p-4">
+            <div class="bg-gray-800/90 backdrop-blur-md rounded-lg modal-content p-6 sm:p-8 max-w-md w-full border border-gray-700 max-h-[90vh] overflow-y-auto">
+                <div class="text-center mb-6 sm:mb-8">
                     <div class="mb-4">
-                        <i class="fas fa-ticket-alt text-5xl text-purple-400 mb-4 glow-purple"></i>
+                        <i class="fas fa-ticket-alt text-4xl sm:text-5xl text-purple-400 mb-4 glow-purple"></i>
                     </div>
-                    <h2 class="text-3xl font-bold text-white mb-2">Demo Experience</h2>
-                    <p class="text-gray-300">Choose a role to explore the platform</p>
+                    <h2 class="text-2xl sm:text-3xl font-bold text-white mb-2">Demo Experience</h2>
+                    <p class="text-sm sm:text-base text-gray-300">Choose a role to explore the platform</p>
                 </div>
                 
                 <div class="space-y-4 mb-6">
-                    <button id="login-as-owner-btn" class="w-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white py-4 rounded-lg hover:from-purple-700 hover:to-indigo-700 font-semibold text-lg transition-all transform hover:scale-105 shadow-lg">
+                    <button id="login-as-owner-btn" class="w-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white py-3 sm:py-4 rounded-lg hover:from-purple-700 hover:to-indigo-700 font-semibold text-base sm:text-lg transition-all transform hover:scale-105 shadow-lg">
                         <i class="fas fa-user-shield mr-2"></i>Login as Owner
-                        <div class="text-sm font-normal mt-1 opacity-90">Manage events, hotels & check-ins</div>
+                        <div class="text-xs sm:text-sm font-normal mt-1 opacity-90">Manage events, hotels & check-ins</div>
                     </button>
                     
-                    <button id="login-as-buyer-btn" class="w-full bg-gradient-to-r from-blue-600 to-cyan-600 text-white py-4 rounded-lg hover:from-blue-700 hover:to-cyan-700 font-semibold text-lg transition-all transform hover:scale-105 shadow-lg">
+                    <button id="login-as-buyer-btn" class="w-full bg-gradient-to-r from-blue-600 to-cyan-600 text-white py-3 sm:py-4 rounded-lg hover:from-blue-700 hover:to-cyan-700 font-semibold text-base sm:text-lg transition-all transform hover:scale-105 shadow-lg">
                         <i class="fas fa-shopping-cart mr-2"></i>Login as Buyer
-                        <div class="text-sm font-normal mt-1 opacity-90">Browse events & book tickets</div>
+                        <div class="text-xs sm:text-sm font-normal mt-1 opacity-90">Browse events & book tickets</div>
                     </button>
                 </div>
                 
@@ -228,10 +377,10 @@
 
         <!-- Events Section -->
         <div id="events-section" class="fade-in">
-            <div class="flex justify-between items-center mb-6">
-                <h2 class="text-3xl font-bold text-white">Upcoming Events</h2>
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+                <h2 class="text-2xl sm:text-3xl font-bold text-white">Upcoming Events</h2>
                 <div id="admin-controls" class="hidden">
-                    <button id="create-event-btn" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+                    <button id="create-event-btn" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm sm:text-base">
                         <i class="fas fa-plus mr-2"></i>Create Event
                     </button>
                 </div>
@@ -243,9 +392,9 @@
 
         <!-- My Bookings Section -->
         <div id="bookings-section" class="hidden fade-in">
-            <div class="flex justify-between items-center mb-6">
-                <h2 class="text-3xl font-bold text-white">My Bookings</h2>
-                <button id="back-to-events-btn" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700">
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+                <h2 class="text-2xl sm:text-3xl font-bold text-white">My Bookings</h2>
+                <button id="back-to-events-btn" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm sm:text-base">
                     <i class="fas fa-arrow-left mr-2"></i>Back to Events
                 </button>
             </div>
@@ -256,32 +405,32 @@
 
         <!-- Admin Section -->
         <div id="admin-section" class="hidden fade-in">
-            <div class="flex justify-between items-center mb-6">
-                <h2 class="text-3xl font-bold text-white">Owner Dashboard</h2>
-                <button id="back-to-events-btn-admin" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700">
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+                <h2 class="text-2xl sm:text-3xl font-bold text-white">Owner Dashboard</h2>
+                <button id="back-to-events-btn-admin" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm sm:text-base">
                     <i class="fas fa-arrow-left mr-2"></i>Back to Events
                 </button>
             </div>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 mb-8">
                 <!-- Hotels Management -->
-                <div class="bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-lg p-6 border border-gray-700">
-                    <h3 class="text-xl font-bold mb-4 text-white">Hotels</h3>
-                    <button id="manage-hotels-btn" class="w-full px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+                <div class="bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-lg p-4 sm:p-6 border border-gray-700">
+                    <h3 class="text-lg sm:text-xl font-bold mb-4 text-white">Hotels</h3>
+                    <button id="manage-hotels-btn" class="w-full px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm sm:text-base">
                         Manage Hotels
                     </button>
                 </div>
                 <!-- Check-in (Owner Only) -->
-                <div class="bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-lg p-6 border border-gray-700">
-                    <h3 class="text-xl font-bold mb-4 text-white">Scan & Check-in Tickets</h3>
-                    <p class="text-sm text-gray-300 mb-4">As an event owner, you can scan QR codes to verify and check in tickets.</p>
+                <div class="bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-lg p-4 sm:p-6 border border-gray-700">
+                    <h3 class="text-lg sm:text-xl font-bold mb-4 text-white">Scan & Check-in Tickets</h3>
+                    <p class="text-xs sm:text-sm text-gray-300 mb-4">As an event owner, you can scan QR codes to verify and check in tickets.</p>
                     <div class="space-y-2">
                         <input type="text" id="checkin-ticket-id" placeholder="Enter ticket ID or paste QR code data" 
-                               class="w-full px-4 py-2 bg-gray-700 border border-gray-600 text-white rounded-lg placeholder-gray-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-500">
+                               class="w-full px-3 sm:px-4 py-2 bg-gray-700 border border-gray-600 text-white rounded-lg placeholder-gray-400 focus:border-purple-500 focus:ring-2 focus:ring-purple-500 text-sm sm:text-base">
                         <div class="flex space-x-2">
-                            <button id="checkin-btn" class="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
-                                <i class="fas fa-check mr-2"></i>Check In Ticket
+                            <button id="checkin-btn" class="flex-1 px-3 sm:px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-xs sm:text-sm">
+                                <i class="fas fa-check mr-1 sm:mr-2"></i><span class="hidden sm:inline">Check In Ticket</span><span class="sm:hidden">Check In</span>
                             </button>
-                            <button id="scan-qr-btn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700" title="Scan QR Code">
+                            <button id="scan-qr-btn" class="px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm sm:text-base" title="Scan QR Code">
                                 <i class="fas fa-qrcode"></i>
                             </button>
                         </div>
@@ -295,12 +444,12 @@
     </div>
 
     <!-- QR Code Scanner Modal (Owner Only) -->
-    <div id="qr-scanner-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center hidden">
-        <div class="bg-gray-800/95 backdrop-blur-md rounded-lg p-8 max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto border border-gray-700">
-            <div class="flex justify-between items-center mb-4">
-                <h2 class="text-2xl font-bold text-white">Scan Ticket QR Code</h2>
-                <button id="close-qr-scanner" class="text-gray-400 hover:text-white">
-                    <i class="fas fa-times text-2xl"></i>
+    <div id="qr-scanner-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center hidden p-4">
+        <div class="bg-gray-800/95 backdrop-blur-md rounded-lg modal-content p-4 sm:p-8 max-w-lg w-full max-h-[90vh] overflow-y-auto border border-gray-700">
+            <div class="flex justify-between items-center mb-4 gap-4">
+                <h2 class="text-lg sm:text-2xl font-bold text-white flex-1">Scan Ticket QR Code</h2>
+                <button id="close-qr-scanner" class="text-gray-400 hover:text-white flex-shrink-0">
+                    <i class="fas fa-times text-xl sm:text-2xl"></i>
                 </button>
             </div>
             
@@ -355,12 +504,12 @@
     </div>
 
     <!-- Event Detail Modal -->
-    <div id="event-detail-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center hidden overflow-y-auto">
-        <div class="bg-gray-800/95 backdrop-blur-md rounded-lg p-8 max-w-4xl w-full mx-4 my-8 border border-gray-700">
-            <div class="flex justify-between items-start mb-6">
-                <h2 id="event-detail-title" class="text-3xl font-bold text-white"></h2>
-                <button id="close-event-modal" class="text-gray-400 hover:text-white">
-                    <i class="fas fa-times text-2xl"></i>
+    <div id="event-detail-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center hidden overflow-y-auto p-4">
+        <div class="bg-gray-800/95 backdrop-blur-md rounded-lg modal-content p-4 sm:p-8 max-w-4xl w-full border border-gray-700 max-h-[90vh] overflow-y-auto my-4 sm:my-8">
+            <div class="flex justify-between items-start mb-4 sm:mb-6 gap-4">
+                <h2 id="event-detail-title" class="text-xl sm:text-3xl font-bold text-white flex-1"></h2>
+                <button id="close-event-modal" class="text-gray-400 hover:text-white flex-shrink-0">
+                    <i class="fas fa-times text-xl sm:text-2xl"></i>
                 </button>
             </div>
             <div id="event-detail-content" class="space-y-6">
@@ -370,8 +519,8 @@
     </div>
 
     <!-- Create Event Modal -->
-    <div id="create-event-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center hidden">
-        <div class="bg-gray-800/95 backdrop-blur-md rounded-lg p-8 max-w-2xl w-full mx-4 overflow-y-auto max-h-screen border border-gray-700">
+    <div id="create-event-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center hidden p-4">
+        <div class="bg-gray-800/95 backdrop-blur-md rounded-lg modal-content p-4 sm:p-8 max-w-2xl w-full overflow-y-auto max-h-[90vh] border border-gray-700">
             <h2 class="text-2xl font-bold mb-6 text-white">Create New Event</h2>
             <form id="create-event-form" class="space-y-4">
                 <div>
@@ -469,22 +618,81 @@
             if (currentUser) {
                 document.getElementById('user-email').textContent = currentUser.email;
                 document.getElementById('user-email').classList.remove('hidden');
+                document.getElementById('mobile-user-email').textContent = currentUser.email;
+                document.getElementById('mobile-user-email').classList.remove('hidden');
                 document.getElementById('login-btn').classList.add('hidden');
+                document.getElementById('mobile-login-btn').classList.add('hidden');
                 document.getElementById('logout-btn').classList.remove('hidden');
+                document.getElementById('mobile-logout-btn').classList.remove('hidden');
                 document.getElementById('my-bookings-btn').classList.remove('hidden');
+                document.getElementById('mobile-my-bookings-btn').classList.remove('hidden');
                 
                 if (currentRole === 'admin') {
                     document.getElementById('admin-btn').classList.remove('hidden');
+                    document.getElementById('mobile-admin-btn').classList.remove('hidden');
                     document.getElementById('admin-controls').classList.remove('hidden');
+                } else {
+                    document.getElementById('admin-btn').classList.add('hidden');
+                    document.getElementById('mobile-admin-btn').classList.add('hidden');
                 }
             } else {
                 document.getElementById('user-email').classList.add('hidden');
+                document.getElementById('mobile-user-email').classList.add('hidden');
                 document.getElementById('logout-btn').classList.add('hidden');
+                document.getElementById('mobile-logout-btn').classList.add('hidden');
                 document.getElementById('my-bookings-btn').classList.add('hidden');
+                document.getElementById('mobile-my-bookings-btn').classList.add('hidden');
                 document.getElementById('admin-btn').classList.add('hidden');
+                document.getElementById('mobile-admin-btn').classList.add('hidden');
                 document.getElementById('admin-controls').classList.add('hidden');
+                document.getElementById('login-btn').classList.remove('hidden');
+                document.getElementById('mobile-login-btn').classList.remove('hidden');
             }
         }
+        
+        // Mobile menu toggle
+        const mobileMenuToggle = document.getElementById('mobile-menu-toggle');
+        const mobileMenu = document.getElementById('mobile-menu');
+        
+        mobileMenuToggle.addEventListener('click', () => {
+            mobileMenuToggle.classList.toggle('active');
+            mobileMenu.classList.toggle('active');
+        });
+        
+        // Close mobile menu when clicking outside
+        document.addEventListener('click', (e) => {
+            if (mobileMenu.classList.contains('active') && 
+                !mobileMenu.contains(e.target) && 
+                !mobileMenuToggle.contains(e.target)) {
+                mobileMenuToggle.classList.remove('active');
+                mobileMenu.classList.remove('active');
+            }
+        });
+        
+        // Mobile menu button handlers
+        document.getElementById('mobile-login-btn').addEventListener('click', () => {
+            mobileMenuToggle.classList.remove('active');
+            mobileMenu.classList.remove('active');
+            showLoginModal();
+        });
+        
+        document.getElementById('mobile-logout-btn').addEventListener('click', () => {
+            mobileMenuToggle.classList.remove('active');
+            mobileMenu.classList.remove('active');
+            document.getElementById('logout-btn').click();
+        });
+        
+        document.getElementById('mobile-my-bookings-btn').addEventListener('click', () => {
+            mobileMenuToggle.classList.remove('active');
+            mobileMenu.classList.remove('active');
+            document.getElementById('my-bookings-btn').click();
+        });
+        
+        document.getElementById('mobile-admin-btn').addEventListener('click', () => {
+            mobileMenuToggle.classList.remove('active');
+            mobileMenu.classList.remove('active');
+            document.getElementById('admin-btn').click();
+        });
 
         // Login helper function
         async function performLogin(email, password, buttonElement) {
@@ -593,11 +801,11 @@
                 return `
                     <div class="event-card bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-lg overflow-hidden cursor-pointer border border-gray-700 hover:border-purple-500 transition-all" data-event-id="${event._id}">
                         <img src="${imageUrl}" alt="${event.name}" class="w-full h-48 object-cover">
-                        <div class="p-6">
-                            <h3 class="text-xl font-bold text-white mb-2">${event.name}</h3>
-                            <p class="text-gray-300 mb-2">${event.venue}</p>
-                            <p class="text-sm text-gray-400 mb-4">${eventDate.toLocaleDateString()} ${eventDate.toLocaleTimeString()}</p>
-                            <button class="w-full bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700 view-event-btn" data-event-id="${event._id}">
+                        <div class="p-4 sm:p-6">
+                            <h3 class="text-lg sm:text-xl font-bold text-white mb-2">${event.name}</h3>
+                            <p class="text-sm sm:text-base text-gray-300 mb-2">${event.venue}</p>
+                            <p class="text-xs sm:text-sm text-gray-400 mb-4">${eventDate.toLocaleDateString()} ${eventDate.toLocaleTimeString()}</p>
+                            <button class="w-full bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700 text-sm sm:text-base view-event-btn" data-event-id="${event._id}">
                                 View Details
                             </button>
                         </div>
@@ -641,53 +849,53 @@
             const content = document.getElementById('event-detail-content');
             content.innerHTML = `
                 <img src="${imageUrl}" alt="${event.name}" class="w-full h-64 object-cover rounded-lg mb-4">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
                     <div>
-                        <p class="text-sm text-gray-400">Venue</p>
-                        <p class="text-lg font-semibold text-white">${event.venue}</p>
+                        <p class="text-xs sm:text-sm text-gray-400">Venue</p>
+                        <p class="text-base sm:text-lg font-semibold text-white">${event.venue}</p>
                     </div>
                     <div>
-                        <p class="text-sm text-gray-400">Date & Time</p>
-                        <p class="text-lg font-semibold text-white">${eventDate.toLocaleString()}</p>
+                        <p class="text-xs sm:text-sm text-gray-400">Date & Time</p>
+                        <p class="text-base sm:text-lg font-semibold text-white">${eventDate.toLocaleString()}</p>
                     </div>
                 </div>
-                <p class="text-gray-300 mb-6">${event.description || 'No description provided.'}</p>
-                <h3 class="text-xl font-bold mb-4 text-white">Ticket Tiers</h3>
+                <p class="text-sm sm:text-base text-gray-300 mb-6">${event.description || 'No description provided.'}</p>
+                <h3 class="text-lg sm:text-xl font-bold mb-4 text-white">Ticket Tiers</h3>
                 <div id="ticket-tiers-selection" class="space-y-4 mb-6">
                     ${event.ticket_tiers.map(tier => {
                         const available = tier.capacity - tier.sold_count;
                         const hasHotel = tier.includes_hotel && tier.hotel_name;
                         return `
-                            <div class="border border-gray-600 rounded-lg p-4 bg-gray-700/30 ${available === 0 ? 'opacity-50' : ''}">
-                                <div class="flex justify-between items-start mb-2">
-                                    <div>
-                                        <h4 class="font-semibold text-lg text-white">${tier.name}</h4>
-                                        ${hasHotel ? `<p class="text-sm text-blue-300"><i class="fas fa-hotel mr-1"></i>Includes: ${tier.hotel_name} (${tier.nights_included} nights)</p>` : ''}
+                            <div class="border border-gray-600 rounded-lg p-3 sm:p-4 bg-gray-700/30 ${available === 0 ? 'opacity-50' : ''}">
+                                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-start mb-2 gap-2">
+                                    <div class="flex-1">
+                                        <h4 class="font-semibold text-base sm:text-lg text-white">${tier.name}</h4>
+                                        ${hasHotel ? `<p class="text-xs sm:text-sm text-blue-300"><i class="fas fa-hotel mr-1"></i>Includes: ${tier.hotel_name} (${tier.nights_included} nights)</p>` : ''}
                                     </div>
-                                    <div class="text-right">
-                                        <p class="text-2xl font-bold text-purple-400">$${tier.price.toFixed(2)}</p>
-                                        <p class="text-sm text-gray-300">${available} available</p>
+                                    <div class="text-left sm:text-right">
+                                        <p class="text-xl sm:text-2xl font-bold text-purple-400">$${tier.price.toFixed(2)}</p>
+                                        <p class="text-xs sm:text-sm text-gray-300">${available} available</p>
                                     </div>
                                 </div>
                                 ${available > 0 ? `
-                                    <div class="flex items-center space-x-4 mt-4">
-                                        <label class="text-sm font-medium text-gray-300">Quantity:</label>
+                                    <div class="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 mt-4">
+                                        <label class="text-xs sm:text-sm font-medium text-gray-300">Quantity:</label>
                                         <input type="number" min="1" max="${available}" value="0" 
-                                               class="tier-quantity w-20 px-2 py-1 bg-gray-700 border border-gray-600 text-white rounded" 
+                                               class="tier-quantity w-full sm:w-20 px-2 py-1 bg-gray-700 border border-gray-600 text-white rounded text-sm sm:text-base" 
                                                data-tier-id="${tier.id}" data-tier-price="${tier.price}">
                                     </div>
-                                ` : '<p class="text-red-400 text-sm mt-2">Sold Out</p>'}
+                                ` : '<p class="text-red-400 text-xs sm:text-sm mt-2">Sold Out</p>'}
                             </div>
                         `;
                     }).join('')}
                 </div>
-                <div class="bg-gray-700/50 rounded-lg p-4 mb-4 border border-gray-600">
+                <div class="bg-gray-700/50 rounded-lg p-3 sm:p-4 mb-4 border border-gray-600">
                     <div class="flex justify-between items-center">
-                        <span class="text-lg font-semibold text-white">Total:</span>
-                        <span id="checkout-total" class="text-2xl font-bold text-purple-400">$0.00</span>
+                        <span class="text-base sm:text-lg font-semibold text-white">Total:</span>
+                        <span id="checkout-total" class="text-xl sm:text-2xl font-bold text-purple-400">$0.00</span>
                     </div>
                 </div>
-                <button id="checkout-btn" class="w-full bg-green-600 text-white py-3 rounded-lg hover:bg-green-700 font-semibold text-lg">
+                <button id="checkout-btn" class="w-full bg-green-600 text-white py-2 sm:py-3 rounded-lg hover:bg-green-700 font-semibold text-base sm:text-lg">
                     <i class="fas fa-shopping-cart mr-2"></i>Checkout
                 </button>
             `;
@@ -799,16 +1007,16 @@
                 }
                 
                 html += `
-                    <div class="bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-lg p-6 border border-gray-700">
-                        <div class="flex justify-between items-start mb-4">
-                            <div>
-                                <h3 class="text-xl font-bold text-white">${event.name}</h3>
-                                <p class="text-sm text-gray-300">Booking ID: ${booking._id}</p>
-                                <p class="text-sm text-gray-300">Booked: ${bookingDate.toLocaleString()}</p>
+                    <div class="bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-lg p-4 sm:p-6 border border-gray-700">
+                        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-start mb-4 gap-4">
+                            <div class="flex-1">
+                                <h3 class="text-lg sm:text-xl font-bold text-white">${event.name}</h3>
+                                <p class="text-xs sm:text-sm text-gray-300">Booking ID: ${booking._id}</p>
+                                <p class="text-xs sm:text-sm text-gray-300">Booked: ${bookingDate.toLocaleString()}</p>
                             </div>
-                            <div class="text-right">
-                                <p class="text-2xl font-bold text-green-400">$${booking.total_amount.toFixed(2)}</p>
-                                <span class="px-3 py-1 bg-green-900/50 text-green-300 border border-green-700 rounded-full text-sm">${booking.status}</span>
+                            <div class="text-left sm:text-right">
+                                <p class="text-xl sm:text-2xl font-bold text-green-400">$${booking.total_amount.toFixed(2)}</p>
+                                <span class="inline-block px-3 py-1 bg-green-900/50 text-green-300 border border-green-700 rounded-full text-xs sm:text-sm mt-1">${booking.status}</span>
                             </div>
                         </div>
                         <div class="mt-4">
@@ -934,18 +1142,18 @@
             container.innerHTML = adminEvents.map(event => {
                 const eventDate = new Date(event.starts_at * 1000);
                 return `
-                    <div class="bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-lg p-6 border border-gray-700">
-                        <div class="flex justify-between items-start mb-4">
-                            <div>
-                                <h3 class="text-xl font-bold text-white">${event.name}</h3>
-                                <p class="text-gray-300">${event.venue}</p>
-                                <p class="text-sm text-gray-400">${eventDate.toLocaleString()}</p>
+                    <div class="bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-lg p-4 sm:p-6 border border-gray-700">
+                        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-start mb-4 gap-4">
+                            <div class="flex-1">
+                                <h3 class="text-lg sm:text-xl font-bold text-white">${event.name}</h3>
+                                <p class="text-sm sm:text-base text-gray-300">${event.venue}</p>
+                                <p class="text-xs sm:text-sm text-gray-400">${eventDate.toLocaleString()}</p>
                             </div>
-                            <div class="flex space-x-2">
-                                <button class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 edit-event-btn" data-event-id="${event._id}">
+                            <div class="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2 w-full sm:w-auto">
+                                <button class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 edit-event-btn text-sm sm:text-base" data-event-id="${event._id}">
                                     Edit
                                 </button>
-                                <button class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 delete-event-btn" data-event-id="${event._id}">
+                                <button class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 delete-event-btn text-sm sm:text-base" data-event-id="${event._id}">
                                     Delete
                                 </button>
                             </div>

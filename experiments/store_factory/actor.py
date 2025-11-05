@@ -113,6 +113,44 @@ BUSINESS_TYPES = {
         'status_options': ['Available', 'Pending', 'Sold'],
         'hero_text': 'Quality Products You\'ll Love',
         'default_description': 'High-quality product available now.'
+    },
+    'lawyer-services': {
+        'name': 'Lawyer Services',
+        'item_label': 'Legal Service',
+        'item_plural': 'Legal Services',
+        'item_code_label': 'Service Code',
+        'item_code_prefix': 'LSVC',
+        'section_label': 'Services',
+        'inquiry_label': 'Consultation Request',
+        'attributes_template': [
+            {'name': 'Practice Area', 'type': 'text', 'required': True},
+            {'name': 'Service Type', 'type': 'text', 'required': True},
+            {'name': 'Duration', 'type': 'text', 'required': False},
+            {'name': 'Consultation Fee', 'type': 'text', 'required': False},
+            {'name': 'What\'s Included', 'type': 'textarea', 'required': False},
+        ],
+        'status_options': ['Available', 'Limited Availability', 'By Appointment Only'],
+        'hero_text': 'Expert Legal Services You Can Trust',
+        'default_description': 'Professional legal services tailored to your needs.'
+    },
+    'cleaning-services': {
+        'name': 'Cleaning Services',
+        'item_label': 'Service',
+        'item_plural': 'Services',
+        'item_code_label': 'Service Code',
+        'item_code_prefix': 'CLN',
+        'section_label': 'Services',
+        'inquiry_label': 'Service Request',
+        'attributes_template': [
+            {'name': 'Service Type', 'type': 'text', 'required': True},
+            {'name': 'Duration', 'type': 'text', 'required': False},
+            {'name': 'Area Coverage', 'type': 'text', 'required': False},
+            {'name': 'Frequency', 'type': 'text', 'required': False},
+            {'name': 'What\'s Included', 'type': 'textarea', 'required': False},
+        ],
+        'status_options': ['Available', 'Limited Availability', 'By Appointment Only'],
+        'hero_text': 'Professional Cleaning Services',
+        'default_description': 'Quality cleaning services for your home or business.'
     }
 }
 
@@ -341,6 +379,122 @@ class ExperimentActor:
                     "date_added": now
                 }
             ]
+        elif business_type == 'lawyer-services':
+            default_items = [
+                {
+                    "name": "Initial Consultation",
+                    "item_code": f"{business_config['item_code_prefix']}-001",
+                    "price": 150.00,
+                    "description": "Comprehensive legal consultation to discuss your case and provide guidance on next steps.",
+                    "status": "Available",
+                    "attributes": {"Practice Area": "General", "Service Type": "Consultation", "Duration": "1 hour", "Consultation Fee": "$150"},
+                    "image_url": "https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=800&auto=format&fit=crop",
+                    "store_id": store_id,
+                    "date_added": now
+                },
+                {
+                    "name": "Contract Review",
+                    "item_code": f"{business_config['item_code_prefix']}-002",
+                    "price": 250.00,
+                    "description": "Professional review and analysis of contracts, agreements, and legal documents.",
+                    "status": "Available",
+                    "attributes": {"Practice Area": "Business Law", "Service Type": "Document Review", "Duration": "2-3 hours", "Consultation Fee": "$250"},
+                    "image_url": "https://images.unsplash.com/photo-1507679799987-c73779587ccf?w=800&auto=format&fit=crop",
+                    "store_id": store_id,
+                    "date_added": now
+                },
+                {
+                    "name": "Estate Planning",
+                    "item_code": f"{business_config['item_code_prefix']}-003",
+                    "price": 500.00,
+                    "description": "Complete estate planning services including wills, trusts, and power of attorney documents.",
+                    "status": "Available",
+                    "attributes": {"Practice Area": "Estate Planning", "Service Type": "Full Service", "Duration": "4-6 hours", "Consultation Fee": "$500"},
+                    "image_url": "https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=800&auto=format&fit=crop",
+                    "store_id": store_id,
+                    "date_added": now
+                },
+                {
+                    "name": "Family Law Services",
+                    "item_code": f"{business_config['item_code_prefix']}-004",
+                    "price": 300.00,
+                    "description": "Expert legal assistance with divorce, custody, and family law matters.",
+                    "status": "Available",
+                    "attributes": {"Practice Area": "Family Law", "Service Type": "Legal Representation", "Duration": "Varies", "Consultation Fee": "$300"},
+                    "image_url": "https://images.unsplash.com/photo-1507679799987-c73779587ccf?w=800&auto=format&fit=crop",
+                    "store_id": store_id,
+                    "date_added": now
+                },
+                {
+                    "name": "Business Formation",
+                    "item_code": f"{business_config['item_code_prefix']}-005",
+                    "price": 400.00,
+                    "description": "Assistance with business formation, incorporation, and legal entity setup.",
+                    "status": "Available",
+                    "attributes": {"Practice Area": "Business Law", "Service Type": "Business Formation", "Duration": "2-3 days", "Consultation Fee": "$400"},
+                    "image_url": "https://images.unsplash.com/photo-1450101499163-c8848c66ca85?w=800&auto=format&fit=crop",
+                    "store_id": store_id,
+                    "date_added": now
+                }
+            ]
+        elif business_type == 'cleaning-services':
+            default_items = [
+                {
+                    "name": "Residential Deep Clean",
+                    "item_code": f"{business_config['item_code_prefix']}-001",
+                    "price": 150.00,
+                    "description": "Comprehensive deep cleaning service for your entire home including all rooms and areas.",
+                    "status": "Available",
+                    "attributes": {"Service Type": "Deep Clean", "Duration": "4-6 hours", "Area Coverage": "Entire Home", "Frequency": "One-time or Weekly"},
+                    "image_url": "https://images.unsplash.com/photo-1581578731548-c64695cc6952?w=800&auto=format&fit=crop",
+                    "store_id": store_id,
+                    "date_added": now
+                },
+                {
+                    "name": "Commercial Office Cleaning",
+                    "item_code": f"{business_config['item_code_prefix']}-002",
+                    "price": 200.00,
+                    "description": "Professional office cleaning services to keep your workspace clean and organized.",
+                    "status": "Available",
+                    "attributes": {"Service Type": "Office Clean", "Duration": "2-3 hours", "Area Coverage": "Office Space", "Frequency": "Weekly or Daily"},
+                    "image_url": "https://images.unsplash.com/photo-1581578731548-c64695cc6952?w=800&auto=format&fit=crop",
+                    "store_id": store_id,
+                    "date_added": now
+                },
+                {
+                    "name": "Move-In/Move-Out Clean",
+                    "item_code": f"{business_config['item_code_prefix']}-003",
+                    "price": 180.00,
+                    "description": "Thorough cleaning service for move-in or move-out situations. Perfect for new tenants or sellers.",
+                    "status": "Available",
+                    "attributes": {"Service Type": "Move Clean", "Duration": "3-4 hours", "Area Coverage": "Entire Property", "Frequency": "One-time"},
+                    "image_url": "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=800&auto=format&fit=crop",
+                    "store_id": store_id,
+                    "date_added": now
+                },
+                {
+                    "name": "Carpet & Upholstery Cleaning",
+                    "item_code": f"{business_config['item_code_prefix']}-004",
+                    "price": 120.00,
+                    "description": "Professional deep cleaning for carpets, rugs, and upholstered furniture.",
+                    "status": "Available",
+                    "attributes": {"Service Type": "Carpet Clean", "Duration": "2-3 hours", "Area Coverage": "Per Room", "Frequency": "As Needed"},
+                    "image_url": "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=800&auto=format&fit=crop",
+                    "store_id": store_id,
+                    "date_added": now
+                },
+                {
+                    "name": "Window Cleaning",
+                    "item_code": f"{business_config['item_code_prefix']}-005",
+                    "price": 80.00,
+                    "description": "Crystal clear window cleaning for interior and exterior windows.",
+                    "status": "Available",
+                    "attributes": {"Service Type": "Window Clean", "Duration": "1-2 hours", "Area Coverage": "All Windows", "Frequency": "Monthly or Quarterly"},
+                    "image_url": "https://images.unsplash.com/photo-1581578731548-c64695cc6952?w=800&auto=format&fit=crop",
+                    "store_id": store_id,
+                    "date_added": now
+                }
+            ]
         else:  # generic-store
             default_items = [
                 {
@@ -432,6 +586,20 @@ class ExperimentActor:
                 {"image_url": "https://images.unsplash.com/photo-1552664730-d307ca884978?w=1600&auto=format&fit=crop", "caption": "Expert Consultation Available"},
                 {"image_url": "https://images.unsplash.com/photo-1556761175-b413da4baf72?w=1600&auto=format&fit=crop", "caption": "Customer Satisfaction Guaranteed"}
             ]
+        elif business_type == 'lawyer-services':
+            default_slideshow = [
+                {"image_url": "https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=1600&auto=format&fit=crop", "caption": "Expert Legal Services You Can Trust"},
+                {"image_url": "https://images.unsplash.com/photo-1507679799987-c73779587ccf?w=1600&auto=format&fit=crop", "caption": "Professional Legal Representation"},
+                {"image_url": "https://images.unsplash.com/photo-1450101499163-c8848c66ca85?w=1600&auto=format&fit=crop", "caption": "Experienced Attorneys"},
+                {"image_url": "https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=1600&auto=format&fit=crop", "caption": "Your Legal Partner"}
+            ]
+        elif business_type == 'cleaning-services':
+            default_slideshow = [
+                {"image_url": "https://images.unsplash.com/photo-1581578731548-c64695cc6952?w=1600&auto=format&fit=crop", "caption": "Professional Cleaning Services"},
+                {"image_url": "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=1600&auto=format&fit=crop", "caption": "Spotless Results Guaranteed"},
+                {"image_url": "https://images.unsplash.com/photo-1581578731548-c64695cc6952?w=1600&auto=format&fit=crop", "caption": "Experienced Cleaning Professionals"},
+                {"image_url": "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=1600&auto=format&fit=crop", "caption": "Your Space, Our Care"}
+            ]
         else:  # generic-store
             default_slideshow = [
                 {"image_url": "https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=1600&auto=format&fit=crop", "caption": "Quality Products You'll Love"},
@@ -467,15 +635,18 @@ class ExperimentActor:
             logger.error(f"[{self.write_scope}-Actor] Error rendering business selection: {e}", exc_info=True)
             return f"<h1>Error</h1><pre>{e}</pre>"
 
-    async def render_store_selection(self, business_type: str, request_context: Dict[str, Any]) -> str:
+    async def render_store_selection(self, business_type: str, request_context: Dict[str, Any], error: Optional[str] = None) -> str:
         """Render the store selection/creation page for a business type."""
         self._check_ready()
         
         if business_type not in BUSINESS_TYPES:
             return f"<h1>Error</h1><p>Invalid business type: {business_type}</p>"
         
-        # Get existing stores for this business type
-        existing_stores = await self.db.stores.find({"business_type": business_type}).sort("name", 1).to_list(length=None)
+        # Get existing stores for this business type (for display)
+        existing_stores_same_type = await self.db.stores.find({"business_type": business_type}).sort("name", 1).to_list(length=None)
+        
+        # Get all existing stores (for cloning - users can clone from any business type)
+        all_stores = await self.db.stores.find({}).sort("name", 1).to_list(length=None)
         
         business_config = BUSINESS_TYPES[business_type]
         try:
@@ -485,8 +656,10 @@ class ExperimentActor:
                     "request": request_context,
                     "business_type": business_type,
                     "business_type_name": business_config['name'],
-                    "existing_stores": existing_stores,
-                    "BUSINESS_TYPES": BUSINESS_TYPES
+                    "existing_stores": existing_stores_same_type,
+                    "all_stores": all_stores,  # For cloning
+                    "BUSINESS_TYPES": BUSINESS_TYPES,
+                    "error": error
                 }
             )
             return response.body.decode("utf-8")
@@ -541,6 +714,9 @@ class ExperimentActor:
         if slideshow_images:
             store['slideshow_images'] = slideshow_images
         
+        # Get SEO settings from store
+        seo_settings = store.get("seo_settings", {})
+        
         business_config = BUSINESS_TYPES.get(store.get('business_type', 'generic-store'), BUSINESS_TYPES['generic-store'])
         
         try:
@@ -552,6 +728,7 @@ class ExperimentActor:
                     "items": items,
                     "business_config": business_config,
                     "user": user,
+                    "seo_settings": seo_settings,
                     "now": datetime.datetime.utcnow()
                 }
             )
@@ -619,6 +796,117 @@ class ExperimentActor:
             logger.error(f"[{self.write_scope}-Actor] Error rendering admin login: {e}", exc_info=True)
             return f"<h1>Error</h1><pre>{e}</pre>"
 
+    async def clone_store(self, source_store_slug: str, form_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Clone an existing store as a new store."""
+        self._check_ready()
+        
+        # Get source store
+        source_store = await self.db.stores.find_one({"slug_id": source_store_slug})
+        if not source_store:
+            return {"success": False, "error": "Source store not found."}
+        
+        # Generate slug_id if not provided
+        slug_id = form_data.get('slug_id', '').strip().lower()
+        if not slug_id:
+            # Auto-generate from name
+            slug_id = form_data.get('name', '').lower().replace(' ', '-')
+            slug_id = ''.join(c for c in slug_id if c.isalnum() or c == '-')
+        
+        # Validate slug_id
+        if not slug_id or not all(c.isalnum() or c == '-' for c in slug_id):
+            return {"success": False, "error": "Invalid URL slug. Use only lowercase letters, numbers, and hyphens."}
+        
+        # Check if slug_id already exists
+        existing = await self.db.stores.find_one({"slug_id": slug_id})
+        if existing:
+            return {"success": False, "error": f'A store with URL slug "{slug_id}" already exists. Please choose a different one.'}
+        
+        # Create new store based on source store
+        now = datetime.datetime.utcnow()
+        store_data = {
+            "name": form_data.get('name', source_store.get('name', '')),
+            "slug_id": slug_id,
+            "business_type": source_store.get('business_type', 'generic-store'),
+            "about_text": form_data.get('about_text', source_store.get('about_text', '')),
+            "address": form_data.get('address', source_store.get('address', '')),
+            "phone": form_data.get('phone', source_store.get('phone', '')),
+            "phone_display": form_data.get('phone_display', form_data.get('phone', source_store.get('phone_display', source_store.get('phone', '')))),
+            "hours": form_data.get('hours', source_store.get('hours', '')),
+            "lang": source_store.get('lang', 'en'),
+            "logo_url": form_data.get('logo_url', source_store.get('logo_url', '/experiments/store_factory/static/img/logo.png')),
+            "gallery_image_1_url": form_data.get('gallery_image_1_url', source_store.get('gallery_image_1_url')),
+            "gallery_image_2_url": form_data.get('gallery_image_2_url', source_store.get('gallery_image_2_url')),
+            "menu_image_url": form_data.get('menu_image_url', source_store.get('menu_image_url')),
+            "google_maps_embed_html": form_data.get('google_maps_embed_html', source_store.get('google_maps_embed_html', '<iframe src="https://www.google.com/maps?q=Orlando,+FL+32812&output=embed" width="100%" height="100%" style="border:0;" allowfullscreen="" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>')),
+            "inventory_description": form_data.get('inventory_description', source_store.get('inventory_description')),
+            "socials": form_data.get('socials', source_store.get('socials', [])),
+            # Theme defaults from source or form
+            "theme_primary": form_data.get('theme_primary', source_store.get('theme_primary', '#3b82f6')),
+            "theme_secondary": form_data.get('theme_secondary', source_store.get('theme_secondary', '#f59e0b')),
+            "theme_background": form_data.get('theme_background', source_store.get('theme_background', '#111827')),
+            "theme_surface": form_data.get('theme_surface', source_store.get('theme_surface', '#1f2937')),
+            "theme_text": form_data.get('theme_text', source_store.get('theme_text', '#f9fafb')),
+            "theme_text_secondary": form_data.get('theme_text_secondary', source_store.get('theme_text_secondary', '#d1d5db')),
+            "date_created": now
+        }
+        
+        try:
+            result = await self.db.stores.insert_one(store_data)
+            store_id = result.inserted_id
+            
+            # Create admin user
+            existing_user = await self.db.users.find_one({
+                "email": form_data.get('email'),
+                "store_id": store_id
+            })
+            if existing_user:
+                return {"success": False, "error": "A user with this email already exists for this store."}
+            
+            await self.db.users.insert_one({
+                "email": form_data.get('email'),
+                "password": form_data.get('password'),
+                "role": "owner",
+                "store_id": store_id,
+                "date_created": now
+            })
+            
+            # Clone items from source store
+            source_store_id = source_store['_id']
+            source_items = await self.db.items.find({"store_id": source_store_id}).to_list(length=None)
+            if source_items:
+                for item in source_items:
+                    # Remove _id and store_id, update store_id
+                    item_copy = {k: v for k, v in item.items() if k not in ['_id', 'store_id']}
+                    item_copy['store_id'] = store_id
+                    item_copy['date_added'] = now
+                    await self.db.items.insert_one(item_copy)
+            
+            # Clone specials from source store
+            source_specials = await self.db.specials.find({"store_id": source_store_id}).to_list(length=None)
+            if source_specials:
+                for special in source_specials:
+                    special_copy = {k: v for k, v in special.items() if k not in ['_id', 'store_id']}
+                    special_copy['store_id'] = store_id
+                    special_copy['date_created'] = now
+                    await self.db.specials.insert_one(special_copy)
+            
+            # Clone slideshow images from source store
+            source_slideshow = await self.db.slideshow.find({"store_id": source_store_id}).sort("order", 1).to_list(length=None)
+            if source_slideshow:
+                for idx, slide in enumerate(source_slideshow, start=1):
+                    slide_copy = {k: v for k, v in slide.items() if k not in ['_id', 'store_id']}
+                    slide_copy['store_id'] = store_id
+                    slide_copy['date_added'] = now
+                    slide_copy['order'] = idx
+                    await self.db.slideshow.insert_one(slide_copy)
+            
+            return {"success": True, "store_slug": slug_id, "message": f'Store "{store_data["name"]}" created successfully from "{source_store.get("name", "")}"!'}
+        except DuplicateKeyError:
+            return {"success": False, "error": f'A store with URL slug "{slug_id}" already exists. Please choose a different one.'}
+        except Exception as e:
+            logger.error(f"[{self.write_scope}-Actor] Error cloning store: {e}", exc_info=True)
+            return {"success": False, "error": f"Error cloning store: {str(e)}"}
+
     async def create_store(self, business_type: str, form_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a new store."""
         self._check_ready()
@@ -648,21 +936,19 @@ class ExperimentActor:
             "name": form_data.get('name'),
             "slug_id": slug_id,
             "business_type": business_type,
-            "tagline": form_data.get('tagline'),
             "about_text": form_data.get('about_text'),
             "address": form_data.get('address'),
             "phone": form_data.get('phone'),
-            "phone_display": form_data.get('phone'),
+            "phone_display": form_data.get('phone_display', form_data.get('phone')),
             "hours": form_data.get('hours'),
-            "lang": "en",
-            "hero_image_url": None,
-            "logo_url": "/experiments/store_factory/static/img/logo.png",  # Default logo
-            "gallery_image_1_url": None,
-            "gallery_image_2_url": None,
-            "menu_image_url": None,
-            "google_maps_embed_html": '<iframe src="https://www.google.com/maps?q=Orlando,+FL+32812&output=embed" width="100%" height="100%" style="border:0;" allowfullscreen="" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>',
-            "inventory_description": None,
-            "socials": [],
+            "lang": form_data.get('lang', 'en'),
+            "logo_url": form_data.get('logo_url', '/experiments/store_factory/static/img/logo.png'),
+            "gallery_image_1_url": form_data.get('gallery_image_1_url'),
+            "gallery_image_2_url": form_data.get('gallery_image_2_url'),
+            "menu_image_url": form_data.get('menu_image_url'),
+            "google_maps_embed_html": form_data.get('google_maps_embed_html', '<iframe src="https://www.google.com/maps?q=Orlando,+FL+32812&output=embed" width="100%" height="100%" style="border:0;" allowfullscreen="" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>'),
+            "inventory_description": form_data.get('inventory_description'),
+            "socials": form_data.get('socials', []),
             # Theme defaults
             "theme_primary": form_data.get('theme_primary', '#3b82f6'),
             "theme_secondary": form_data.get('theme_secondary', '#f59e0b'),
@@ -821,6 +1107,53 @@ class ExperimentActor:
         """Get all business types configuration."""
         return BUSINESS_TYPES
 
+    async def get_seo_pwa_settings(self, store_slug: str) -> Dict[str, Any]:
+        """Get SEO and PWA settings for a store."""
+        self._check_ready()
+        
+        store = await self.db.stores.find_one({"slug_id": store_slug})
+        if not store:
+            return {"success": False, "error": "Store not found."}
+        
+        # Get SEO and PWA settings from store document
+        seo_settings = store.get("seo_settings", {})
+        pwa_settings = store.get("pwa_settings", {})
+        
+        return {
+            "success": True,
+            "seo_settings": seo_settings,
+            "pwa_settings": pwa_settings
+        }
+
+    async def update_seo_pwa_settings(self, store_slug: str, seo_settings: Optional[Dict[str, Any]] = None, pwa_settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Update SEO and PWA settings for a store."""
+        self._check_ready()
+        
+        store = await self.db.stores.find_one({"slug_id": store_slug})
+        if not store:
+            return {"success": False, "error": "Store not found."}
+        
+        update_data = {}
+        
+        if seo_settings is not None:
+            update_data["seo_settings"] = seo_settings
+        
+        if pwa_settings is not None:
+            update_data["pwa_settings"] = pwa_settings
+        
+        if not update_data:
+            return {"success": False, "error": "No settings provided to update."}
+        
+        try:
+            await self.db.stores.update_one(
+                {"slug_id": store_slug},
+                {"$set": update_data}
+            )
+            return {"success": True, "message": "SEO and PWA settings updated successfully."}
+        except Exception as e:
+            logger.error(f"[{self.write_scope}-Actor] Error updating SEO/PWA settings: {e}", exc_info=True)
+            return {"success": False, "error": f"Error updating settings: {str(e)}"}
+
     # --- Slideshow Management Methods ---
     
     async def get_slideshow_images(self, store_slug: str) -> List[Dict[str, Any]]:
@@ -972,7 +1305,6 @@ class ExperimentActor:
                     'business_type': 'restaurant',
                     'name': 'Country Pizza',
                     'slug_id': 'country-pizza',
-                    'tagline': 'Más de 40 años brindándoles servicio en Aguadilla',
                     'about_text': 'Cocina, barra y billares... todo en un solo lugar.',
                     'address': 'Carr. 110 Km 9, Bo. Maleza, Aguadilla, PR',
                     'phone': '17878914860',
@@ -1007,7 +1339,6 @@ class ExperimentActor:
                     'business_type': 'auto-sales',
                     'name': 'Premium Auto Sales',
                     'slug_id': 'premium-auto-sales',
-                    'tagline': 'Quality Vehicles at Great Prices',
                     'about_text': 'We specialize in quality pre-owned vehicles with full inspection and warranty options.',
                     'address': '456 Auto Boulevard, Car City, CA 90210',
                     'phone': '15551234567',
@@ -1029,7 +1360,6 @@ class ExperimentActor:
                     'business_type': 'auto-services',
                     'name': 'Quick Fix Auto Service',
                     'slug_id': 'quick-fix-auto',
-                    'tagline': 'Professional Auto Services You Can Trust',
                     'about_text': 'Full-service auto repair and maintenance with certified technicians.',
                     'address': '789 Service Road, Repair Town, TX 75001',
                     'phone': '15559876543',
@@ -1051,7 +1381,6 @@ class ExperimentActor:
                     'business_type': 'other-services',
                     'name': 'Pro Services Hub',
                     'slug_id': 'pro-services-hub',
-                    'tagline': 'Quality Services You Can Trust',
                     'about_text': 'Professional services for home and business needs.',
                     'address': '321 Service Center Drive, Business City, NY 10001',
                     'phone': '15558889999',
@@ -1070,7 +1399,6 @@ class ExperimentActor:
                     'business_type': 'generic-store',
                     'name': 'General Store Demo',
                     'slug_id': 'general-store-demo',
-                    'tagline': 'Quality Products You\'ll Love',
                     'about_text': 'A wide variety of quality products for all your needs.',
                     'address': '999 Store Street, Shopping Mall, FL 33101',
                     'phone': '15557778888',
@@ -1105,7 +1433,6 @@ class ExperimentActor:
                     "name": demo['name'],
                     "slug_id": demo['slug_id'],
                     "business_type": demo['business_type'],
-                    "tagline": demo['tagline'],
                     "about_text": demo['about_text'],
                     "address": demo['address'],
                     "phone": demo['phone'],
@@ -1342,6 +1669,203 @@ class ExperimentActor:
         
         logger.info(f"[{self.write_scope}-Actor] Post-initialization setup complete.")
 
+    async def create_export_data_from_form(self, business_type: str, form_data: Dict[str, Any], source_store_slug: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Create export data structure from form data without saving to database.
+        Used for 'Create Store' flow where users configure and download.
+        """
+        self._check_ready()
+        
+        if business_type not in BUSINESS_TYPES:
+            return {"success": False, "error": "Invalid business type selected."}
+        
+        # Generate slug_id if not provided
+        slug_id = form_data.get('slug_id', '').strip().lower()
+        if not slug_id:
+            slug_id = form_data.get('name', '').lower().replace(' ', '-')
+            slug_id = ''.join(c for c in slug_id if c.isalnum() or c == '-')
+        
+        now = datetime.datetime.utcnow()
+        
+        # If cloning from source store, get its data
+        if source_store_slug:
+            source_store = await self.db.stores.find_one({"slug_id": source_store_slug})
+            if not source_store:
+                return {"success": False, "error": "Source store not found."}
+            source_store_id = source_store['_id']
+            source_items = await self.db.items.find({"store_id": source_store_id}).to_list(length=None)
+            source_specials = await self.db.specials.find({"store_id": source_store_id}).to_list(length=None)
+            source_slideshow = await self.db.slideshow.find({"store_id": source_store_id}).sort("order", 1).to_list(length=None)
+        else:
+            source_store = None
+            source_items = []
+            source_specials = []
+            source_slideshow = []
+        
+        # Create store data structure
+        store_data = {
+            "name": form_data.get('name', source_store.get('name', '') if source_store else ''),
+            "slug_id": slug_id,
+            "business_type": business_type if not source_store else source_store.get('business_type', business_type),
+            "about_text": form_data.get('about_text', source_store.get('about_text', '') if source_store else ''),
+            "address": form_data.get('address', source_store.get('address', '') if source_store else ''),
+            "phone": form_data.get('phone', source_store.get('phone', '') if source_store else ''),
+            "phone_display": form_data.get('phone_display', form_data.get('phone', source_store.get('phone_display', source_store.get('phone', '')) if source_store else '')),
+            "hours": form_data.get('hours', source_store.get('hours', '') if source_store else ''),
+            "lang": form_data.get('lang', source_store.get('lang', 'en') if source_store else 'en'),
+            "logo_url": form_data.get('logo_url', source_store.get('logo_url', '/experiments/store_factory/static/img/logo.png') if source_store else '/experiments/store_factory/static/img/logo.png'),
+            "gallery_image_1_url": form_data.get('gallery_image_1_url', source_store.get('gallery_image_1_url') if source_store else None),
+            "gallery_image_2_url": form_data.get('gallery_image_2_url', source_store.get('gallery_image_2_url') if source_store else None),
+            "menu_image_url": form_data.get('menu_image_url', source_store.get('menu_image_url') if source_store else None),
+            "google_maps_embed_html": form_data.get('google_maps_embed_html', source_store.get('google_maps_embed_html', '<iframe src="https://www.google.com/maps?q=Orlando,+FL+32812&output=embed" width="100%" height="100%" style="border:0;" allowfullscreen="" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>') if source_store else '<iframe src="https://www.google.com/maps?q=Orlando,+FL+32812&output=embed" width="100%" height="100%" style="border:0;" allowfullscreen="" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>'),
+            "inventory_description": form_data.get('inventory_description', source_store.get('inventory_description') if source_store else None),
+            "socials": form_data.get('socials', source_store.get('socials', []) if source_store else []),
+            "theme_primary": form_data.get('theme_primary', source_store.get('theme_primary', '#3b82f6') if source_store else '#3b82f6'),
+            "theme_secondary": form_data.get('theme_secondary', source_store.get('theme_secondary', '#f59e0b') if source_store else '#f59e0b'),
+            "theme_background": form_data.get('theme_background', source_store.get('theme_background', '#111827') if source_store else '#111827'),
+            "theme_surface": form_data.get('theme_surface', source_store.get('theme_surface', '#1f2937') if source_store else '#1f2937'),
+            "theme_text": form_data.get('theme_text', source_store.get('theme_text', '#f9fafb') if source_store else '#f9fafb'),
+            "theme_text_secondary": form_data.get('theme_text_secondary', source_store.get('theme_text_secondary', '#d1d5db') if source_store else '#d1d5db'),
+            "date_created": now
+        }
+        
+        # Get items - from source if cloning, otherwise generate defaults
+        if source_items:
+            items = []
+            for item in source_items:
+                item_copy = {k: v for k, v in item.items() if k not in ['_id', 'store_id']}
+                item_copy['date_added'] = now
+                items.append(item_copy)
+        else:
+            # Generate default items based on business type
+            business_config = BUSINESS_TYPES[business_type]
+            items = []
+            default_items = []
+            
+            if business_type == 'restaurant':
+                default_items = [
+                    {"name": "Classic Burger", "item_code": f"{business_config['item_code_prefix']}-001", "price": 12.99, "description": "Juicy beef patty with fresh lettuce, tomato, and our special sauce on a toasted bun.", "status": "Available", "attributes": {"Category": "Main Course", "Ingredients": "Beef, Lettuce, Tomato, Cheese", "Allergens": "Gluten, Dairy"}, "image_url": "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=800&auto=format&fit=crop"},
+                    {"name": "Margherita Pizza", "item_code": f"{business_config['item_code_prefix']}-002", "price": 15.99, "description": "Traditional Italian pizza with fresh mozzarella, basil, and tomato sauce.", "status": "Available", "attributes": {"Category": "Main Course", "Ingredients": "Dough, Mozzarella, Basil, Tomato Sauce", "Allergens": "Gluten, Dairy"}, "image_url": "https://images.unsplash.com/photo-1574071318508-1cdbab80d002?w=800&auto=format&fit=crop"},
+                    {"name": "Caesar Salad", "item_code": f"{business_config['item_code_prefix']}-003", "price": 9.99, "description": "Fresh romaine lettuce with Caesar dressing, parmesan cheese, and croutons.", "status": "Available", "attributes": {"Category": "Salad", "Ingredients": "Romaine, Caesar Dressing, Parmesan, Croutons", "Allergens": "Dairy, Gluten"}, "image_url": "https://images.unsplash.com/photo-1546793665-c74683f339c1?w=800&auto=format&fit=crop"}
+                ]
+            elif business_type == 'auto-sales':
+                default_items = [
+                    {"name": "2020 Honda Accord", "item_code": f"{business_config['item_code_prefix']}-001", "price": 24999.00, "description": "Well-maintained sedan with low mileage and excellent fuel economy.", "status": "Available", "attributes": {"Make": "Honda", "Model": "Accord", "Year": "2020", "Mileage": "35000", "Color": "Silver", "Condition": "Excellent"}, "image_url": "https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?w=800&auto=format&fit=crop"},
+                    {"name": "2019 Toyota Camry", "item_code": f"{business_config['item_code_prefix']}-002", "price": 22999.00, "description": "Reliable and spacious family sedan with great safety features.", "status": "Available", "attributes": {"Make": "Toyota", "Model": "Camry", "Year": "2019", "Mileage": "42000", "Color": "White", "Condition": "Very Good"}, "image_url": "https://images.unsplash.com/photo-1617486496723-e46bd3c9bd9d?w=800&auto=format&fit=crop"}
+                ]
+            elif business_type == 'auto-services':
+                default_items = [
+                    {"name": "Full Service Oil Change", "item_code": f"{business_config['item_code_prefix']}-001", "price": 49.99, "description": "Complete oil change service with premium oil and filter replacement.", "status": "Available", "attributes": {"Service Type": "Maintenance", "Duration": "30 minutes", "Warranty": "3 months", "Includes": "Oil change, filter replacement, fluid check"}, "image_url": "https://images.unsplash.com/photo-1581092160562-40aa08e78837?w=800&auto=format&fit=crop"},
+                    {"name": "Brake Inspection & Service", "item_code": f"{business_config['item_code_prefix']}-002", "price": 89.99, "description": "Comprehensive brake inspection and necessary adjustments or repairs.", "status": "Available", "attributes": {"Service Type": "Repair", "Duration": "1-2 hours", "Warranty": "6 months", "Includes": "Inspection, adjustment, pad replacement if needed"}, "image_url": "https://images.unsplash.com/photo-1486262715619-67b85e0b08d3?w=800&auto=format&fit=crop"}
+                ]
+            elif business_type == 'other-services':
+                default_items = [
+                    {"name": "Basic Consultation", "item_code": f"{business_config['item_code_prefix']}-001", "price": 99.00, "description": "One-on-one consultation to discuss your needs and provide recommendations.", "status": "Available", "attributes": {"Service Type": "Consultation", "Duration": "1 hour", "What's Included": "Initial meeting, needs assessment, recommendations"}, "image_url": "https://images.unsplash.com/photo-1556761175-5973dc0f32e7?w=800&auto=format&fit=crop"}
+                ]
+            else:  # generic-store
+                default_items = [
+                    {"name": "Premium Product", "item_code": f"{business_config['item_code_prefix']}-001", "price": 49.99, "description": "High-quality product with excellent value.", "status": "Available", "attributes": {"Category": "General", "Brand": "Premium", "Color": "Black", "Size": "Standard", "Material": "Quality"}, "image_url": "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800&auto=format&fit=crop"}
+                ]
+            
+            items = default_items
+        
+        # Get specials - from source if cloning, otherwise defaults
+        if source_specials:
+            specials = []
+            for special in source_specials:
+                special_copy = {k: v for k, v in special.items() if k not in ['_id', 'store_id']}
+                special_copy['date_created'] = now
+                specials.append(special_copy)
+        else:
+            specials = [
+                {"title": "Grand Opening Special!", "content": "Welcome to our store! Check out our amazing selection and get started today. We're excited to serve you!", "date_created": now},
+                {"title": "New Customer Discount", "content": "New customers get 10% off their first order! Mention this special when placing your order.", "date_created": now}
+            ]
+        
+        # Get slideshow - from source if cloning, otherwise defaults
+        if source_slideshow:
+            slideshow_images = []
+            for idx, slide in enumerate(source_slideshow, start=1):
+                slide_copy = {k: v for k, v in slide.items() if k not in ['_id', 'store_id']}
+                slide_copy['date_added'] = now
+                slide_copy['order'] = idx
+                slideshow_images.append(slide_copy)
+        else:
+            # Generate default slideshow based on business type
+            business_config = BUSINESS_TYPES[business_type]
+            if business_type == 'restaurant':
+                default_slideshow = [
+                    {"image_url": "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=1600&auto=format&fit=crop", "caption": "Delicious Food & Great Service"},
+                    {"image_url": "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=1600&auto=format&fit=crop", "caption": "Fresh Ingredients Daily"}
+                ]
+            elif business_type == 'auto-sales':
+                default_slideshow = [
+                    {"image_url": "https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?w=1600&auto=format&fit=crop", "caption": "Quality Vehicles at Great Prices"},
+                    {"image_url": "https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?w=1600&auto=format&fit=crop", "caption": "Your Dream Car Awaits"}
+                ]
+            elif business_type == 'auto-services':
+                default_slideshow = [
+                    {"image_url": "https://images.unsplash.com/photo-1605559424843-9e4c228bf1c2?w=1600&auto=format&fit=crop", "caption": "Professional Auto Services"},
+                    {"image_url": "https://images.unsplash.com/photo-1486262715619-67b85e0b08d3?w=1600&auto=format&fit=crop", "caption": "Expert Technicians"}
+                ]
+            elif business_type == 'other-services':
+                default_slideshow = [
+                    {"image_url": "https://images.unsplash.com/photo-1497366216548-37526070297c?w=1600&auto=format&fit=crop", "caption": "Quality Services You Can Trust"},
+                    {"image_url": "https://images.unsplash.com/photo-1556761175-5973dc0f32e7?w=1600&auto=format&fit=crop", "caption": "Professional Solutions"}
+                ]
+            else:  # generic-store
+                default_slideshow = [
+                    {"image_url": "https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=1600&auto=format&fit=crop", "caption": "Quality Products You'll Love"},
+                    {"image_url": "https://images.unsplash.com/photo-1468495244123-6c6c332eeece?w=1600&auto=format&fit=crop", "caption": "Wide Selection Available"}
+                ]
+            
+            slideshow_images = []
+            for idx, slide_data in enumerate(default_slideshow, start=1):
+                slideshow_images.append({
+                    "image_url": slide_data["image_url"],
+                    "caption": slide_data["caption"],
+                    "order": idx,
+                    "date_added": now
+                })
+        
+        # Convert ObjectIds to strings for JSON serialization
+        def convert_objectid(obj):
+            if isinstance(obj, ObjectId):
+                return str(obj)
+            elif isinstance(obj, dict):
+                return {k: convert_objectid(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_objectid(item) for item in obj]
+            elif isinstance(obj, datetime.datetime):
+                return obj.isoformat()
+            return obj
+        
+        # Create user for admin access
+        user_data = {
+            "email": form_data.get('email', 'admin@example.com'),
+            "password": form_data.get('password', 'password123'),  # Plain text for standalone store
+            "role": "owner",
+            "date_created": now
+        }
+        
+        # Prepare export data (same structure as export_store_data)
+        export_data = {
+            "store": convert_objectid(store_data),
+            "items": convert_objectid(items),
+            "specials": convert_objectid(specials),
+            "slideshow_images": convert_objectid(slideshow_images),
+            "users": convert_objectid([user_data]),
+            "export_metadata": {
+                "exported_at": now.isoformat(),
+                "store_slug": slug_id,
+                "store_name": store_data.get('name', ''),
+                "business_type": business_type if not source_store else source_store.get('business_type', business_type),
+                "version": "1.0"
+            }
+        }
+        
+        return {"success": True, "data": export_data}
+
     async def export_store_data(self, store_slug: str) -> Dict[str, Any]:
         """
         Export all data for a store as a JSON-compatible dictionary.
@@ -1360,6 +1884,7 @@ class ExperimentActor:
         items = await self.db.items.find({"store_id": store_id}).sort("date_added", 1).to_list(length=None)
         specials = await self.db.specials.find({"store_id": store_id}).sort("date_created", 1).to_list(length=None)
         slideshow_images = await self.db.slideshow.find({"store_id": store_id}).sort("order", 1).to_list(length=None)
+        users = await self.db.users.find({"store_id": store_id}).to_list(length=None)
         
         # Convert ObjectIds to strings for JSON serialization
         def convert_objectid(obj):
@@ -1379,6 +1904,7 @@ class ExperimentActor:
             "items": convert_objectid(items),
             "specials": convert_objectid(specials),
             "slideshow_images": convert_objectid(slideshow_images),
+            "users": convert_objectid(users),
             "export_metadata": {
                 "exported_at": datetime.datetime.utcnow().isoformat(),
                 "store_slug": store_slug,

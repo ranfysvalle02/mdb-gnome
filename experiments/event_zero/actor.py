@@ -336,10 +336,42 @@ class ExperimentActor:
                     print(f"[{self.write_scope}-Actor] ✅ Users seeded manually (exception fallback).", flush=True, file=sys.stderr)
                     logger.info("Users seeded manually (exception fallback).")
             
-            # Get admin ID for event creation
+            # Ensure admin and buyer users exist (final verification)
             admin_doc = await self.db.users.find_one({"_id": "usr_admin"})
             if not admin_doc:
-                admin_doc = await self.db.users.find_one({"role": "admin"})
+                admin_doc = await self.db.users.find_one({"email": "admin@example.com"})
+            if not admin_doc:
+                # Create admin user if it doesn't exist
+                print(f"[{self.write_scope}-Actor] ⚠️  Admin user not found, creating...", flush=True, file=sys.stderr)
+                admin = User(
+                    id="usr_admin",
+                    email="admin@example.com",
+                    password_hash=generate_password_hash("password123"),
+                    role=UserRole.ADMIN
+                )
+                await self.db.users.insert_one(to_mongo(admin))
+                admin_doc = await self.db.users.find_one({"_id": "usr_admin"})
+                print(f"[{self.write_scope}-Actor] ✅ Admin user created.", flush=True, file=sys.stderr)
+                logger.info("Admin user created.")
+            
+            buyer_doc = await self.db.users.find_one({"_id": "usr_buyer"})
+            if not buyer_doc:
+                buyer_doc = await self.db.users.find_one({"email": "alice@example.com"})
+            if not buyer_doc:
+                # Create buyer user if it doesn't exist
+                print(f"[{self.write_scope}-Actor] ⚠️  Buyer user not found, creating...", flush=True, file=sys.stderr)
+                buyer = User(
+                    id="usr_buyer",
+                    email="alice@example.com",
+                    password_hash=generate_password_hash("password123"),
+                    role=UserRole.BUYER
+                )
+                await self.db.users.insert_one(to_mongo(buyer))
+                buyer_doc = await self.db.users.find_one({"_id": "usr_buyer"})
+                print(f"[{self.write_scope}-Actor] ✅ Buyer user created.", flush=True, file=sys.stderr)
+                logger.info("Buyer user created.")
+            
+            # Get admin ID for event creation
             admin_id = admin_doc["_id"] if admin_doc else "usr_admin"
             
             # Always ensure hotels exist (idempotent)

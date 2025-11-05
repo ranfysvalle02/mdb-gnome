@@ -6,51 +6,196 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <title>{{ business_type_name }} - StoreFactory</title>
+    <style>
+        .form-section {
+            display: none;
+        }
+        .form-section.active {
+            display: block;
+        }
+    </style>
 </head>
 <body class="bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 min-h-screen">
     <div class="container mx-auto px-6 py-12">
         <div class="text-center mb-12">
             <h1 class="text-5xl font-extrabold text-white mb-4">{{ business_type_name }}</h1>
-            <p class="text-xl text-gray-300">Select an existing store or create a new one</p>
+            <p class="text-xl text-gray-300">Choose how you'd like to create your store</p>
         </div>
+        
+        {% if error %}
+        <div class="max-w-4xl mx-auto mb-6">
+            <div class="bg-red-900 border border-red-700 text-red-200 px-6 py-4 rounded-xl">
+                <i class="fas fa-exclamation-circle mr-2"></i>
+                {{ error }}
+            </div>
+        </div>
+        {% endif %}
+        
         <div class="max-w-4xl mx-auto">
-            <div class="bg-gray-800 border border-gray-700 rounded-2xl p-8 mb-8">
-                <h2 class="text-3xl font-bold text-white mb-6">Create New Store</h2>
+            <!-- Create New Store Form (Always Visible) -->
+            <div id="create-form" class="bg-gray-800 border border-gray-700 rounded-2xl p-8 mb-8">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-3xl font-bold text-white">Create New Store</h2>
+                </div>
                 <form method="post" action="/experiments/store_factory/create/{{ business_type }}" class="space-y-6">
-                    <div>
-                        <label for="name" class="block text-sm font-semibold text-gray-300 mb-2">Store Name *</label>
-                        <input type="text" name="name" id="name" required 
-                               class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl" 
-                               placeholder="My Awesome {{ business_type_name }}">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="md:col-span-2">
+                            <label for="name" class="block text-sm font-semibold text-gray-300 mb-2">Store Name *</label>
+                            <input type="text" name="name" id="name" required 
+                                   class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl" 
+                                   placeholder="My Awesome {{ business_type_name }}">
+                        </div>
+                        <div>
+                            <label for="slug_id" class="block text-sm font-semibold text-gray-300 mb-2">URL Slug *</label>
+                            <input type="text" name="slug_id" id="slug_id" required 
+                                   class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl"
+                                   placeholder="my-awesome-store" pattern="[a-z0-9-]+">
+                            <p class="text-sm text-gray-400 mt-1">Lowercase letters, numbers, and hyphens only</p>
+                        </div>
+                        <div class="md:col-span-2">
+                            <label for="about_text" class="block text-sm font-semibold text-gray-300 mb-2">About / Description</label>
+                            <textarea name="about_text" id="about_text" rows="3"
+                                      class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl"
+                                      placeholder="Tell customers about your store..."></textarea>
+                        </div>
+                        <div class="md:col-span-2">
+                            <label for="address" class="block text-sm font-semibold text-gray-300 mb-2">Address</label>
+                            <input type="text" name="address" id="address" 
+                                   class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl"
+                                   placeholder="123 Main St, City, State ZIP">
+                        </div>
+                        <div>
+                            <label for="phone" class="block text-sm font-semibold text-gray-300 mb-2">Phone Number</label>
+                            <input type="tel" name="phone" id="phone" 
+                                   class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl"
+                                   placeholder="15551234567">
+                        </div>
+                        <div>
+                            <label for="phone_display" class="block text-sm font-semibold text-gray-300 mb-2">Phone Display Format</label>
+                            <input type="text" name="phone_display" id="phone_display" 
+                                   class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl"
+                                   placeholder="(555) 123-4567">
+                        </div>
+                        <div class="md:col-span-2">
+                            <label for="hours" class="block text-sm font-semibold text-gray-300 mb-2">Business Hours</label>
+                            <textarea name="hours" id="hours" rows="2"
+                                      class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl"
+                                      placeholder="Monday-Friday: 9am-5pm&#10;Saturday: 10am-3pm"></textarea>
+                        </div>
+                        <div class="md:col-span-2">
+                            <label for="logo_url" class="block text-sm font-semibold text-gray-300 mb-2">Logo URL</label>
+                            <input type="url" name="logo_url" id="logo_url" 
+                                   class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl"
+                                   placeholder="https://example.com/logo.png">
+                            <p class="text-sm text-gray-400 mt-1">Leave empty to use default logo</p>
+                        </div>
                     </div>
-                    <div>
-                        <label for="slug_id" class="block text-sm font-semibold text-gray-300 mb-2">URL Slug *</label>
-                        <input type="text" name="slug_id" id="slug_id" required 
-                               class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl"
-                               placeholder="my-awesome-store" pattern="[a-z0-9-]+">
+                    
+                    <div class="border-t border-gray-700 pt-6 mt-6">
+                        <h3 class="text-xl font-bold text-white mb-4">Admin Account</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label for="email" class="block text-sm font-semibold text-gray-300 mb-2">Admin Email *</label>
+                                <input type="email" name="email" id="email" required 
+                                       class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl">
+                            </div>
+                            <div>
+                                <label for="password" class="block text-sm font-semibold text-gray-300 mb-2">Admin Password *</label>
+                                <input type="password" name="password" id="password" required 
+                                       class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl">
+                            </div>
+                        </div>
                     </div>
-                    <div>
-                        <label for="tagline" class="block text-sm font-semibold text-gray-300 mb-2">Tagline</label>
-                        <input type="text" name="tagline" id="tagline" 
-                               class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl">
-                    </div>
-                    <div>
-                        <label for="email" class="block text-sm font-semibold text-gray-300 mb-2">Admin Email *</label>
-                        <input type="email" name="email" id="email" required 
-                               class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl">
-                    </div>
-                    <div>
-                        <label for="password" class="block text-sm font-semibold text-gray-300 mb-2">Admin Password *</label>
-                        <input type="password" name="password" id="password" required 
-                               class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl">
-                    </div>
-                    <div class="pt-4">
-                        <button type="submit" class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-xl">
-                            Create Store
+                    
+                    <div class="pt-4 flex gap-4">
+                        <button type="submit" class="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-xl">
+                            <i class="fas fa-download mr-2"></i>Create & Download Store
                         </button>
                     </div>
                 </form>
             </div>
+            
+            <!-- Two Options: Clone or Create New -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8" id="option-selector">
+                <button onclick="showCloneForm()" class="bg-blue-800 border-2 border-blue-600 rounded-2xl p-8 text-center hover:border-blue-400 transition-all group">
+                    <i class="fas fa-copy text-5xl text-blue-400 mb-4 group-hover:scale-110 transition-transform"></i>
+                    <h2 class="text-3xl font-bold text-white mb-3">Start from Existing Store</h2>
+                    <p class="text-gray-300">Clone an existing store and customize it. Perfect if you want to start with sample content!</p>
+                </button>
+                <button onclick="showCreateForm()" class="bg-green-800 border-2 border-green-600 rounded-2xl p-8 text-center hover:border-green-400 transition-all group">
+                    <i class="fas fa-plus-circle text-5xl text-green-400 mb-4 group-hover:scale-110 transition-transform"></i>
+                    <h2 class="text-3xl font-bold text-white mb-3">Create New Store</h2>
+                    <p class="text-gray-300">Start fresh with a detailed form. We'll gather all the details you need.</p>
+                </button>
+            </div>
+            
+            <!-- Clone Store Form -->
+            <div id="clone-form" class="form-section bg-gray-800 border border-gray-700 rounded-2xl p-8 mb-8">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-3xl font-bold text-white">Clone from Existing Store</h2>
+                    <button onclick="hideForms()" class="text-gray-400 hover:text-white">
+                        <i class="fas fa-times text-2xl"></i>
+                    </button>
+                </div>
+                {% if all_stores|length > 0 %}
+                <form method="post" action="/experiments/store_factory/clone" class="space-y-6">
+                    <input type="hidden" name="business_type" value="{{ business_type }}">
+                    <div>
+                        <label for="source_store" class="block text-sm font-semibold text-gray-300 mb-2">Select Store to Clone *</label>
+                        <select name="source_store" id="source_store" required 
+                                class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl">
+                            <option value="">-- Choose a store --</option>
+                            {% for store in all_stores %}
+                            <option value="{{ store.slug_id }}">
+                                {{ store.name }} 
+                                - {{ BUSINESS_TYPES[store.business_type]['name'] if store.business_type in BUSINESS_TYPES else 'Store' }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <p class="text-sm text-gray-400 mt-2">This will copy all items, specials, and slideshow images from the selected store.</p>
+                    </div>
+                    <div>
+                        <label for="clone_name" class="block text-sm font-semibold text-gray-300 mb-2">New Store Name *</label>
+                        <input type="text" name="name" id="clone_name" required 
+                               class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl" 
+                               placeholder="My {{ business_type_name }}">
+                    </div>
+                    <div>
+                        <label for="clone_slug_id" class="block text-sm font-semibold text-gray-300 mb-2">URL Slug *</label>
+                        <input type="text" name="slug_id" id="clone_slug_id" required 
+                               class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl"
+                               placeholder="my-store" pattern="[a-z0-9-]+">
+                        <p class="text-sm text-gray-400 mt-1">Lowercase letters, numbers, and hyphens only</p>
+                    </div>
+                    <div>
+                        <label for="clone_email" class="block text-sm font-semibold text-gray-300 mb-2">Admin Email *</label>
+                        <input type="email" name="email" id="clone_email" required 
+                               class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl">
+                    </div>
+                    <div>
+                        <label for="clone_password" class="block text-sm font-semibold text-gray-300 mb-2">Admin Password *</label>
+                        <input type="password" name="password" id="clone_password" required 
+                               class="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-xl">
+                    </div>
+                    <div class="pt-4 flex gap-4">
+                        <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-xl">
+                            <i class="fas fa-copy mr-2"></i>Clone Store
+                        </button>
+                        <button type="button" onclick="hideForms()" class="px-6 bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 rounded-xl">
+                            Cancel
+                        </button>
+                    </div>
+                </form>
+                {% else %}
+                <div class="text-center py-8 text-gray-400">
+                    <p>No existing stores found to clone from.</p>
+                    <p class="mt-2">Please use "Create New Store" instead.</p>
+                </div>
+                {% endif %}
+            </div>
+            
+            
+            <!-- Existing Stores List -->
             {% if existing_stores|length > 0 %}
             <div class="bg-gray-800 border border-gray-700 rounded-2xl p-8">
                 <h2 class="text-3xl font-bold text-white mb-6">Existing Stores</h2>
@@ -60,7 +205,7 @@
                         <a href="/experiments/store_factory/{{ store.slug_id }}" 
                            class="block hover:border-indigo-400 mb-4">
                             <h3 class="text-2xl font-bold text-white">{{ store.name }}</h3>
-                            <p class="text-gray-300 mt-2">{{ store.tagline or 'No tagline set' }}</p>
+                            <p class="text-gray-300 mt-2">{{ store.about_text or 'No description set' }}</p>
                         </a>
                         <div class="flex gap-3">
                             <a href="/experiments/store_factory/{{ store.slug_id }}" 
@@ -79,6 +224,46 @@
             {% endif %}
         </div>
     </div>
+    <script>
+        function showCloneForm() {
+            document.getElementById('option-selector').style.display = 'none';
+            document.getElementById('clone-form').classList.add('active');
+            document.getElementById('create-form').classList.remove('active');
+        }
+        
+        function showCreateForm() {
+            document.getElementById('option-selector').style.display = 'none';
+            document.getElementById('create-form').classList.add('active');
+            document.getElementById('clone-form').classList.remove('active');
+        }
+        
+        function hideForms() {
+            document.getElementById('option-selector').style.display = 'grid';
+            document.getElementById('clone-form').classList.remove('active');
+            document.getElementById('create-form').classList.remove('active');
+        }
+        
+        // Auto-generate slug from name
+        document.getElementById('name')?.addEventListener('input', function(e) {
+            const slugInput = document.getElementById('slug_id');
+            if (slugInput && !slugInput.value) {
+                const slug = e.target.value.toLowerCase()
+                    .replace(/[^a-z0-9]+/g, '-')
+                    .replace(/^-+|-+$/g, '');
+                slugInput.value = slug;
+            }
+        });
+        
+        // Same for clone form
+        document.getElementById('clone_name')?.addEventListener('input', function(e) {
+            const slugInput = document.getElementById('clone_slug_id');
+            if (slugInput && !slugInput.value) {
+                const slug = e.target.value.toLowerCase()
+                    .replace(/[^a-z0-9]+/g, '-')
+                    .replace(/^-+|-+$/g, '');
+                slugInput.value = slug;
+            }
+        });
+    </script>
 </body>
 </html>
-

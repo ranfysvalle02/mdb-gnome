@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Manage Items - {{ store.name }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+</head>
+<body class="bg-gray-900 text-white min-h-screen">
+    <div class="container mx-auto px-6 py-10">
+        <div class="flex justify-between items-center mb-8">
+            <h1 class="text-4xl font-bold">Manage {{ business_config.item_plural or 'Items' }}</h1>
+            <div class="flex items-center space-x-4">
+                <a href="/{{ store.slug_id }}/admin/dashboard" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white font-bold rounded-lg">
+                    <i class="fas fa-arrow-left mr-2"></i>
+                    Back to Dashboard
+                </a>
+                <a href="/{{ store.slug_id }}" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg">
+                    <i class="fas fa-store mr-2"></i>
+                    View Store
+                </a>
+            </div>
+        </div>
+        
+        <div class="bg-gray-800 border border-gray-700 rounded-lg p-8 mb-6">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-bold">All {{ business_config.item_plural or 'Items' }}</h2>
+                <span class="text-gray-400">{{ items|length }} {{ business_config.item_plural or 'items' if items|length != 1 else business_config.item_label or 'item' }}</span>
+            </div>
+            
+            {% if items %}
+            <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                    <thead>
+                        <tr class="border-b border-gray-700">
+                            <th class="pb-3 pr-4">Image</th>
+                            <th class="pb-3 pr-4">{{ business_config.item_label or 'Item' }} Name</th>
+                            <th class="pb-3 pr-4">{{ business_config.item_code_label or 'Code' }}</th>
+                            <th class="pb-3 pr-4">Price</th>
+                            <th class="pb-3 pr-4">Status</th>
+                            <th class="pb-3 pr-4">Date Added</th>
+                            <th class="pb-3">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in items %}
+                        <tr class="border-b border-gray-700 hover:bg-gray-700">
+                            <td class="py-4 pr-4">
+                                {% if item.image_url %}
+                                <img src="{{ item.image_url }}" alt="{{ item.name }}" class="w-16 h-16 object-cover rounded">
+                                {% else %}
+                                <div class="w-16 h-16 bg-gray-700 rounded flex items-center justify-center">
+                                    <i class="fas fa-image text-gray-500"></i>
+                                </div>
+                                {% endif %}
+                            </td>
+                            <td class="py-4 pr-4 font-semibold">{{ item.name }}</td>
+                            <td class="py-4 pr-4 text-gray-400">{{ item.item_code or 'N/A' }}</td>
+                            <td class="py-4 pr-4">
+                                {% if item.price %}
+                                ${{ "%.2f"|format(item.price) }}
+                                {% else %}
+                                <span class="text-gray-500">N/A</span>
+                                {% endif %}
+                            </td>
+                            <td class="py-4 pr-4">
+                                <span class="px-2 py-1 rounded text-sm {% if item.status == 'Available' %}bg-green-900 text-green-200{% elif item.status == 'Sold' %}bg-red-900 text-red-200{% else %}bg-yellow-900 text-yellow-200{% endif %}">
+                                    {{ item.status or 'Available' }}
+                                </span>
+                            </td>
+                            <td class="py-4 pr-4 text-gray-400 text-sm">
+                                {% if item.date_added %}
+                                {{ item.date_added.strftime('%Y-%m-%d') if item.date_added.__class__.__name__ == 'datetime' else item.date_added[:10] }}
+                                {% else %}
+                                N/A
+                                {% endif %}
+                            </td>
+                            <td class="py-4">
+                                <a href="/{{ store.slug_id }}/item/{{ item._id }}" class="text-blue-400 hover:text-blue-300 mr-3" title="View">
+                                    <i class="fas fa-eye"></i>
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-12">
+                <i class="fas fa-box text-6xl text-gray-600 mb-4"></i>
+                <p class="text-xl text-gray-400 mb-2">No {{ business_config.item_plural or 'items' }} yet</p>
+                <p class="text-gray-500">Start adding {{ business_config.item_plural or 'items' }} to your store!</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>
+

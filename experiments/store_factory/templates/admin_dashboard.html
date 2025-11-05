@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Admin Dashboard - {{ store.name }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+</head>
+<body class="bg-gray-900 text-white min-h-screen">
+    <div class="container mx-auto px-6 py-10">
+        <div class="flex justify-between items-center mb-8">
+            <h1 class="text-4xl font-bold">Admin Dashboard - {{ store.name }}</h1>
+            <div class="flex items-center space-x-4">
+                <span class="text-gray-400">Logged in as: {{ user.email or 'Admin' }}</span>
+                <form action="/{{ store.slug_id }}/admin/logout" method="POST" class="inline">
+                    <button type="submit" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg">
+                        Logout
+                    </button>
+                </form>
+            </div>
+        </div>
+        
+        <!-- Store Stats -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+            <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-gray-400 text-sm">Items</p>
+                        <p class="text-3xl font-bold">{{ items_count }}</p>
+                    </div>
+                    <i class="fas fa-box text-3xl text-blue-500"></i>
+                </div>
+            </div>
+            <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-gray-400 text-sm">Specials</p>
+                        <p class="text-3xl font-bold">{{ specials_count }}</p>
+                    </div>
+                    <i class="fas fa-star text-3xl text-yellow-500"></i>
+                </div>
+            </div>
+            <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-gray-400 text-sm">Slideshow</p>
+                        <p class="text-3xl font-bold">{{ slideshow_count }}</p>
+                    </div>
+                    <i class="fas fa-images text-3xl text-green-500"></i>
+                </div>
+            </div>
+            <div class="bg-gray-800 border border-gray-700 rounded-lg p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-gray-400 text-sm">Inquiries</p>
+                        <p class="text-3xl font-bold">{{ inquiries_count }}</p>
+                    </div>
+                    <i class="fas fa-envelope text-3xl text-purple-500"></i>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Quick Actions -->
+        <div class="bg-gray-800 border border-gray-700 rounded-lg p-8 mb-6">
+            <h2 class="text-2xl font-bold mb-6">
+                <i class="fas fa-bolt mr-2"></i>
+                Quick Actions
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <a href="/{{ store.slug_id }}" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-center">
+                    <i class="fas fa-store mr-2"></i>
+                    View Store
+                </a>
+                <a href="/{{ store.slug_id }}/admin/items" class="px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg text-center">
+                    <i class="fas fa-box mr-2"></i>
+                    Manage Items
+                </a>
+                <a href="/{{ store.slug_id }}/admin/specials" class="px-6 py-3 bg-yellow-600 hover:bg-yellow-700 text-white font-bold rounded-lg text-center">
+                    <i class="fas fa-star mr-2"></i>
+                    Manage Specials
+                </a>
+                <a href="/{{ store.slug_id }}/admin/inquiries" class="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-lg text-center">
+                    <i class="fas fa-envelope mr-2"></i>
+                    View Inquiries
+                </a>
+                <a href="/experiments/store_factory/{{ store.slug_id }}/admin/slideshow" class="px-6 py-3 bg-pink-600 hover:bg-pink-700 text-white font-bold rounded-lg text-center">
+                    <i class="fas fa-images mr-2"></i>
+                    Manage Slideshow
+                </a>
+            </div>
+        </div>
+        
+        <!-- Store Information -->
+        <div class="bg-gray-800 border border-gray-700 rounded-lg p-8 mb-6">
+            <h2 class="text-2xl font-bold mb-6">
+                <i class="fas fa-info-circle mr-2"></i>
+                Store Information
+            </h2>
+            <form id="store-info-form" class="space-y-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label for="store_name" class="block text-gray-400 text-sm mb-2">Store Name</label>
+                        <input type="text" id="store_name" name="name" value="{{ store.name or '' }}" required
+                               class="w-full px-4 py-2 bg-gray-700 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label for="store_slug" class="block text-gray-400 text-sm mb-2">Slug ID</label>
+                        <input type="text" id="store_slug" name="slug_id" value="{{ store.slug_id or '' }}" disabled
+                               class="w-full px-4 py-2 bg-gray-600 border border-gray-600 text-gray-400 rounded-lg cursor-not-allowed">
+                        <p class="text-xs text-gray-500 mt-1">Slug ID cannot be changed</p>
+                    </div>
+                    <div>
+                        <label for="store_email" class="block text-gray-400 text-sm mb-2">Contact Email</label>
+                        <input type="email" id="store_email" name="email" value="{{ store.email or '' }}"
+                               class="w-full px-4 py-2 bg-gray-700 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label for="store_phone" class="block text-gray-400 text-sm mb-2">Phone</label>
+                        <input type="text" id="store_phone" name="phone" value="{{ store.phone or '' }}"
+                               class="w-full px-4 py-2 bg-gray-700 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label for="store_phone_display" class="block text-gray-400 text-sm mb-2">Phone Display</label>
+                        <input type="text" id="store_phone_display" name="phone_display" value="{{ store.phone_display or '' }}"
+                               class="w-full px-4 py-2 bg-gray-700 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <p class="text-xs text-gray-500 mt-1">Optional: How phone should be displayed</p>
+                    </div>
+                    <div class="md:col-span-2">
+                        <label for="store_address" class="block text-gray-400 text-sm mb-2">Address</label>
+                        <textarea id="store_address" name="address" rows="2"
+                                  class="w-full px-4 py-2 bg-gray-700 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">{{ store.address or '' }}</textarea>
+                    </div>
+                    <div class="md:col-span-2">
+                        <label for="store_about" class="block text-gray-400 text-sm mb-2">About</label>
+                        <textarea id="store_about" name="about_text" rows="4"
+                                  class="w-full px-4 py-2 bg-gray-700 border border-gray-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">{{ store.about_text or '' }}</textarea>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between pt-4 border-t border-gray-700">
+                    <div id="store-info-message" class="text-sm"></div>
+                    <button type="submit" class="px-6 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg">
+                        <i class="fas fa-save mr-2"></i>
+                        Save Changes
+                    </button>
+                </div>
+            </form>
+        </div>
+        
+        <div class="mt-6">
+            <a href="/{{ store.slug_id }}" class="text-blue-400 hover:underline">
+                <i class="fas fa-arrow-left mr-2"></i>
+                Back to Store
+            </a>
+        </div>
+    </div>
+    
+    <script>
+        document.getElementById('store-info-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            const messageDiv = document.getElementById('store-info-message');
+            messageDiv.innerHTML = '<span class="text-gray-400">Saving...</span>';
+            
+            try {
+                const data = Object.fromEntries(formData);
+                const response = await fetch('/{{ store.slug_id }}/admin/update-store', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    messageDiv.innerHTML = '<span class="text-green-400">✓ Changes saved successfully!</span>';
+                    setTimeout(() => {
+                        messageDiv.innerHTML = '';
+                    }, 3000);
+                } else {
+                    messageDiv.innerHTML = '<span class="text-red-400">✗ Error: ' + (result.error || 'Unknown error') + '</span>';
+                }
+            } catch (error) {
+                messageDiv.innerHTML = '<span class="text-red-400">✗ Error: ' + error.message + '</span>';
+            }
+        });
+    </script>
+</body>
+</html>
+

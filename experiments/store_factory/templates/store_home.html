@@ -5,7 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-    <title>{{ store.name }} - {{ business_config.name }}</title>
+    
+    {# SEO Meta Tags #}
+    <title>{% if seo_settings and seo_settings.get('title') %}{{ seo_settings.get('title') }}{% else %}{{ store.name }} - {{ business_config.name }}{% endif %}</title>
+    <meta name="description" content="{% if seo_settings and seo_settings.get('description') %}{{ seo_settings.get('description') }}{% else %}{{ store.about_text or 'Welcome to ' + store.name }}{% endif %}">
+    <meta name="keywords" content="{% if seo_settings and seo_settings.get('keywords') %}{{ seo_settings.get('keywords') }}{% else %}{{ store.name }}, {{ business_config.name }}{% endif %}">
+    
+    {# Open Graph Meta Tags #}
+    <meta property="og:title" content="{% if seo_settings and seo_settings.get('og_title') %}{{ seo_settings.get('og_title') }}{% else %}{{ store.name }} - {{ business_config.name }}{% endif %}">
+    <meta property="og:description" content="{% if seo_settings and seo_settings.get('og_description') %}{{ seo_settings.get('og_description') }}{% else %}{{ store.about_text or 'Welcome to ' + store.name }}{% endif %}">
+    <meta property="og:type" content="{% if seo_settings and seo_settings.get('og_type') %}{{ seo_settings.get('og_type') }}{% else %}website{% endif %}">
+    <meta property="og:url" content="{% if request.url %}{{ request.url }}{% else %}{{ request.path }}{% endif %}">
+    <meta property="og:image" content="{% if store.slideshow_images and store.slideshow_images|length > 0 %}{{ store.slideshow_images[0].image_url }}{% elif store.logo_url %}{{ store.logo_url }}{% else %}/experiments/store_factory/static/img/logo.png{% endif %}">
+    <meta property="og:site_name" content="{{ store.name }}">
+    
+    {# Twitter Card Meta Tags #}
+    <meta name="twitter:card" content="{% if seo_settings and seo_settings.get('twitter_card') %}{{ seo_settings.get('twitter_card') }}{% else %}summary_large_image{% endif %}">
+    <meta name="twitter:title" content="{% if seo_settings and seo_settings.get('twitter_title') %}{{ seo_settings.get('twitter_title') }}{% else %}{{ store.name }} - {{ business_config.name }}{% endif %}">
+    <meta name="twitter:description" content="{% if seo_settings and seo_settings.get('twitter_description') %}{{ seo_settings.get('twitter_description') }}{% else %}{{ store.about_text or 'Welcome to ' + store.name }}{% endif %}">
+    <meta name="twitter:image" content="{% if store.slideshow_images and store.slideshow_images|length > 0 %}{{ store.slideshow_images[0].image_url }}{% elif store.logo_url %}{{ store.logo_url }}{% else %}/experiments/store_factory/static/img/logo.png{% endif %}">
     <style>
         body { 
             background-color: {{ store.theme_background or '#111827' }};
@@ -193,7 +211,7 @@
                         <div class="relative h-full flex items-center justify-center text-white px-4">
                             <div class="text-center max-w-4xl mx-auto">
                                 <h1 class="text-4xl md:text-6xl lg:text-7xl font-extrabold mb-4 drop-shadow-2xl animate-fade-in">
-                                    {{ slide.caption or store.tagline or business_config.hero_text }}
+                                    {{ slide.caption or business_config.hero_text }}
                                 </h1>
                                 {% if not slide.caption %}
                                 <p class="text-lg md:text-xl lg:text-2xl mt-4 opacity-90 drop-shadow-lg">{{ store.about_text or 'Welcome to our store' }}</p>
@@ -228,11 +246,11 @@
             {% endif %}
         </section>
         {% else %}
-        <!-- Fallback Hero Section -->
-        <section id="hero" class="h-screen bg-cover bg-center flex items-center justify-center text-white" style="background-image: linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)), url('{{ store.hero_image_url or 'https://images.pexels.com/photos/376464/pexels-photo-376464.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2' }}');">
+        <!-- Fallback Hero Section (when no slideshow) -->
+        <section id="hero" class="h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center text-white">
             <div class="text-center px-4">
-                <h1 class="text-4xl md:text-6xl font-extrabold">{{ store.tagline or business_config.hero_text }}</h1>
-                <p class="text-lg md:text-xl mt-4 max-w-2xl mx-auto">{{ store.about_text or 'Welcome to our store' }}</p>
+                <h1 class="text-4xl md:text-6xl font-extrabold drop-shadow-lg">{{ business_config.hero_text }}</h1>
+                <p class="text-lg md:text-xl mt-4 max-w-2xl mx-auto opacity-90">{{ store.about_text or 'Welcome to our store' }}</p>
             </div>
         </section>
         {% endif %}
