@@ -81,12 +81,15 @@ async def show_detail(
     g: str = Query("calories_per_min", alias="g_key"),
     b: str = Query("speed_kph", alias="b_key"),
     alpha_mode: str = Query("none", alias="alpha_mode"),
-    alpha_key: str = Query("cadence", alias="alpha_key")
+    alpha_key: str = Query("cadence", alias="alpha_key"),
+    use_voyage: str = Query("true", alias="use_voyage")
 ):
     """
     Renders the *full HTML page* on initial load, respecting query params.
     """
     context = {"url": str(request.url)}
+    # Convert use_voyage string to boolean (default to True)
+    use_voyage_bool = use_voyage.lower() != "false"
     try:
         html = await actor.render_detail_page.remote(
             workout_id, 
@@ -95,7 +98,8 @@ async def show_detail(
             g_key=g,
             b_key=b,
             alpha_mode=alpha_mode,
-            alpha_key=alpha_key
+            alpha_key=alpha_key,
+            use_voyage=use_voyage_bool
         )
         return HTMLResponse(html)
     except Exception as e:
@@ -351,17 +355,36 @@ async def hybrid_search(
 # --- END NEW ---
 
 
+@bp.get("/workout/{workout_id}/ab-test-neighbors", response_class=JSONResponse)
+async def get_ab_test_neighbors(
+    request: Request,
+    workout_id: int,
+    actor: "ray.actor.ActorHandle" = Depends(get_actor_handle)
+):
+    """
+    Returns neighbors both with and without VoyageAI for side-by-side A/B testing comparison.
+    """
+    try:
+        result = await actor.get_neighbors_ab_test.remote(workout_id)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Actor call failed for get_neighbors_ab_test: {e}", exc_info=True)
+        raise HTTPException(500, f"A/B test neighbors fetch failed: {e}")
+
 @bp.post("/workout/{workout_id}/analyze")
 async def analyze_workout(
     request: Request, 
     workout_id: int, 
-    actor: "ray.actor.ActorHandle" = Depends(get_actor_handle) # <-- FIX: Was get_actor_handle()
+    actor: "ray.actor.ActorHandle" = Depends(get_actor_handle), # <-- FIX: Was get_actor_handle()
+    use_voyage: str = Query("true", alias="use_voyage")
 ):
     """
     Calls the actor to run analysis, then redirects.
     """
     try:
-        await actor.run_analysis.remote(workout_id)
+        # Convert use_voyage string to boolean (default to True)
+        use_voyage_bool = use_voyage.lower() != "false"
+        await actor.run_analysis.remote(workout_id, use_voyage=use_voyage_bool)
         redirect_url = request.url_for("show_detail", workout_id=workout_id)
         if request.url.query:
             redirect_url = f"{redirect_url}?{request.url.query}"
@@ -381,13 +404,25 @@ async def generate_demo(
 ):
     """
     Calls the Ray Actor to create *multiple* new workout docs for a demo.
+    Generates at least 100 workouts to ensure sufficient data for testing and demonstration.
     """
-    NUM_GENERATIONS = 10
+    NUM_GENERATIONS = 100
     logger.info(f"Initiating bulk generation of {NUM_GENERATIONS} workout docs.")
     try:
-        tasks = [actor.generate_one.remote() for _ in range(NUM_GENERATIONS)]
-        await ray.get(tasks) 
-        logger.info(f"Successfully generated {NUM_GENERATIONS} workout docs.")
+        # Generate in batches to avoid overwhelming the system
+        BATCH_SIZE = 25
+        total_generated = 0
+        
+        for batch_start in range(0, NUM_GENERATIONS, BATCH_SIZE):
+            batch_end = min(batch_start + BATCH_SIZE, NUM_GENERATIONS)
+            batch_size = batch_end - batch_start
+            logger.info(f"Generating batch {batch_start // BATCH_SIZE + 1}: workouts {batch_start} to {batch_end - 1}")
+            
+            tasks = [actor.generate_one.remote() for _ in range(batch_size)]
+            batch_results = await ray.get(tasks)
+            total_generated += len(batch_results)
+            
+        logger.info(f"Successfully generated {total_generated} workout docs.")
         redirect_url = request.url_for("show_gallery")
         return RedirectResponse(
             url=redirect_url, 

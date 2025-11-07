@@ -155,6 +155,23 @@ Results are combined with weighted scoring: **70% vector score + 30% text score*
   - `workout_type` (weight: 5)
   - `ai_classification` (weight: 3)
 
+## Advanced Features
+
+### VoyageAI Reranking
+
+The experiment now includes **VoyageAI reranking** for improved semantic accuracy. This two-stage retrieval pipeline combines:
+
+1. **Fast Vector Search**: MongoDB finds 25 structurally similar workouts (milliseconds)
+2. **Semantic Reranking**: VoyageAI finds the 3 most semantically similar from that list (seconds)
+
+This combines the **speed of vector search** with the **deep semantic understanding** of VoyageAI's reranker.
+
+**See**: [VOYAGEAI_RERANKING.md](./VOYAGEAI_RERANKING.md) for a detailed explanation of how pixel encoding (sight) and VoyageAI reranking (reading) work together.
+
+### A/B Testing
+
+You can compare results with and without VoyageAI reranking using the A/B Testing modal in the workout detail page. This allows you to see the value of semantic reranking side-by-side.
+
 ## Use Cases & Applications
 
 ### 1. Fitness & Health Applications

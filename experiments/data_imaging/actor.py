@@ -94,6 +94,27 @@ class ExperimentActor:
             self.OperationFailure = None
             self.templates = None
         
+        # --- VoyageAI Client Setup ---
+        VOYAGE_API_KEY = os.getenv("VOYAGE_API_KEY")
+        if not VOYAGE_API_KEY:
+            logger.warning(f"[{write_scope}-Actor] VOYAGE_API_KEY not set. Reranking features will be disabled.")
+            self.voyage_client = None
+        else:
+            try:
+                import voyageai
+                # Initialize the asynchronous client
+                self.voyage_client = voyageai.AsyncClient(api_key=VOYAGE_API_KEY)
+                self.VOYAGE_RERANK_MODEL = "rerank-2.5-lite"  # Use a fast, modern model
+                logger.info(f"[{write_scope}-Actor] VoyageAI client initialized successfully.")
+            except ImportError:
+                logger.warning(f"[{write_scope}-Actor] voyageai library not installed. Reranking features will be disabled.")
+                self.voyage_client = None
+                self.VOYAGE_RERANK_MODEL = None
+            except Exception as e:
+                logger.error(f"[{write_scope}-Actor] Failed to initialize VoyageAI client: {e}", exc_info=True)
+                self.voyage_client = None
+                self.VOYAGE_RERANK_MODEL = None
+        
         # Database initialization (follows pattern from other experiments)
         try:
             from experiment_db import create_actor_database
@@ -205,6 +226,26 @@ class ExperimentActor:
 """
         return classification, prompt
 
+    def _get_doc_as_rerank_string(self, doc: Dict[str, Any]) -> str:
+        """
+        Converts a workout document (or a projection of one) into a
+        concise string for the VoyageAI Reranker to "read".
+        """
+        workout_type = doc.get('workout_type', 'N/A')
+        session_tag = doc.get('session_tag', 'N/A')
+        notes = doc.get('post_session_notes', {}).get('notes', 'N/A')
+        classification = doc.get('ai_classification', 'N/A')
+        
+        # Don't include placeholder text in the rerank string
+        if classification == PLACEHOLDER_CLASSIFICATION:
+            classification = "Unclassified"
+            
+        return (
+            f"Workout Type: {workout_type}. "
+            f"User Tag: {session_tag}. "
+            f"User Notes: {notes}. "
+            f"AI Classification: {classification}."
+        )
 
     def _create_synthetic_apple_watch_data(self, suffix: int) -> dict:
         """Generates synthetic data with random variations."""
@@ -618,18 +659,30 @@ class ExperimentActor:
                     logger.warning(f"[{self.write_scope}-Actor] This indicates a potential scoping or counting bug. NOT generating new data.")
                     return
                 
-                logger.info(f"[{self.write_scope}-Actor] Verified: No records found (count={count}, sample check passed). Generating ~10 sample workout records...")
-                NUM_TO_GENERATE = 10
+                logger.info(f"[{self.write_scope}-Actor] Verified: No records found (count={count}, sample check passed). Generating ~100 sample workout records...")
+                NUM_TO_GENERATE = 100
                 generated_ids = []
                 
-                for i in range(NUM_TO_GENERATE):
-                    try:
-                        # Calls the public generate_one method
-                        new_id = await self.generate_one()
-                        generated_ids.append(new_id)
+                # Generate in batches to avoid overwhelming the system
+                BATCH_SIZE = 25
+                for batch_start in range(0, NUM_TO_GENERATE, BATCH_SIZE):
+                    batch_end = min(batch_start + BATCH_SIZE, NUM_TO_GENERATE)
+                    batch_size = batch_end - batch_start
+                    logger.info(f"[{self.write_scope}-Actor] Generating batch {batch_start // BATCH_SIZE + 1}: workouts {batch_start} to {batch_end - 1}")
+                    
+                    for i in range(batch_size):
+                        try:
+                            # Calls the public generate_one method
+                            new_id = await self.generate_one()
+                            generated_ids.append(new_id)
+                            # Small delay between items in batch to avoid overwhelming
+                            await asyncio.sleep(0.1)
+                        except Exception as e:
+                            logger.error(f"[{self.write_scope}-Actor] Error generating workout {batch_start + i + 1}/{NUM_TO_GENERATE}: {e}")
+                    
+                    # Brief pause between batches
+                    if batch_end < NUM_TO_GENERATE:
                         await asyncio.sleep(0.5)
-                    except Exception as e:
-                        logger.error(f"[{self.write_scope}-Actor] Error generating workout {i+1}/{NUM_TO_GENERATE}: {e}")
                 
                 logger.info(f"[{self.write_scope}-Actor] Successfully generated {len(generated_ids)} workout records: {generated_ids}")
             else:
@@ -1535,7 +1588,8 @@ class ExperimentActor:
         g_key: str, 
         b_key: str,
         alpha_mode: str = "none",
-        alpha_key: str = "cadence"
+        alpha_key: str = "cadence",
+        use_voyage: bool = True
     ) -> str:
         self._check_ready()
         
@@ -1555,45 +1609,122 @@ class ExperimentActor:
         neighbors_html = "<p>Vector data is missing, so no neighbors found.</p>"
         neighbors = []
         neighbors_data = []  # Structured data for Vector Magic - always a list
+        nearest_neighbors = []  # Will hold reranked neighbors
         if isinstance(doc.get("workout_vector"), list) and len(doc["workout_vector"]) == 192:
+            # --- 2. Run BROAD Vector Search (MODIFIED) ---
+            current_vector = doc["workout_vector"]
+            
+            # We now fetch 25 candidates to give the reranker a good list
+            SEARCH_LIMIT = 25
+            # We still want the FINAL list to be 3 (for display) but keep 5 for Vector Magic
+            FINAL_TOP_K = 3
+            VECTOR_MAGIC_TOP_K = 5
+            
             pipeline = [
-                {"$vectorSearch": {"index": self.vector_index_name, "path": "workout_vector", "queryVector": doc["workout_vector"], "filter": {"_id": {"$ne": doc_id}}, "numCandidates": 50, "limit": 5}},  # Get 5 for Vector Magic
-                {"$project": {"_id": 1, "score": {"$meta": "vectorSearchScore"}, "workout_type": 1, "session_tag": 1, "ai_classification": 1, "rpe": 1}}
+                {
+                    "$vectorSearch": {
+                        "index": self.vector_index_name,
+                        "path": "workout_vector",
+                        "queryVector": current_vector,
+                        "numCandidates": 100,  # Keep this high
+                        "limit": SEARCH_LIMIT,  # --- MODIFIED ---
+                        "filter": {"_id": {"$ne": doc_id}}
+                    }
+                },
+                {
+                    "$project": {
+                        "_id": 1,
+                        "score": {"$meta": "vectorSearchScore"},  # This is the vector score
+                        "workout_type": 1,
+                        "session_tag": 1,
+                        "ai_classification": 1,
+                        "rpe": 1,
+                        "post_session_notes": 1  # Need this for the rerank string
+                    }
+                }
             ]
+            
+            broad_neighbors_list = []
             try:
-                cur = self.db.raw.workouts.aggregate(pipeline)
-                neighbors = await cur.to_list(None)
-                if neighbors:
-                    items = []
-                    for n in neighbors:
-                        sid = n["_id"].split("_")[-1]
-                        context_span = f"Type: {n.get('workout_type','?')}"
-                        if n.get("session_tag"): context_span += f" | Tag: {n['session_tag']}"
-                        if n.get("ai_classification") != PLACEHOLDER_CLASSIFICATION:
-                            context_span += f" | Pattern: {n['ai_classification']}"
-                        
-                        items.append(f'<li><a href="/experiments/{self.write_scope}/workout/{sid}">Workout #{sid}</a> <span>({context_span})</span><br>Similarity Score: {n["score"]:.4f}</li>')
-                        
-                        # Store structured data for Vector Magic
-                        neighbors_data.append({
-                            "workout_id": int(sid),
-                            "workout_type": n.get("workout_type", "?"),
-                            "session_tag": n.get("session_tag"),
-                            "ai_classification": n.get("ai_classification"),
-                            "score": float(n.get("score", 0.0)),
-                            "rpe": n.get("rpe")
-                        })
-
-                    neighbors_html = "".join(items[:3])  # Show only first 3 in HTML
-                else:
-                    neighbors_html = "<p>No neighbors found (maybe only 1 doc in DB?).</p>"
+                neighbors_cursor = self.db.raw.workouts.aggregate(pipeline)
+                broad_neighbors_list = await neighbors_cursor.to_list(None)
             except self.OperationFailure as oe:
                 err_msg = oe.details.get('errmsg', str(oe))
                 logger.error(f"[{self.write_scope}-Actor] VectorSearch error: {err_msg}")
                 neighbors_html = f"<p><b>VectorSearch DB Error:</b> {err_msg}<br><small>Is index '{self.vector_index_name}' active?</small></p>"
+                broad_neighbors_list = []
             except Exception as e:
                 logger.error(f"[{self.write_scope}-Actor] Unexpected vector search error: {e}")
                 neighbors_html = f"<p><b>Unexpected vector search error:</b> {e}</p>"
+                broad_neighbors_list = []
+            
+            # --- 3. Rerank with VoyageAI (NEW) ---
+            if broad_neighbors_list and self.voyage_client and use_voyage:
+                logger.info(f"[{self.write_scope}-Actor] Vector search returned {len(broad_neighbors_list)} candidates. Reranking with VoyageAI...")
+                
+                # Create the 'query' string from our source document
+                rerank_query = self._get_doc_as_rerank_string(doc)
+                
+                # Create the 'documents' list from our search results
+                rerank_docs = [self._get_doc_as_rerank_string(neighbor) for neighbor in broad_neighbors_list]
+                
+                try:
+                    # Make the API call - get top 5 for Vector Magic, but we'll display top 3
+                    rerank_results = await self.voyage_client.rerank(
+                        query=rerank_query,
+                        documents=rerank_docs,
+                        model=self.VOYAGE_RERANK_MODEL,
+                        top_k=VECTOR_MAGIC_TOP_K  # Get 5 for Vector Magic
+                    )
+                    
+                    # 'rerank_results.results' is a list of objects with 'index' and 'relevance_score'
+                    # We use 'index' to pick the *original* documents from our broad list.
+                    for result in rerank_results.results:
+                        # Get the original neighbor doc from the list
+                        original_neighbor = broad_neighbors_list[result.index]
+                        
+                        # Overwrite the 'score' with Voyage's much more accurate one
+                        original_neighbor['score'] = result.relevance_score
+                        nearest_neighbors.append(original_neighbor)
+                        
+                    logger.info(f"[{self.write_scope}-Actor] VoyageAI reranking complete. True Top {len(nearest_neighbors)} found.")
+                except Exception as e:
+                    logger.error(f"[{self.write_scope}-Actor] VoyageAI rerank call failed: {e}. Proceeding with original vector search results.")
+                    # Fallback: Just use the original Top 5 from the vector search
+                    nearest_neighbors = broad_neighbors_list[:VECTOR_MAGIC_TOP_K]
+            else:
+                # Fallback if search failed or no neighbors or no voyage client or use_voyage is False
+                if not use_voyage:
+                    logger.info(f"[{self.write_scope}-Actor] VoyageAI reranking disabled via use_voyage parameter. Using original vector search results.")
+                elif not self.voyage_client:
+                    logger.warning(f"[{self.write_scope}-Actor] VoyageAI client not available. Using original vector search results.")
+                nearest_neighbors = broad_neighbors_list[:VECTOR_MAGIC_TOP_K]
+            
+            # --- 4. Process Results for Display ---
+            if nearest_neighbors:
+                items = []
+                for n in nearest_neighbors:
+                    sid = n["_id"].split("_")[-1]
+                    context_span = f"Type: {n.get('workout_type','?')}"
+                    if n.get("session_tag"): context_span += f" | Tag: {n['session_tag']}"
+                    if n.get("ai_classification") != PLACEHOLDER_CLASSIFICATION:
+                        context_span += f" | Pattern: {n['ai_classification']}"
+                    
+                    items.append(f'<li><a href="/experiments/{self.write_scope}/workout/{sid}">Workout #{sid}</a> <span>({context_span})</span><br>Similarity Score: {n["score"]:.4f}</li>')
+                    
+                    # Store structured data for Vector Magic
+                    neighbors_data.append({
+                        "workout_id": int(sid),
+                        "workout_type": n.get("workout_type", "?"),
+                        "session_tag": n.get("session_tag"),
+                        "ai_classification": n.get("ai_classification"),
+                        "score": float(n.get("score", 0.0)),
+                        "rpe": n.get("rpe")
+                    })
+
+                neighbors_html = "".join(items[:FINAL_TOP_K])  # Show only first 3 in HTML
+            else:
+                neighbors_html = "<p>No neighbors found (maybe only 1 doc in DB?).</p>"
         
         ephemeral_prompt = doc.get("llm_analysis_prompt", PLACEHOLDER_PROMPT)
         ai_class = doc.get("ai_classification", PLACEHOLDER_CLASSIFICATION)
@@ -1601,7 +1732,8 @@ class ExperimentActor:
 
         if summary_is_pending:
             # --- Must call internal method ---
-            ephemeral_class, ephemeral_prompt = self._analyze_time_series_features(doc, neighbors)
+            # Use the reranked neighbors (or original if reranking failed)
+            ephemeral_class, ephemeral_prompt = self._analyze_time_series_features(doc, nearest_neighbors[:3] if nearest_neighbors else neighbors)
             ai_class = ephemeral_class
         else:
             ephemeral_prompt = doc.get("llm_analysis_prompt", PLACEHOLDER_PROMPT)
@@ -1692,7 +1824,15 @@ class ExperimentActor:
         return response.body.decode("utf-8")
 
     # --- Method 3: Replaces analyze_workout ---
-    async def run_analysis(self, workout_id: int) -> bool:
+    async def run_analysis(self, workout_id: int, use_voyage: bool = True) -> bool:
+        """
+        POST endpoint triggered by the 'Generate AI Summary' button.
+        
+        1. Fetches doc
+        2. Runs a BROAD vector search (Top 25)
+        3. RERANKS with VoyageAI to get the TRUE Top 3 (if use_voyage is True)
+        4. Calls OpenAI API and saves results.
+        """
         self._check_ready()
         
         doc_id = f"workout_rad_{workout_id}"
@@ -1701,28 +1841,229 @@ class ExperimentActor:
             logger.error(f"[{self.write_scope}-Actor] run_analysis: Doc {doc_id} not found.")
             return False
 
-        neighbors = []
-        if "workout_vector" in doc and isinstance(doc["workout_vector"], list):
-            pipeline = [
-                {"$vectorSearch": {"index": self.vector_index_name, "path": "workout_vector", "queryVector": doc["workout_vector"], "numCandidates": 50, "limit": 3, "filter": {"_id": {"$ne": doc_id}}}},
-                {"$project": {"_id":1, "score":{"$meta":"vectorSearchScore"}, "workout_type":1, "session_tag":1, "ai_classification":1}}
-            ]
+        # --- Check for API keys ---
+        OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+        if not OPENAI_API_KEY:
+            logger.error(f"[{self.write_scope}-Actor] OPENAI_API_KEY not set. Cannot perform AI workout analysis.")
+            return False
+            
+        # Only require VoyageAI if use_voyage is True
+        if use_voyage and not self.voyage_client:
+            logger.error(f"[{self.write_scope}-Actor] VOYAGE_API_KEY not set or client failed to init. Reranking is disabled.")
+            return False
+
+        # --- 1. Fetch Document (already done above) ---
+        if "workout_vector" not in doc or not isinstance(doc["workout_vector"], list):
+            logger.error(f"[{self.write_scope}-Actor] Doc {doc_id} missing vector data.")
+            return False
+
+        # --- 2. Run BROAD Vector Search (MODIFIED) ---
+        current_vector = doc["workout_vector"]
+        
+        # We now fetch 25 candidates to give the reranker a good list
+        SEARCH_LIMIT = 25
+        # We still want the FINAL list to be 3
+        FINAL_TOP_K = 3
+        
+        pipeline = [
+            {
+                "$vectorSearch": {
+                    "index": self.vector_index_name,
+                    "path": "workout_vector",
+                    "queryVector": current_vector,
+                    "numCandidates": 100,  # Keep this high
+                    "limit": SEARCH_LIMIT,  # --- MODIFIED ---
+                    "filter": {"_id": {"$ne": doc_id}}
+                }
+            },
+            {
+                "$project": {
+                    "_id": 1,
+                    "score": {"$meta": "vectorSearchScore"},  # This is the vector score
+                    "workout_type": 1,
+                    "session_tag": 1,
+                    "ai_classification": 1,
+                    "post_session_notes": 1  # Need this for the rerank string
+                }
+            }
+        ]
+        
+        broad_neighbors_list = []
+        try:
+            neighbors_cursor = self.db.raw.workouts.aggregate(pipeline)
+            broad_neighbors_list = await neighbors_cursor.to_list(None)
+        except self.OperationFailure:
+            logger.warning(f"[{self.write_scope}-Actor] Vector search failed during analysis, proceeding without neighbors context.")
+            broad_neighbors_list = []
+        
+        nearest_neighbors = []  # This will hold our FINAL Top 3
+        
+        # --- 3. Rerank with VoyageAI (NEW) ---
+        if broad_neighbors_list and self.voyage_client and use_voyage:
+            logger.info(f"[{self.write_scope}-Actor] Vector search returned {len(broad_neighbors_list)} candidates. Reranking with VoyageAI...")
+            
+            # Create the 'query' string from our source document
+            rerank_query = self._get_doc_as_rerank_string(doc)
+            
+            # Create the 'documents' list from our search results
+            rerank_docs = [self._get_doc_as_rerank_string(neighbor) for neighbor in broad_neighbors_list]
+            
             try:
-                cur = self.db.raw.workouts.aggregate(pipeline)
-                neighbors = await cur.to_list(None)
+                # Make the API call
+                rerank_results = await self.voyage_client.rerank(
+                    query=rerank_query,
+                    documents=rerank_docs,
+                    model=self.VOYAGE_RERANK_MODEL,
+                    top_k=FINAL_TOP_K
+                )
+                
+                # 'rerank_results.results' is a list of objects with 'index' and 'relevance_score'
+                # We use 'index' to pick the *original* documents from our broad list.
+                for result in rerank_results.results:
+                    # Get the original neighbor doc from the list
+                    original_neighbor = broad_neighbors_list[result.index]
+                    
+                    # Overwrite the 'score' with Voyage's much more accurate one
+                    original_neighbor['score'] = result.relevance_score
+                    nearest_neighbors.append(original_neighbor)
+                    
+                logger.info(f"[{self.write_scope}-Actor] VoyageAI reranking complete. True Top {len(nearest_neighbors)} found.")
             except Exception as e:
-                logger.error(f"[{self.write_scope}-Actor] Vector search error during final analysis: {e}")
+                logger.error(f"[{self.write_scope}-Actor] VoyageAI rerank call failed: {e}. Proceeding with original vector search results.")
+                # Fallback: Just use the original Top 3 from the vector search
+                nearest_neighbors = broad_neighbors_list[:FINAL_TOP_K]
+        else:
+            # Fallback if search failed or no neighbors or use_voyage is False
+            if not use_voyage:
+                logger.info(f"[{self.write_scope}-Actor] VoyageAI reranking disabled via use_voyage parameter. Using original vector search results.")
+            nearest_neighbors = broad_neighbors_list[:FINAL_TOP_K]
 
-        # --- Must call internal methods ---
-        final_class, final_prompt = self._analyze_time_series_features(doc, neighbors)
+        # --- 4. Generate Prompt ---
+        # This function now receives the *reranked* and highly-relevant Top 3
+        final_class, final_prompt = self._analyze_time_series_features(doc, nearest_neighbors)
+        
+        # --- 5. Call OpenAI API ---
         summary = await self._call_openai_api(final_prompt)
-
+        
+        # --- 6. Save Results to MongoDB ---
         await self.db.workouts.update_one(
             {"_id": doc_id},
             {"$set": {"ai_classification": final_class, "ai_summary": summary, "llm_analysis_prompt": final_prompt}}
         )
         logger.info(f"[{self.write_scope}-Actor] Analysis complete for {doc_id}.")
         return True
+
+    # --- Method 3.5: Get neighbors for A/B testing ---
+    async def get_neighbors_ab_test(self, workout_id: int) -> Dict[str, Any]:
+        """
+        Returns neighbors both with and without VoyageAI reranking for side-by-side comparison.
+        """
+        self._check_ready()
+        
+        doc_id = f"workout_rad_{workout_id}"
+        doc = await self.db.workouts.find_one({"_id": doc_id})
+        if not doc:
+            logger.error(f"[{self.write_scope}-Actor] get_neighbors_ab_test: Doc {doc_id} not found.")
+            return {"error": f"Workout {doc_id} not found"}
+        
+        if "workout_vector" not in doc or not isinstance(doc["workout_vector"], list):
+            logger.error(f"[{self.write_scope}-Actor] Doc {doc_id} missing vector data.")
+            return {"error": "Missing vector data"}
+        
+        current_vector = doc["workout_vector"]
+        SEARCH_LIMIT = 25
+        FINAL_TOP_K = 3
+        
+        # Get broad candidates
+        pipeline = [
+            {
+                "$vectorSearch": {
+                    "index": self.vector_index_name,
+                    "path": "workout_vector",
+                    "queryVector": current_vector,
+                    "numCandidates": 100,
+                    "limit": SEARCH_LIMIT,
+                    "filter": {"_id": {"$ne": doc_id}}
+                }
+            },
+            {
+                "$project": {
+                    "_id": 1,
+                    "score": {"$meta": "vectorSearchScore"},
+                    "workout_type": 1,
+                    "session_tag": 1,
+                    "ai_classification": 1,
+                    "rpe": 1,
+                    "post_session_notes": 1
+                }
+            }
+        ]
+        
+        broad_neighbors_list = []
+        try:
+            neighbors_cursor = self.db.raw.workouts.aggregate(pipeline)
+            broad_neighbors_list = await neighbors_cursor.to_list(None)
+        except Exception as e:
+            logger.error(f"[{self.write_scope}-Actor] Vector search error in A/B test: {e}")
+            return {"error": f"Vector search failed: {e}"}
+        
+        # Without VoyageAI: just take top 3
+        without_voyage = []
+        for n in broad_neighbors_list[:FINAL_TOP_K]:
+            neighbor_copy = dict(n)
+            neighbor_copy['method'] = 'vector_only'
+            without_voyage.append(neighbor_copy)
+        
+        # With VoyageAI: rerank if available
+        with_voyage = []
+        if broad_neighbors_list and self.voyage_client:
+            try:
+                rerank_query = self._get_doc_as_rerank_string(doc)
+                rerank_docs = [self._get_doc_as_rerank_string(neighbor) for neighbor in broad_neighbors_list]
+                
+                rerank_results = await self.voyage_client.rerank(
+                    query=rerank_query,
+                    documents=rerank_docs,
+                    model=self.VOYAGE_RERANK_MODEL,
+                    top_k=FINAL_TOP_K
+                )
+                
+                for result in rerank_results.results:
+                    original_neighbor = dict(broad_neighbors_list[result.index])
+                    original_neighbor['score'] = result.relevance_score
+                    original_neighbor['method'] = 'voyage_reranked'
+                    with_voyage.append(original_neighbor)
+            except Exception as e:
+                logger.error(f"[{self.write_scope}-Actor] VoyageAI rerank failed in A/B test: {e}")
+                # Fallback to vector-only
+                with_voyage = [dict(n) for n in without_voyage]
+        else:
+            # No VoyageAI available, use vector-only
+            with_voyage = [dict(n) for n in without_voyage]
+        
+        # Format results for frontend
+        def format_neighbor(n):
+            sid = n["_id"].split("_")[-1]
+            return {
+                "workout_id": int(sid),
+                "workout_type": n.get("workout_type", "?"),
+                "session_tag": n.get("session_tag"),
+                "ai_classification": n.get("ai_classification"),
+                "score": float(n.get("score", 0.0)),
+                "rpe": n.get("rpe"),
+                "method": n.get("method", "unknown")
+            }
+        
+        return {
+            "with_voyage": [format_neighbor(n) for n in with_voyage],
+            "without_voyage": [format_neighbor(n) for n in without_voyage],
+            "source_workout": {
+                "workout_id": workout_id,
+                "workout_type": doc.get("workout_type", "?"),
+                "session_tag": doc.get("session_tag"),
+                "ai_classification": doc.get("ai_classification")
+            }
+        }
 
     # --- Method 4: generate_one (Now uses actor's scoped DB) ---
     async def generate_one(self) -> int:

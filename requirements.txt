@@ -26,3 +26,4 @@ aiofiles
 slowapi>=0.1.9
 jsonschema>=4.0.0
 qrcode[pil]>=7.4.2
+voyageai

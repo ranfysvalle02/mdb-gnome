@@ -901,26 +901,69 @@
   </div>  
   
   <div class="guide-box guide-box-knn">  
-    <h2>  
-      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"  
-           fill="currentColor" viewBox="0 0 16 16" style="color: var(--atlas-green);">  
-        <path d="M7 14s-1 0-1-1 1-4 5-4 5 3 5 4-1 1-1  
-                 1H7zm4-6a3 3 0 1 0 0-6 3 3 0 0  
-                 0 0 6z"/>  
-        <path fill-rule="evenodd"  
-              d="M5.216 14A2.238 2.238 0 0 1 5  
-                 13c0-1.355.68-2.75 1.936-3.72A6.325  
-                 6.325 0 0 0 5 9c-4 0-5 3-5  
-                 4s1 1 1 1h4.216z"/>  
-      </svg>  
-      Atlas Vector Search (Workout Twins)  
-    </h2>  
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+      <h2 style="margin: 0;">  
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"  
+             fill="currentColor" viewBox="0 0 16 16" style="color: var(--atlas-green);">  
+          <path d="M7 14s-1 0-1-1 1-4 5-4 5 3 5 4-1 1-1  
+                   1H7zm4-6a3 3 0 1 0 0-6 3 3 0 0  
+                   0 0 6z"/>  
+          <path fill-rule="evenodd"  
+                d="M5.216 14A2.238 2.238 0 0 1 5  
+                   13c0-1.355.68-2.75 1.936-3.72A6.325  
+                   6.325 0 0 0 5 9c-4 0-5 3-5  
+                   4s1 1 1 1h4.216z"/>  
+        </svg>  
+        Atlas Vector Search (Workout Twins)  
+      </h2>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span id="voyage-badge" class="voyage-badge" style="display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 20px; font-size: 0.85em; font-weight: 600; box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4);">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+            <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+            <path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.206 2.057v1.133h1.241c.303 0 .524-.246.524-.575 0-.37-.22-.598-.524-.598H5.423c-.35 0-.53.21-.53.34 0 .084.042.147.174.194.376.121 1.075.24 1.853.413.788.176 1.572.418 2.118.736.546.318.91.805.91 1.594 0 1.196-1.059 2.001-2.5 2.001-.936 0-1.803-.334-2.486-1.069-.73-.78-1.12-1.806-1.12-2.898V5.786z"/>
+          </svg>
+          Powered by VoyageAI
+        </span>
+        <button id="voyage-info-btn" type="button" class="control-btn" style="padding: 6px 12px; font-size: 0.9em; background-color: var(--accent-blue); color: white; display: inline-flex; align-items: center; gap: 5px;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+            <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+            <path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.206 2.057v1.133h1.241c.303 0 .524-.246.524-.575 0-.37-.22-.598-.524-.598H5.423c-.35 0-.53.21-.53.34 0 .084.042.147.174.194.376.121 1.075.24 1.853.413.788.176 1.572.418 2.118.736.546.318.91.805.91 1.594 0 1.196-1.059 2.001-2.5 2.001-.936 0-1.803-.334-2.486-1.069-.73-.78-1.12-1.806-1.12-2.898V5.786z"/>
+          </svg>
+          Learn More
+        </button>
+        <button id="ab-test-btn" type="button" class="control-btn" style="padding: 6px 12px; font-size: 0.9em; background-color: var(--accent-orange); color: white; display: inline-flex; align-items: center; gap: 5px;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+            <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+          </svg>
+          A/B Test
+        </button>
+      </div>
+    </div>
     <p>  
       Using a <code>$vectorSearch</code> pipeline in MongoDB Atlas with index  
       <code>{{vector_index_name}}</code>  
       to find the 3 workouts most similar to this one's 192-element vector (excluding itself).  
       Higher score means more similar pattern.
     </p>
+    <div id="voyage-explanation" style="background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%); padding: 15px; border-radius: 8px; border-left: 4px solid #667eea; margin-top: 15px; margin-bottom: 15px;">
+      <p style="margin: 0 0 10px 0; color: var(--atlas-light-text); font-size: 0.95em; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="#667eea" viewBox="0 0 16 16">
+          <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+          <path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.206 2.057v1.133h1.241c.303 0 .524-.246.524-.575 0-.37-.22-.598-.524-.598H5.423c-.35 0-.53.21-.53.34 0 .084.042.147.174.194.376.121 1.075.24 1.853.413.788.176 1.572.418 2.118.736.546.318.91.805.91 1.594 0 1.196-1.059 2.001-2.5 2.001-.936 0-1.803-.334-2.486-1.069-.73-.78-1.12-1.806-1.12-2.898V5.786z"/>
+        </svg>
+        <span>Why VoyageAI Reranking?</span>
+      </p>
+      <p style="margin: 0; color: var(--atlas-mid-text); font-size: 0.9em; line-height: 1.6;">
+        We use a <strong style="color: var(--atlas-light-text);">two-stage retrieval pipeline</strong> for the most accurate "Workout Twins":
+      </p>
+      <ol style="margin: 10px 0 0 20px; padding-left: 0; color: var(--atlas-mid-text); font-size: 0.9em; line-height: 1.8;">
+        <li><strong style="color: var(--atlas-light-text);">Fast Candidate Generation:</strong> MongoDB's vector search finds 25 structurally similar workouts in milliseconds</li>
+        <li><strong style="color: var(--atlas-light-text);">Semantic Reranking:</strong> VoyageAI's advanced model reads the text descriptions and finds the 3 most semantically similar workouts</li>
+      </ol>
+      <p style="margin: 10px 0 0 0; color: var(--atlas-mid-text); font-size: 0.9em; line-height: 1.6;">
+        This combines the <strong style="color: var(--atlas-green);">speed of vector search</strong> with the <strong style="color: #667eea;">deep semantic understanding</strong> of VoyageAI's reranker, giving you more accurate and relevant workout matches.
+      </p>
+    </div>
     <div style="background-color: var(--atlas-dark-blue); padding: 12px; border-radius: 6px; border-left: 4px solid var(--accent-purple); margin-top: 10px;">
       <p style="margin: 0; color: var(--atlas-light-text); font-size: 0.95em;">
         <strong>💡 Feature Engineering Insight:</strong> The vector below uses the <strong>indexed default channels</strong> 
@@ -2916,7 +2959,309 @@ document.addEventListener("DOMContentLoaded", function() {
   
   // Note: We now auto-detect workouts from neighbors, so no need to store effort IDs
 });  
-</script>  
+</script>
+
+  <!-- VoyageAI A/B Testing Modal -->
+  <div id="ab-test-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.7); z-index: 10000; align-items: center; justify-content: center; padding: 20px;">
+    <div style="background-color: var(--atlas-dark-blue); border: 2px solid var(--atlas-border); border-radius: 12px; padding: 30px; max-width: 1400px; width: 95%; max-height: 95vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px;">
+        <h2 style="margin: 0; color: var(--atlas-light-text); display: flex; align-items: center; gap: 10px;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="var(--accent-orange)" viewBox="0 0 16 16">
+            <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+          </svg>
+          A/B Testing: VoyageAI Reranking Comparison
+        </h2>
+        <button id="close-ab-modal" style="background: transparent; border: none; color: var(--atlas-mid-text); font-size: 24px; cursor: pointer; padding: 0; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 4px; transition: background-color 0.2s;" onmouseover="this.style.backgroundColor='var(--atlas-hover-bg)'" onmouseout="this.style.backgroundColor='transparent'">
+          ×
+        </button>
+      </div>
+      
+      <!-- Loading State -->
+      <div id="ab-test-loading" style="text-align: center; padding: 40px;">
+        <div style="color: var(--atlas-light-text); font-size: 1.1em; margin-bottom: 15px;">Loading comparison...</div>
+        <div style="color: var(--atlas-mid-text); font-size: 0.9em;">Fetching results with and without VoyageAI reranking</div>
+      </div>
+      
+      <!-- Error State -->
+      <div id="ab-test-error" style="display: none; background-color: var(--atlas-bg); padding: 20px; border-radius: 8px; border-left: 4px solid var(--accent-red);">
+        <p style="color: var(--atlas-light-text); margin: 0 0 10px 0; font-weight: 600;">Error loading comparison</p>
+        <p id="ab-test-error-message" style="color: var(--atlas-mid-text); margin: 0; font-size: 0.9em;"></p>
+      </div>
+      
+      <!-- Comparison Results -->
+      <div id="ab-test-results" style="display: none;">
+        <div style="background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%); padding: 15px; border-radius: 8px; border-left: 4px solid #667eea; margin-bottom: 25px;">
+          <p style="margin: 0 0 10px 0; color: var(--atlas-light-text); font-weight: 600; font-size: 0.95em;">
+            📊 Side-by-Side Comparison
+          </p>
+          <p style="margin: 0; color: var(--atlas-mid-text); font-size: 0.9em; line-height: 1.6;">
+            Compare the top 3 workout recommendations. <strong style="color: var(--atlas-light-text);">Green highlights</strong> show workouts that appear in both results. 
+            <strong style="color: #667eea;">Purple highlights</strong> show workouts unique to VoyageAI reranking. 
+            <strong style="color: var(--accent-orange);">Orange highlights</strong> show workouts only in vector-only search.
+          </p>
+        </div>
+        
+        <!-- Side-by-Side Comparison -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 25px;">
+          <!-- With VoyageAI -->
+          <div style="background-color: var(--atlas-bg); border: 2px solid #667eea; border-radius: 8px; padding: 20px;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 20px;">
+              <span style="display: inline-block; width: 16px; height: 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 50%;"></span>
+              <h3 style="margin: 0; color: var(--atlas-light-text); font-size: 1.2em; font-weight: 600;">With VoyageAI Reranking</h3>
+            </div>
+            <p style="color: var(--atlas-mid-text); font-size: 0.85em; margin: 0 0 15px 0; line-height: 1.5;">
+              MongoDB finds 25 candidates → VoyageAI reranks to find the top 3 most semantically similar
+            </p>
+            <div id="ab-test-with-voyage" style="min-height: 200px;">
+              <!-- Results will be inserted here -->
+            </div>
+          </div>
+          
+          <!-- Without VoyageAI -->
+          <div style="background-color: var(--atlas-bg); border: 2px solid var(--accent-orange); border-radius: 8px; padding: 20px;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 20px;">
+              <span style="display: inline-block; width: 16px; height: 16px; background: var(--accent-orange); border-radius: 50%;"></span>
+              <h3 style="margin: 0; color: var(--atlas-light-text); font-size: 1.2em; font-weight: 600;">Without VoyageAI</h3>
+            </div>
+            <p style="color: var(--atlas-mid-text); font-size: 0.85em; margin: 0 0 15px 0; line-height: 1.5;">
+              MongoDB finds the top 3 candidates directly (faster, but less accurate)
+            </p>
+            <div id="ab-test-without-voyage" style="min-height: 200px;">
+              <!-- Results will be inserted here -->
+            </div>
+          </div>
+        </div>
+        
+        <!-- Summary Stats -->
+        <div id="ab-test-summary" style="background-color: var(--atlas-bg); padding: 15px; border-radius: 8px; border: 1px solid var(--atlas-border); margin-bottom: 20px;">
+          <!-- Summary will be inserted here -->
+        </div>
+      </div>
+      
+      <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 25px; padding-top: 20px; border-top: 1px solid var(--atlas-border);">
+        <button id="close-ab-modal-btn" class="control-btn btn-revert" style="padding: 10px 20px;">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // VoyageAI A/B Testing Modal
+    const abTestBtn = document.getElementById('ab-test-btn');
+    const abTestModal = document.getElementById('ab-test-modal');
+    const closeAbModal = document.getElementById('close-ab-modal');
+    const closeAbModalBtn = document.getElementById('close-ab-modal-btn');
+    const voyageBadge = document.getElementById('voyage-badge');
+    const voyageExplanation = document.getElementById('voyage-explanation');
+    
+    // Modal state elements
+    const abTestLoading = document.getElementById('ab-test-loading');
+    const abTestError = document.getElementById('ab-test-error');
+    const abTestErrorMessage = document.getElementById('ab-test-error-message');
+    const abTestResults = document.getElementById('ab-test-results');
+    const abTestWithVoyage = document.getElementById('ab-test-with-voyage');
+    const abTestWithoutVoyage = document.getElementById('ab-test-without-voyage');
+    const abTestSummary = document.getElementById('ab-test-summary');
+
+    // Check URL parameter for use_voyage
+    const urlParams = new URLSearchParams(window.location.search);
+    const useVoyage = urlParams.get('use_voyage');
+    const voyageEnabled = useVoyage !== 'false'; // Default to true if not specified
+
+    // Update UI based on current setting
+    function updateVoyageUI(enabled) {
+      if (enabled) {
+        voyageBadge.style.display = 'inline-flex';
+        voyageExplanation.style.display = 'block';
+      } else {
+        voyageBadge.style.display = 'none';
+        voyageExplanation.style.display = 'none';
+      }
+    }
+
+    // Initialize UI
+    updateVoyageUI(voyageEnabled);
+
+    // Format workout for display
+    function formatWorkoutForABTest(workout, highlightClass = '') {
+      const contextSpan = `Type: ${workout.workout_type || '?'}${workout.session_tag ? ` | Tag: ${workout.session_tag}` : ''}${workout.ai_classification && workout.ai_classification !== 'Pending Analysis' ? ` | Pattern: ${workout.ai_classification}` : ''}`;
+      const scoreColor = workout.method === 'voyage_reranked' ? '#667eea' : 'var(--accent-orange)';
+      
+      return `
+        <div class="ab-test-workout-item ${highlightClass}" style="background-color: var(--atlas-dark-blue); padding: 12px; border-radius: 6px; border: 1px solid var(--atlas-border); margin-bottom: 12px; transition: all 0.2s;">
+          <a href="/experiments/data_imaging/workout/${workout.workout_id}${window.location.search}" style="font-weight: 600; color: var(--atlas-green); text-decoration: none; font-size: 1.05em;">Workout #${workout.workout_id}</a>
+          <div style="color: var(--atlas-mid-text); font-size: 0.9em; margin: 6px 0;">${contextSpan}</div>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
+            <span style="color: var(--atlas-mid-text); font-size: 0.85em;">Similarity Score:</span>
+            <strong style="color: ${scoreColor}; font-size: 1em;">${workout.score.toFixed(4)}</strong>
+          </div>
+        </div>
+      `;
+    }
+
+    // Calculate differences between results
+    function calculateDifferences(withVoyage, withoutVoyage) {
+      const withIds = new Set(withVoyage.map(w => w.workout_id));
+      const withoutIds = new Set(withoutVoyage.map(w => w.workout_id));
+      
+      const common = withVoyage.filter(w => withoutIds.has(w.workout_id));
+      const onlyVoyage = withVoyage.filter(w => !withoutIds.has(w.workout_id));
+      const onlyVector = withoutVoyage.filter(w => !withIds.has(w.workout_id));
+      
+      return { common, onlyVoyage, onlyVector };
+    }
+
+    // Display A/B test results
+    function displayABTestResults(data) {
+      if (data.error) {
+        abTestError.style.display = 'block';
+        abTestErrorMessage.textContent = data.error;
+        abTestLoading.style.display = 'none';
+        return;
+      }
+      
+      const { with_voyage, without_voyage, source_workout } = data;
+      const differences = calculateDifferences(with_voyage, without_voyage);
+      
+      // Display with VoyageAI results
+      let withVoyageHTML = '';
+      with_voyage.forEach((workout, index) => {
+        let highlightClass = '';
+        if (differences.common.find(c => c.workout_id === workout.workout_id)) {
+          highlightClass = 'ab-common'; // Common to both
+        } else if (differences.onlyVoyage.find(v => v.workout_id === workout.workout_id)) {
+          highlightClass = 'ab-voyage-only'; // Only in VoyageAI
+        }
+        withVoyageHTML += formatWorkoutForABTest(workout, highlightClass);
+      });
+      if (with_voyage.length === 0) {
+        withVoyageHTML = '<p style="color: var(--atlas-mid-text); font-style: italic;">No results found</p>';
+      }
+      abTestWithVoyage.innerHTML = withVoyageHTML;
+      
+      // Display without VoyageAI results
+      let withoutVoyageHTML = '';
+      without_voyage.forEach((workout, index) => {
+        let highlightClass = '';
+        if (differences.common.find(c => c.workout_id === workout.workout_id)) {
+          highlightClass = 'ab-common'; // Common to both
+        } else if (differences.onlyVector.find(v => v.workout_id === workout.workout_id)) {
+          highlightClass = 'ab-vector-only'; // Only in vector-only
+        }
+        withoutVoyageHTML += formatWorkoutForABTest(workout, highlightClass);
+      });
+      if (without_voyage.length === 0) {
+        withoutVoyageHTML = '<p style="color: var(--atlas-mid-text); font-style: italic;">No results found</p>';
+      }
+      abTestWithoutVoyage.innerHTML = withoutVoyageHTML;
+      
+      // Display summary
+      const commonCount = differences.common.length;
+      const voyageOnlyCount = differences.onlyVoyage.length;
+      const vectorOnlyCount = differences.onlyVector.length;
+      const totalUnique = new Set([...with_voyage.map(w => w.workout_id), ...without_voyage.map(w => w.workout_id)]).size;
+      
+      abTestSummary.innerHTML = `
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+          <div style="text-align: center; padding: 10px; background-color: var(--atlas-dark-blue); border-radius: 6px;">
+            <div style="color: var(--atlas-green); font-size: 1.5em; font-weight: 600; margin-bottom: 5px;">${commonCount}</div>
+            <div style="color: var(--atlas-mid-text); font-size: 0.85em;">Common Results</div>
+          </div>
+          <div style="text-align: center; padding: 10px; background-color: var(--atlas-dark-blue); border-radius: 6px;">
+            <div style="color: #667eea; font-size: 1.5em; font-weight: 600; margin-bottom: 5px;">${voyageOnlyCount}</div>
+            <div style="color: var(--atlas-mid-text); font-size: 0.85em;">VoyageAI Only</div>
+          </div>
+          <div style="text-align: center; padding: 10px; background-color: var(--atlas-dark-blue); border-radius: 6px;">
+            <div style="color: var(--accent-orange); font-size: 1.5em; font-weight: 600; margin-bottom: 5px;">${vectorOnlyCount}</div>
+            <div style="color: var(--atlas-mid-text); font-size: 0.85em;">Vector-Only</div>
+          </div>
+          <div style="text-align: center; padding: 10px; background-color: var(--atlas-dark-blue); border-radius: 6px;">
+            <div style="color: var(--atlas-light-text); font-size: 1.5em; font-weight: 600; margin-bottom: 5px;">${totalUnique}</div>
+            <div style="color: var(--atlas-mid-text); font-size: 0.85em;">Total Unique</div>
+          </div>
+        </div>
+      `;
+      
+      // Add CSS for highlights
+      const style = document.createElement('style');
+      style.textContent = `
+        .ab-test-workout-item.ab-common {
+          border-left: 4px solid var(--atlas-green) !important;
+          background-color: rgba(0, 237, 100, 0.1) !important;
+        }
+        .ab-test-workout-item.ab-voyage-only {
+          border-left: 4px solid #667eea !important;
+          background-color: rgba(102, 126, 234, 0.15) !important;
+        }
+        .ab-test-workout-item.ab-vector-only {
+          border-left: 4px solid var(--accent-orange) !important;
+          background-color: rgba(255, 165, 84, 0.15) !important;
+        }
+        .ab-test-workout-item:hover {
+          transform: translateX(4px);
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+      `;
+      if (!document.getElementById('ab-test-styles')) {
+        style.id = 'ab-test-styles';
+        document.head.appendChild(style);
+      }
+      
+      // Show results, hide loading
+      abTestLoading.style.display = 'none';
+      abTestResults.style.display = 'block';
+    }
+
+    // Fetch A/B test results
+    async function fetchABTestResults() {
+      const workoutId = {{ workout_id }};
+      
+      abTestLoading.style.display = 'block';
+      abTestError.style.display = 'none';
+      abTestResults.style.display = 'none';
+      
+      try {
+        const response = await fetch(`/experiments/data_imaging/workout/${workoutId}/ab-test-neighbors`);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const data = await response.json();
+        displayABTestResults(data);
+      } catch (error) {
+        console.error('Error fetching A/B test results:', error);
+        abTestError.style.display = 'block';
+        abTestErrorMessage.textContent = error.message || 'Failed to load comparison results';
+        abTestLoading.style.display = 'none';
+      }
+    }
+
+    // Open modal and fetch results
+    if (abTestBtn) {
+      abTestBtn.addEventListener('click', function() {
+        abTestModal.style.display = 'flex';
+        fetchABTestResults();
+      });
+    }
+
+    // Close modal
+    function closeModal() {
+      abTestModal.style.display = 'none';
+    }
+
+    if (closeAbModal) {
+      closeAbModal.addEventListener('click', closeModal);
+    }
+
+    if (closeAbModalBtn) {
+      closeAbModalBtn.addEventListener('click', closeModal);
+    }
+
+    // Close modal on outside click
+    abTestModal.addEventListener('click', function(e) {
+      if (e.target === abTestModal) {
+        closeModal();
+      }
+    });
+  </script>
   
 </body>  
 </html>
