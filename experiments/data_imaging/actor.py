@@ -339,6 +339,24 @@ class ExperimentActor:
             return self.np.zeros_like(x_clipped, dtype=self.np.uint8)
         return ((x_clipped - lo) / rng * 255).astype(self.np.uint8)
 
+    def _format_post_session_notes(self, notes: dict) -> str:
+        """Formats post-session notes as readable HTML instead of raw JSON."""
+        if not notes:
+            return "<em>No notes</em>"
+        
+        formatted_parts = []
+        for key, value in notes.items():
+            # Format key nicely (e.g., "hydration_ml" -> "Hydration: 631 ml")
+            key_formatted = key.replace('_', ' ').title()
+            if key == "hydration_ml":
+                formatted_parts.append(f"<strong>Hydration:</strong> {value} ml")
+            elif key == "notes":
+                formatted_parts.append(f"<strong>Notes:</strong> {value}")
+            else:
+                formatted_parts.append(f"<strong>{key_formatted}:</strong> {value}")
+        
+        return ", ".join(formatted_parts)
+
     def _convert_numpy_types(self, obj):
         """
         Recursively converts NumPy types to native Python types for MongoDB compatibility.
@@ -1758,7 +1776,24 @@ class ExperimentActor:
         if doc.get("gear_used"):
              gear_used_html = "<ul>"
              for g in doc.get("gear_used", []):
-                 gear_used_html += f"<li>{json.dumps(g)}</li>"
+                 # Format gear items nicely instead of raw JSON
+                 item_name = g.get("item", "Unknown")
+                 details = []
+                 for key, value in g.items():
+                     if key != "item":
+                         # Format specific fields more naturally
+                         if key == "kilometers":
+                             details.append(f"{value} km")
+                         elif key == "battery_life_percent":
+                             details.append(f"{value}% battery")
+                         else:
+                             # Generic formatting for other fields
+                             key_formatted = key.replace('_', ' ').title()
+                             details.append(f"{key_formatted}: {value}")
+                 if details:
+                     gear_used_html += f"<li><strong>{item_name}</strong>: {', '.join(details)}</li>"
+                 else:
+                     gear_used_html += f"<li><strong>{item_name}</strong></li>"
              gear_used_html += "</ul>"
         
         if summary_is_pending:
@@ -1816,7 +1851,7 @@ class ExperimentActor:
             "sets_reps_html": "", 
             "cycling_html": "", 
             "yoga_html": "",
-            "post_session_notes_html": f"<code>{json.dumps(doc.get('post_session_notes', {}))}</code>",
+            "post_session_notes_html": self._format_post_session_notes(doc.get('post_session_notes', {})),
             "vector_index_name": self.vector_index_name,
         }
         

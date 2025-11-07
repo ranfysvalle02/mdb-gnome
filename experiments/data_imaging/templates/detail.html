@@ -1462,11 +1462,11 @@
     <p>This data provides extra context but isn't part of the vector search. The specific fields here vary depending on the <code>workout_type</code>.</p>  
     <p><b>Workout Type:</b> {{workout_type}}</p>  
     <p><b>Session Tag:</b> {{session_tag}}</p>  
-    {{gear_used_html}}  
-    {{sets_reps_html}}  
-    {{cycling_html}}  
-    {{yoga_html}}  
-    <p><b>Post-Session Notes:</b> {{post_session_notes_html}}</p>  
+    {{gear_used_html|safe}}  
+    {{sets_reps_html|safe}}  
+    {{cycling_html|safe}}  
+    {{yoga_html|safe}}  
+    <p><b>Post-Session Notes:</b> {{post_session_notes_html|safe}}</p>  
   </div>  
   
 </div>  

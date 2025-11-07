@@ -118,18 +118,6 @@
         transform: none;
     }
     
-    .btn-clear {  
-      background-color: transparent;  
-      color: var(--atlas-delete-red);  
-      border: 1px solid var(--atlas-delete-border);  
-    }  
-    .btn-clear:hover {  
-      background-color: var(--atlas-delete-red);  
-      color: #fff;  
-      border-color: var(--atlas-delete-red);  
-      box-shadow: 0 0 15px var(--atlas-delete-red);  
-      transform: translateY(-2px);  
-    }  
   
     .collection-grid {  
       display: grid;  
@@ -215,21 +203,7 @@
         </svg>  
         Generate New Workout  
       </button>  
-    </form>  
-  
-    <form action="/experiments/data_imaging/clear" method="POST" style="margin: 0;"   
-          onsubmit="return confirm('Are you sure you want to delete ALL workouts?');">  
-      <button type="submit" class="control-btn btn-clear">  
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor"   
-             viewBox="0 0 16 16">  
-          <path d="M2.5 1a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1H3v9a2 2 0 0 0 2 2h6a2 2 0 0 0   
-                   2-2V4h.5a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H10a1 1 0 0 0-1-1H7a1 1 0 0 0-1 1H2.5zm3   
-                   4a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-1 0v-7a.5.5 0 0 1 .5-.5zM8 5a.5.5 0 0 1 .5.5v7a.5.5   
-                   0 0 1-1 0v-7A.5.5 0 0 1 8 5zm3 .5v7a.5.5 0 0 1-1 0v-7a.5.5 0 0 1 1 0z" />  
-        </svg>  
-        Clear Entire Collection  
-      </button>  
-    </form>  
+    </form>
   </div>  
   
   <div class="collection-grid">  
