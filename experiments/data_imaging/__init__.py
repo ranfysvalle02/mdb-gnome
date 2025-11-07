@@ -79,7 +79,9 @@ async def show_detail(
     actor: "ray.actor.ActorHandle" = Depends(get_actor_handle), # <-- FIX: Was get_actor_handle()
     r: str = Query("heart_rate", alias="r_key"),
     g: str = Query("calories_per_min", alias="g_key"),
-    b: str = Query("speed_kph", alias="b_key")
+    b: str = Query("speed_kph", alias="b_key"),
+    alpha_mode: str = Query("none", alias="alpha_mode"),
+    alpha_key: str = Query("cadence", alias="alpha_key")
 ):
     """
     Renders the *full HTML page* on initial load, respecting query params.
@@ -91,7 +93,9 @@ async def show_detail(
             context,
             r_key=r,
             g_key=g,
-            b_key=b
+            b_key=b,
+            alpha_mode=alpha_mode,
+            alpha_key=alpha_key
         )
         return HTMLResponse(html)
     except Exception as e:
@@ -109,7 +113,9 @@ async def get_viz_data(
     actor: "ray.actor.ActorHandle" = Depends(get_actor_handle), # <-- FIX: Was get_actor_handle()
     r_key: str = Query(...),
     g_key: str = Query(...),
-    b_key: str = Query(...)
+    b_key: str = Query(...),
+    alpha_mode: str = Query("none", alias="alpha_mode"),
+    alpha_key: str = Query("cadence", alias="alpha_key")
 ):
     """
     Returns only the updated visualization data as JSON for client-side updates.
@@ -119,7 +125,9 @@ async def get_viz_data(
             workout_id, 
             r_key=r_key,
             g_key=g_key,
-            b_key=b_key
+            b_key=b_key,
+            alpha_mode=alpha_mode,
+            alpha_key=alpha_key
         )
         return JSONResponse(content=viz_json)
     except Exception as e:
@@ -139,10 +147,12 @@ async def find_similar_workouts(
     r_key: str = Query(...),
     g_key: str = Query(...),
     b_key: str = Query(...),
-    limit: int = Query(3, ge=1, le=10)
+    limit: int = Query(3, ge=1, le=10),
+    alpha_mode: str = Query("none", alias="alpha_mode"),
+    alpha_key: str = Query("cadence", alias="alpha_key")
 ):
     """
-    Finds similar workouts using custom RGB channel assignments.
+    Finds similar workouts using custom RGB/RGBA channel assignments.
     Generates vectors on-the-fly for the current view and computes similarity in-memory.
     """
     try:
@@ -151,12 +161,154 @@ async def find_similar_workouts(
             r_key=r_key,
             g_key=g_key,
             b_key=b_key,
-            limit=limit
+            limit=limit,
+            alpha_mode=alpha_mode,
+            alpha_key=alpha_key
         )
         return JSONResponse(content={"similar": similar})
     except Exception as e:
         logger.error(f"Actor call failed for find_similar_workouts_custom: {e}", exc_info=True)
         raise HTTPException(500, f"Actor similarity search failed: {e}")
+# --- END NEW ---
+
+
+# ---
+# --- NEW: API endpoint for Vector Magic (vector arithmetic)
+# ---
+@bp.get("/workout/{workout_id}/vector-magic", response_class=JSONResponse)
+async def vector_magic(
+    request: Request,
+    workout_id: int,
+    actor: "ray.actor.ActorHandle" = Depends(get_actor_handle),
+    operation: str = Query(..., regex="^(add|subtract|scale)$"),
+    operand_workout_id: int = Query(None),
+    scale_factor: float = Query(None),
+    r_key: str = Query("heart_rate"),
+    g_key: str = Query("calories_per_min"),
+    b_key: str = Query("speed_kph"),
+    alpha_mode: str = Query("none", alias="alpha_mode"),
+    alpha_key: str = Query("cadence", alias="alpha_key"),
+    limit: int = Query(5, ge=1, le=10)
+):
+    """
+    Performs vector arithmetic to find abstract concepts.
+    
+    Examples:
+    - operation=subtract&operand_workout_id=5: Vector(workout_id) - Vector(5) = "effort vector"
+    - operation=add&operand_workout_id=5: Vector(workout_id) + Vector(5) = "harder version"
+    - operation=scale&scale_factor=0.5: Vector(workout_id) × 0.5 = "50% less intense"
+    """
+    try:
+        # Validate parameters based on operation
+        if operation in ["add", "subtract"] and operand_workout_id is None:
+            raise HTTPException(400, f"operand_workout_id is required for {operation} operation")
+        if operation == "scale" and scale_factor is None:
+            raise HTTPException(400, "scale_factor is required for scale operation")
+        
+        result = await actor.vector_magic_search.remote(
+            base_workout_id=workout_id,
+            operation=operation,
+            operand_workout_id=operand_workout_id,
+            scale_factor=scale_factor,
+            r_key=r_key,
+            g_key=g_key,
+            b_key=b_key,
+            alpha_mode=alpha_mode,
+            alpha_key=alpha_key,
+            limit=limit
+        )
+        return JSONResponse(content=result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Actor call failed for vector_magic_search: {e}", exc_info=True)
+        raise HTTPException(500, f"Vector magic search failed: {e}")
+# --- END NEW ---
+
+
+# ---
+# --- NEW: API endpoint to find workouts by intensity (for Vector Magic)
+# ---
+@bp.get("/workout/{workout_id}/find-by-intensity", response_class=JSONResponse)
+async def find_by_intensity(
+    request: Request,
+    workout_id: int,
+    actor: "ray.actor.ActorHandle" = Depends(get_actor_handle),
+    intensity: str = Query(..., regex="^(hard|easy)$"),
+    limit: int = Query(5, ge=1, le=10)
+):
+    """
+    Finds workouts by intensity characteristics (hard or easy).
+    Used by Vector Magic to auto-populate when neighbors don't have suitable workouts.
+    """
+    try:
+        workouts = await actor.find_workouts_by_intensity.remote(
+            intensity=intensity,
+            exclude_workout_id=workout_id,
+            limit=limit
+        )
+        return JSONResponse(content={"workouts": workouts})
+    except AttributeError as e:
+        # Method doesn't exist on actor yet (needs restart) - use fallback
+        logger.warning(f"Actor method not available (needs restart): {e}, using fallback")
+        try:
+            from experiment_db import get_experiment_db
+            
+            db = await get_experiment_db(request)
+            slug_id = getattr(request.state, "slug_id", None)
+            collection = db.workouts  # Use ExperimentDB's collection accessor
+            
+            hard_tags = ["Tempo Pace", "Threshold", "Race Day", "High Intensity Interval"]
+            easy_tags = ["Recovery", "Z2 Cardio", "Easy Recovery Run"]
+            
+            exclude_doc_id = f"workout_rad_{workout_id}"
+            
+            if intensity == "hard":
+                query = {
+                    "$and": [
+                        {"$or": [
+                            {"session_tag": {"$in": hard_tags}},
+                            {"rpe": {"$gte": 7}}
+                        ]},
+                        {"_id": {"$ne": exclude_doc_id}}
+                    ]
+                }
+            else:  # easy
+                query = {
+                    "$and": [
+                        {"$or": [
+                            {"session_tag": {"$in": easy_tags}},
+                            {"rpe": {"$lte": 4}}
+                        ]},
+                        {"_id": {"$ne": exclude_doc_id}}
+                    ]
+                }
+            
+            workouts_cursor = collection.find(
+                query,
+                {"_id": 1, "workout_type": 1, "session_tag": 1, "ai_classification": 1, "rpe": 1}
+            ).limit(limit)
+            
+            workouts = []
+            async for w in workouts_cursor:
+                suffix = w["_id"].split("_")[-1]
+                workouts.append({
+                    "workout_id": int(suffix),
+                    "workout_type": w.get("workout_type", "?"),
+                    "session_tag": w.get("session_tag"),
+                    "ai_classification": w.get("ai_classification"),
+                    "rpe": w.get("rpe"),
+                    "score": 1.0
+                })
+            
+            logger.info(f"Fallback found {len(workouts)} {intensity} workouts")
+            return JSONResponse(content={"workouts": workouts})
+        except Exception as fallback_error:
+            logger.error(f"Fallback also failed: {fallback_error}", exc_info=True)
+            raise HTTPException(500, f"Failed to find workouts by intensity. Actor needs restart: {e}")
+    except Exception as e:
+        logger.error(f"Failed to find workouts by intensity: {e}", exc_info=True)
+        raise HTTPException(500, f"Failed to find workouts by intensity: {e}")
 # --- END NEW ---
 
 

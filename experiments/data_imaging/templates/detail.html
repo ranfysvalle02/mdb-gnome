@@ -623,7 +623,8 @@
   }  
   .red-label { color: var(--accent-red); font-weight: 600; }  
   .green-label { color: var(--accent-green-viz); font-weight: 600; }  
-  .blue-label { color: var(--accent-blue); font-weight: 600; }  
+  .blue-label { color: var(--accent-blue); font-weight: 600; }
+  .alpha-label { color: var(--atlas-mid-text); font-weight: 600; }  
   
   .pipeline-arrow {  
     font-size: 2.5em;  
@@ -724,6 +725,8 @@
       <p style="margin: 5px 0 0 0; color: var(--atlas-mid-text); font-size: 0.95em;">
         Mix and match different time-series metrics as RGB channels to discover hidden patterns. 
         The same workout data reveals different "fingerprints" from different perspectives!
+        <strong style="color: var(--atlas-green);">NEW:</strong> Use the Alpha channel to encode a fourth metric (like Cadence), 
+        data quality/confidence, or global RPE (Rated Perceived Exertion)!
       </p>
     </div>
     <div class="selector-group">
@@ -753,6 +756,38 @@
       <select name="b_key" id="b_key">
         {% for metric in all_metrics %}
         <option value="{{ metric }}" {% if metric == selected_b_key %}selected{% endif %}>
+          {{ metric.replace('_', ' ')|title }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    
+    <div class="selector-group" style="flex-basis: 100%; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--atlas-border);">
+      <div style="flex-basis: 100%; margin-bottom: 10px;">
+        <label for="alpha_mode" style="color: var(--atlas-light-text); font-weight: 600; display: flex; align-items: center; gap: 8px;">
+          <span>Alpha Channel Mode:</span>
+          <button type="button" id="alphaInfoBtn" style="background: transparent; border: 1px solid var(--atlas-border); color: var(--atlas-green); padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.85em; display: inline-flex; align-items: center; gap: 4px;" title="Learn about Alpha Channel">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+              <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+              <path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.206 2.057v1.133h1.241c.303 0 .524-.246.524-.575 0-.37-.22-.598-.524-.598H5.423c-.35 0-.53.21-.53.34 0 .084.042.147.174.194.376.121 1.075.24 1.853.413.788.176 1.572.418 2.118.736.546.318.91.805.91 1.594 0 1.196-1.059 2.001-2.5 2.001-.936 0-1.803-.334-2.486-1.069-.73-.78-1.12-1.806-1.12-2.898V5.786z"/>
+            </svg>
+            Why Alpha?
+          </button>
+        </label>
+      </div>
+      <select name="alpha_mode" id="alpha_mode" style="flex: 1;">
+        <option value="none" {% if alpha_mode == "none" or not alpha_mode %}selected{% endif %}>None (RGB Mode)</option>
+        <option value="fourth_metric" {% if alpha_mode == "fourth_metric" %}selected{% endif %}>Fourth Metric (e.g., Cadence)</option>
+        <option value="data_quality" {% if alpha_mode == "data_quality" %}selected{% endif %}>Data Quality (255=Good, 0=Bad)</option>
+        <option value="global_rpe" {% if alpha_mode == "global_rpe" %}selected{% endif %}>Global RPE (Rated Perceived Exertion)</option>
+      </select>
+    </div>
+    
+    <div class="selector-group" id="alpha_key_group" style="{% if alpha_mode != 'fourth_metric' %}display: none;{% endif %}">
+      <label for="alpha_key" style="color: var(--atlas-mid-text);">Alpha Metric:</label>
+      <select name="alpha_key" id="alpha_key">
+        {% for metric in all_metrics %}
+        <option value="{{ metric }}" {% if metric == alpha_key or (not alpha_key and metric == 'cadence') %}selected{% endif %}>
           {{ metric.replace('_', ' ')|title }}
         </option>
         {% endfor %}
@@ -792,8 +827,18 @@
       <p class="caption" style="font-style: normal; font-size: 0.9em;">  
         <span id="caption-r">{{ label_r_full_html|safe }}</span><br>  
         <span id="caption-g">{{ label_g_full_html|safe }}</span><br>  
-        <span id="caption-b">{{ label_b_full_html|safe }}</span>  
-      </p>  
+        <span id="caption-b">{{ label_b_full_html|safe }}</span>
+        {% if b64_a %}
+        <br><span id="caption-a">{{ label_a_full_html|safe }}</span>
+        {% endif %}
+      </p>
+      {% if b64_a %}
+      <div style="margin-top: 15px; text-align: center;">
+        <h4 style="color: var(--atlas-mid-text); margin-bottom: 10px; font-size: 1em;">Alpha Channel</h4>
+        <img src="data:image/png;base64,{{b64_a}}" alt="Alpha channel" class="channel-img" id="img-channel-a" style="width: 128px; height: 128px;">
+        <p style="margin-top: 10px; color: var(--atlas-mid-text); font-size: 0.9em;" id="text-channel-a">{{ label_a_short_html|safe }}</p>
+      </div>
+      {% endif %}  
     </div>  
   
     <div class="json-box">  
@@ -915,6 +960,163 @@
     </div>
   </div>  
   
+  <div class="guide-box" style="border-top: 4px solid var(--accent-orange);">
+    <h2>
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+           fill="currentColor" viewBox="0 0 16 16"
+           style="color: var(--accent-orange);">
+        <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zM4.5 7.5a.5.5 0 0 0 0 1h5.793l-2.147 2.146a.5.5 0 0 0 .708.708l3-3a.5.5 0 0 0 0-.708l-3-3a.5.5 0 1 0-.708.708L10.293 7.5H4.5z"/>
+      </svg>
+      Vector "Magic": Asking Abstract Questions with Math
+    </h2>
+    
+    <div style="background-color: var(--atlas-dark-blue); padding: 20px; border-radius: 8px; border-left: 4px solid var(--accent-orange); margin-bottom: 20px;">
+      <p style="margin: 0 0 15px 0; color: var(--atlas-light-text); font-size: 1.1em; line-height: 1.8;">
+        <strong>🎯 The Problem:</strong> How do you ask the database for <em>"a harder version of this yoga session"</em>? 
+        You can't type that into a search bar. But with <strong style="color: var(--accent-orange);">vector arithmetic</strong>, 
+        we can discover abstract concepts like "effort" and use them to find workouts that match abstract queries!
+      </p>
+      
+      <div style="background-color: var(--atlas-bg); padding: 15px; border-radius: 6px; margin-top: 15px;">
+        <h3 style="color: var(--accent-orange); margin-top: 0; margin-bottom: 10px; font-size: 1.1em;">✨ The "Magic" Formula:</h3>
+        <ol style="color: var(--atlas-light-text); line-height: 1.8; margin-left: 20px; padding-left: 10px;">
+          <li><strong>Step 1: Find the "essence of effort"</strong><br>
+            <code style="background-color: var(--atlas-hover-bg); padding: 5px 10px; border-radius: 4px; display: inline-block; margin-top: 5px;">
+              Vector(Hard Tempo Run) - Vector(Easy Recovery Run) = "Effort Vector"
+            </code><br>
+            <span style="color: var(--atlas-mid-text); font-size: 0.95em; font-style: italic;">
+              This new Effort Vector is a set of 192 numbers that, to our AI, literally represents the abstract concept of 'high effort'.
+            </span>
+          </li>
+          <li style="margin-top: 15px;"><strong>Step 2: Apply it to find what you want</strong><br>
+            <code style="background-color: var(--atlas-hover-bg); padding: 5px 10px; border-radius: 4px; display: inline-block; margin-top: 5px;">
+              Vector(My Easy Yoga Session) + "Effort Vector" = ???
+            </code><br>
+            <span style="color: var(--atlas-mid-text); font-size: 0.95em; font-style: italic;">
+              Take this new, mathematically-created vector and run a search with it.
+            </span>
+          </li>
+          <li style="margin-top: 15px;"><strong>Step 3: Discover the results</strong><br>
+            <span style="color: var(--atlas-green); font-weight: 600;">
+              The database will return "Power Yoga" sessions, "Intense Vinyasa Flows," or other high-intensity yoga workouts!
+            </span>
+          </li>
+        </ol>
+      </div>
+      
+      <p style="margin: 15px 0 0 0; color: var(--atlas-light-text); font-size: 1.05em; font-weight: 600;">
+        🚀 <strong>Why this is genius:</strong> We've stopped just retrieving data. We are now <strong>exploring the latent space</strong> 
+        of our workouts. We can ask abstract questions like <em>"what's the halfway point between a run and a bike ride?"</em> 
+        or <em>"show me a workout that's 50% less intense than this one."</em>
+      </p>
+    </div>
+    
+    <div style="background-color: var(--atlas-hover-bg); padding: 20px; border-radius: 8px; border: 2px solid var(--atlas-border); margin-top: 20px;">
+      <h3 style="color: var(--atlas-light-text); margin-top: 0; margin-bottom: 15px; font-size: 1.2em;">
+        🧮 Try Vector Magic
+      </h3>
+      
+      <div id="vectorMagicSmartSuggestions" style="display: none; background-color: var(--atlas-dark-blue); padding: 15px; border-radius: 6px; border: 1px solid var(--atlas-green); margin-bottom: 20px;">
+        <p style="margin: 0 0 10px 0; color: var(--atlas-light-text); font-weight: 600; font-size: 1em;">
+          ✨ <strong>Smart Suggestions:</strong> Based on your neighbors, we've detected potential workouts for Vector Magic!
+        </p>
+        <div id="smartSuggestionsContent" style="color: var(--atlas-mid-text); font-size: 0.95em;"></div>
+      </div>
+      
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 20px;">
+        <!-- Operation 1: One-Click Find Harder -->
+        <div style="background-color: var(--atlas-dark-blue); padding: 15px; border-radius: 6px; border: 1px solid var(--atlas-border);">
+          <h4 style="color: var(--accent-orange); margin-top: 0; margin-bottom: 10px;">1️⃣ Find Harder Version</h4>
+          <p style="color: var(--atlas-mid-text); font-size: 0.95em; margin-bottom: 15px;">
+            Automatically find harder versions using neighbors:
+          </p>
+          <div id="harderSuggestions" style="margin-bottom: 15px; font-size: 0.9em; color: var(--atlas-mid-text);">
+            <p style="margin: 0; font-style: italic;">💡 Click below to automatically use neighbors</p>
+          </div>
+          <button id="findHarderAutoBtn" class="control-btn" style="width: 100%; margin-top: 10px; padding: 10px; background-color: var(--accent-orange); color: white; font-size: 0.95em;">
+            🚀 Find Harder Versions (Auto)
+          </button>
+          <details style="margin-top: 10px;">
+            <summary style="color: var(--atlas-mid-text); font-size: 0.85em; cursor: pointer; user-select: none;">Manual override</summary>
+            <div style="margin-top: 10px;">
+              <input type="number" id="harderWorkoutId" placeholder="Workout ID" 
+                     style="width: 100%; padding: 8px; background-color: var(--atlas-bg); color: var(--atlas-light-text); border: 1px solid var(--atlas-border); border-radius: 4px; font-size: 0.95em;">
+              <button id="findHarderManualBtn" class="control-btn" style="width: 100%; margin-top: 8px; padding: 8px; background-color: var(--atlas-hover-bg); color: var(--atlas-light-text); font-size: 0.9em; border: 1px solid var(--atlas-border);">
+                Use Manual ID
+              </button>
+            </div>
+          </details>
+        </div>
+        
+        <!-- Operation 2: One-Click Find Easier -->
+        <div style="background-color: var(--atlas-dark-blue); padding: 15px; border-radius: 6px; border: 1px solid var(--atlas-border);">
+          <h4 style="color: var(--accent-orange); margin-top: 0; margin-bottom: 10px;">2️⃣ Find Easier Version</h4>
+          <p style="color: var(--atlas-mid-text); font-size: 0.95em; margin-bottom: 15px;">
+            Automatically find easier versions using neighbors:
+          </p>
+          <div id="easierSuggestions" style="margin-bottom: 15px; font-size: 0.9em; color: var(--atlas-mid-text);">
+            <p style="margin: 0; font-style: italic;">💡 Click below to automatically use neighbors</p>
+          </div>
+          <button id="findEasierAutoBtn" class="control-btn" style="width: 100%; margin-top: 10px; padding: 10px; background-color: var(--accent-orange); color: white; font-size: 0.95em;">
+            🚀 Find Easier Versions (Auto)
+          </button>
+          <details style="margin-top: 10px;">
+            <summary style="color: var(--atlas-mid-text); font-size: 0.85em; cursor: pointer; user-select: none;">Manual override</summary>
+            <div style="margin-top: 10px;">
+              <input type="number" id="easierWorkoutId" placeholder="Workout ID" 
+                     style="width: 100%; padding: 8px; background-color: var(--atlas-bg); color: var(--atlas-light-text); border: 1px solid var(--atlas-border); border-radius: 4px; font-size: 0.95em;">
+              <button id="findEasierManualBtn" class="control-btn" style="width: 100%; margin-top: 8px; padding: 8px; background-color: var(--atlas-hover-bg); color: var(--atlas-light-text); font-size: 0.9em; border: 1px solid var(--atlas-border);">
+                Use Manual ID
+              </button>
+            </div>
+          </details>
+        </div>
+        
+        <!-- Operation 3: Scale Intensity -->
+        <div style="background-color: var(--atlas-dark-blue); padding: 15px; border-radius: 6px; border: 1px solid var(--atlas-border);">
+          <h4 style="color: var(--accent-orange); margin-top: 0; margin-bottom: 10px;">3️⃣ Scale Intensity</h4>
+          <p style="color: var(--atlas-mid-text); font-size: 0.95em; margin-bottom: 15px;">
+            Scale this workout's intensity to find variations:
+          </p>
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px;">
+            <button class="scaleBtn" data-scale="0.5" style="flex: 1; padding: 8px; background-color: var(--atlas-hover-bg); color: var(--atlas-light-text); border: 1px solid var(--atlas-border); border-radius: 4px; font-size: 0.9em; cursor: pointer;">50% Less</button>
+            <button class="scaleBtn" data-scale="0.75" style="flex: 1; padding: 8px; background-color: var(--atlas-hover-bg); color: var(--atlas-light-text); border: 1px solid var(--atlas-border); border-radius: 4px; font-size: 0.9em; cursor: pointer;">75%</button>
+            <button class="scaleBtn" data-scale="1.25" style="flex: 1; padding: 8px; background-color: var(--atlas-hover-bg); color: var(--atlas-light-text); border: 1px solid var(--atlas-border); border-radius: 4px; font-size: 0.9em; cursor: pointer;">125%</button>
+            <button class="scaleBtn" data-scale="1.5" style="flex: 1; padding: 8px; background-color: var(--atlas-hover-bg); color: var(--atlas-light-text); border: 1px solid var(--atlas-border); border-radius: 4px; font-size: 0.9em; cursor: pointer;">150% More</button>
+          </div>
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <label style="color: var(--atlas-light-text); font-size: 0.9em; font-weight: 600;">Custom:</label>
+            <input type="number" id="scaleFactor" placeholder="0.5" step="0.1" min="0.1" max="2.0" 
+                   style="flex: 1; min-width: 80px; padding: 8px; background-color: var(--atlas-bg); color: var(--atlas-light-text); border: 1px solid var(--atlas-border); border-radius: 4px; font-size: 0.95em;">
+          </div>
+          <button id="scaleIntensityBtn" class="control-btn" style="width: 100%; margin-top: 10px; padding: 10px; background-color: var(--accent-orange); color: white; font-size: 0.95em;">
+            Find Scaled Versions
+          </button>
+        </div>
+      </div>
+      
+      <!-- Results Display -->
+      <div id="vectorMagicResults" style="display: none; margin-top: 20px; padding-top: 20px; border-top: 2px solid var(--atlas-border);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+          <h3 style="color: var(--accent-orange); margin-top: 0; margin-bottom: 0;">Vector Magic Results</h3>
+          <button id="explainVectorMagicBtn" class="control-btn" style="padding: 6px 12px; font-size: 0.9em; background-color: var(--accent-orange); color: white;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" style="margin-right: 5px;">
+              <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+              <path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.206 2.057v1.133h1.241c.303 0 .524-.246.524-.575 0-.37-.22-.598-.524-.598H5.423c-.35 0-.53.21-.53.34 0 .084.042.147.174.194.376.121 1.075.24 1.853.413.788.176 1.572.418 2.118.736.546.318.91.805.91 1.594 0 1.196-1.059 2.001-2.5 2.001-.936 0-1.803-.334-2.486-1.069-.73-.78-1.12-1.806-1.12-2.898V5.786z"/>
+            </svg>
+            Learn More
+          </button>
+        </div>
+        <div id="vectorMagicOperation" style="background-color: var(--atlas-dark-blue); padding: 12px; border-radius: 6px; border-left: 4px solid var(--accent-orange); margin-bottom: 15px;">
+          <p style="margin: 0; color: var(--atlas-light-text); font-size: 0.95em;">
+            <strong>Operation:</strong> <code id="vectorMagicOperationText" style="color: var(--accent-orange);"></code>
+          </p>
+        </div>
+        <ul id="vectorMagicResultsList" style="list-style-type: none; padding-left: 0;"></ul>
+      </div>
+    </div>
+  </div>
+  
   <div class="explanation-box">  
     <div class="pipeline-header">  
       <h2>  
@@ -1017,13 +1219,13 @@
           </div>  
           <p style="margin-top: 15px;">  
             Minutes <code>0..7</code> become Row 1 (highlighted). Minutes <code>8..15</code> become Row 2, etc.  
-            We now have three separate 8x8 grayscale "channels".  
+            We now have {% if b64_a %}four{% else %}three{% endif %} separate 8x8 grayscale "channels"{% if b64_a %} (R, G, B, and A){% endif %}.  
           </p>  
         </div>  
   
         <div class="pipeline-step">  
-          <h3><span class="step-number">3</span> Stack Channels into 8x8x3 RGB Image</h3>  
-          <p>The three 8x8 grayscale grids (channels) generated in Step 2 are combined pixel-by-pixel:</p>  
+          <h3><span class="step-number">3</span> Stack Channels into {% if b64_a %}8x8x4 RGBA{% else %}8x8x3 RGB{% endif %} Image</h3>  
+          <p>{% if b64_a %}The four{% else %}The three{% endif %} 8x8 grayscale grids (channels) generated in Step 2 are combined pixel-by-pixel:</p>  
           <div class="step-3-substeps">  
             <div class="substep">  
               <img src="data:image/png;base64,{{b64_r}}" alt="Red channel" class="channel-img" id="img-channel-r">  
@@ -1036,23 +1238,70 @@
             <div class="substep">  
               <img src="data:image/png;base64,{{b64_b}}" alt="Blue channel" class="channel-img" id="img-channel-b">  
               <p id="text-channel-b">{{ label_b_short_html|safe }}</p>  
-            </div>  
+            </div>
+            {% if b64_a %}
+            <div class="substep">  
+              <img src="data:image/png;base64,{{b64_a}}" alt="Alpha channel" class="channel-img" id="img-channel-a-pipeline">  
+              <p id="text-channel-a-pipeline">{{ label_a_short_html|safe }}</p>  
+            </div>
+            {% endif %}
           </div>  
           <div class="pipeline-arrow">&dArr;</div>  
           <p style="text-align: center; margin-top: 15px;">These channels are layered together...</p>  
           <div style="text-align: center; margin-top: 10px;">  
-            <img src="data:image/png;base64,{{b64_combined}}" alt="Combined RGB"  
+            <img src="data:image/png;base64,{{b64_combined}}" alt="Combined {% if b64_a %}RGBA{% else %}RGB{% endif %}"  
                  class="channel-img" style="width: 160px; height: 160px; border-width: 2px;" id="main-fingerprint-img-small">  
-            <p>...to create the final <strong>8x8 RGB color "fingerprint"</strong> image.</p>  
+            <p>...to create the final <strong>8x8 {% if b64_a %}RGBA{% else %}RGB{% endif %} color "fingerprint"</strong> image.</p>
+            {% if b64_a %}
+            <div style="margin-top: 15px; padding: 15px; background-color: var(--atlas-hover-bg); border-radius: 6px; border-left: 4px solid var(--atlas-green);">
+              <p style="margin: 0 0 10px 0; color: var(--atlas-light-text); font-size: 1em; font-weight: 600;">
+                💡 <strong>The Secret Data Lane: Why Alpha is Cool!</strong>
+              </p>
+              <p style="margin: 0; color: var(--atlas-mid-text); font-size: 0.95em; line-height: 1.6;">
+                The Alpha channel encodes {% if alpha_mode == "fourth_metric" %}<strong>a fourth metric ({{alpha_key.replace('_', ' ').title()}})</strong>{% elif alpha_mode == "data_quality" %}<strong>data quality/confidence (255=good, 0=bad)</strong>{% elif alpha_mode == "global_rpe" %}<strong>global RPE (Rated Perceived Exertion)</strong>{% endif %}, 
+                giving us a <strong>fourth 64-point data lane</strong> for richer pattern matching!
+              </p>
+              <p style="margin: 10px 0 0 0; color: var(--atlas-mid-text); font-size: 0.9em; line-height: 1.6;">
+                {% if alpha_mode == "fourth_metric" %}
+                <strong>🎯 Fourth Metric Mode:</strong> Now your vector search finds workouts with similar patterns in <strong>four metrics</strong> instead of three! 
+                Perfect for finding workouts with similar cadence/efficiency patterns.
+                {% elif alpha_mode == "data_quality" %}
+                <strong>🔧 Data Quality Mode:</strong> The database now "knows" which data points are reliable! Workouts with sensor dropouts 
+                will have different vectors than perfect data, enabling smarter similarity matching.
+                {% elif alpha_mode == "global_rpe" %}
+                <strong>🌐 Global RPE Mode:</strong> Match workouts by perceived effort! Two workouts with identical physical metrics but 
+                different perceived difficulty will have different vectors.
+                {% endif %}
+              </p>
+              <p style="margin: 10px 0 0 0; color: var(--atlas-green); font-size: 0.9em; font-weight: 600;">
+                <a href="#" id="learnMoreAlpha" style="color: var(--atlas-green); text-decoration: underline; cursor: pointer;">Learn more about why Alpha channel is powerful →</a>
+              </p>
+            </div>
+            {% endif %}
           </div>  
         </div>  
   
         <div class="pipeline-step">  
-          <h3><span class="step-number">4</span> Finish: Flatten to 192-Element Vector</h3>  
-          <p>The 8x8x3 image (8 rows * 8 columns * 3 color channels = 192 values) is "flattened" row by row into a single list of 192 numbers. This vector numerically captures the visual pattern.</p>  
+          <h3><span class="step-number">4</span> Finish: Flatten to {% if b64_a %}256{% else %}192{% endif %}-Element Vector</h3>  
+          <p>The 8x8x{% if b64_a %}4{% else %}3{% endif %} image (8 rows * 8 columns * {% if b64_a %}4{% else %}3{% endif %} color channels = {% if b64_a %}256{% else %}192{% endif %} values) is "flattened" row by row into a single list of {% if b64_a %}256{% else %}192{% endif %} numbers. This vector numerically captures the visual pattern.</p>  
           <div class="step-4-content">  
-            <pre><code>Vector = [Pixel(0,0)R, Pixel(0,0)G, Pixel(0,0)B, Pixel(0,1)R, ..., Pixel(7,7)B]</code></pre>  
+            <pre><code>Vector = [Pixel(0,0)R, Pixel(0,0)G, Pixel(0,0)B{% if b64_a %}, Pixel(0,0)A{% endif %}, Pixel(0,1)R, ..., Pixel(7,7){% if b64_a %}A{% else %}B{% endif %}]</code></pre>  
             <p>This is the vector stored in MongoDB Atlas and used for blazing-fast <code>$vectorSearch</code>!</p>
+            {% if b64_a %}
+            <div style="margin-top: 15px; padding: 15px; background-color: var(--atlas-hover-bg); border-radius: 6px; border-left: 4px solid var(--accent-purple);">
+              <p style="margin: 0 0 10px 0; color: var(--atlas-light-text); font-size: 1em; font-weight: 600;">
+                🎯 <strong>RGBA Mode: The Power of 256 Elements</strong>
+              </p>
+              <p style="margin: 0; color: var(--atlas-mid-text); font-size: 0.95em; line-height: 1.6;">
+                With the Alpha channel enabled, we now have a <strong>256-element vector</strong> instead of 192, 
+                providing an <strong>additional 64 data points</strong> for more nuanced similarity matching!
+              </p>
+              <p style="margin: 10px 0 0 0; color: var(--atlas-mid-text); font-size: 0.9em; line-height: 1.6;">
+                <strong>Why this matters:</strong> More dimensions = richer pattern matching. The Alpha channel adds context that RGB alone can't capture, 
+                whether it's a fourth metric, data quality indicators, or global workout characteristics like RPE.
+              </p>
+            </div>
+            {% endif %}
           </div>
           <div style="background-color: var(--atlas-dark-blue); padding: 15px; border-radius: 6px; border-left: 4px solid var(--atlas-green); margin-top: 15px;">
             <p style="margin: 0; color: var(--atlas-light-text); font-size: 1.05em; font-weight: 600;">
@@ -1061,17 +1310,23 @@
             <p style="margin: 10px 0 0 0; color: var(--atlas-mid-text); line-height: 1.6;">
               <strong>Why is this clever?</strong> We've transformed <strong>time-series data</strong> (which is hard to search) 
               into a <strong>fixed-size vector</strong> (which is fast to search). Instead of comparing 64×5=320 data points 
-              for every workout, we compare one 192-element vector. This enables:
+              for every workout, we compare one {% if b64_a %}256{% else %}192{% endif %}-element vector. This enables:
             </p>
             <ul style="margin: 10px 0 0 20px; color: var(--atlas-mid-text); line-height: 1.6;">
               <li><strong>Indexed search:</strong> MongoDB builds an optimized HNSW index on these vectors</li>
               <li><strong>Millisecond queries:</strong> Find similar workouts in milliseconds, even with millions of records</li>
               <li><strong>Pattern preservation:</strong> The visual "fingerprint" captures the shape and progression of effort</li>
-              <li><strong>Multiple perspectives:</strong> Different RGB channel combinations reveal different types of similarity</li>
+              <li><strong>Multiple perspectives:</strong> Different {% if b64_a %}RGBA{% else %}RGB{% endif %} channel combinations reveal different types of similarity</li>
+              {% if b64_a %}
+              <li><strong>The Alpha advantage:</strong> The fourth channel adds 64 more data points, enabling richer pattern matching for metrics like cadence, data quality, or RPE!</li>
+              {% endif %}
             </ul>
             <p style="margin: 15px 0 0 0; color: var(--atlas-light-text); font-weight: 600;">
-              🚀 <strong>Try it:</strong> Change the RGB channels above and click "Find Similar" to discover workouts 
+              🚀 <strong>Try it:</strong> Change the {% if b64_a %}RGBA{% else %}RGB{% endif %} channels above and click "Find Similar" to discover workouts 
               that are similar in power/cadence patterns vs. heart rate/calorie patterns. Same data, completely different insights!
+              {% if b64_a %}
+              <strong style="color: var(--atlas-green);">Experiment with the Alpha channel modes</strong> to see how encoding a fourth metric, data quality, or RPE changes similarity matching!
+              {% endif %}
             </p>
           </div>
         </div>  
@@ -1236,6 +1491,94 @@
   </div>  
 </div>
 
+<div id="alphaInfoModal" class="modal">
+  <div class="modal-content">
+    <span class="close-btn">&times;</span>
+    <h2>🎯 The Secret Data Lane: Why Alpha Channel is Cool!</h2>
+    
+    <div style="background-color: var(--atlas-hover-bg); padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--atlas-green);">
+      <h3 style="color: var(--atlas-green); margin-top: 0;">💡 The Concept</h3>
+      <p style="color: var(--atlas-light-text); line-height: 1.8;">
+        Our current vector is <strong>8x8x3 (RGB)</strong> = 192 values. What if we used <strong>8x8x4 (RGBA)</strong>? 
+        That "A" stands for <strong>Alpha</strong>, or <strong>opacity</strong>, and it gives us a <strong>fourth 64-point data lane</strong>. 
+        What can we put there? <strong>Anything we want!</strong>
+      </p>
+    </div>
+
+    <div style="background-color: var(--atlas-hover-bg); padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--accent-blue);">
+      <h3 style="color: var(--accent-blue); margin-top: 0;">📊 The Obvious Application: A Fourth Metric</h3>
+      <p style="color: var(--atlas-light-text); line-height: 1.8;">
+        This is the simplest upgrade. For a running or cycling workout, that fourth channel is a perfect place for 
+        <strong>Cadence (RPM)</strong>. Now, our vector search won't just find workouts with a similar heart rate and speed profile; 
+        it will find ones with a similar <strong>turnover and efficiency</strong>.
+      </p>
+      <p style="color: var(--atlas-mid-text); margin-top: 10px; font-style: italic;">
+        💡 <strong>Example:</strong> Two workouts might have identical HR and speed patterns, but one has high cadence (efficient) 
+        while the other has low cadence (struggling). With Alpha = Cadence, they'll have different vectors!
+      </p>
+    </div>
+
+    <div style="background-color: var(--atlas-hover-bg); padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--accent-orange);">
+      <h3 style="color: var(--accent-orange); margin-top: 0;">🔧 The "Hacky" Application: Encoding Data Quality</h3>
+      <p style="color: var(--atlas-light-text); line-height: 1.8;">
+        This is where it gets really clever. What does "Alpha" mean? <strong>Transparency</strong>.
+      </p>
+      <div style="background-color: var(--atlas-dark-blue); padding: 15px; border-radius: 6px; margin-top: 15px;">
+        <p style="color: var(--atlas-light-text); margin: 0 0 10px 0; font-weight: 600;">Real-World Problem:</p>
+        <p style="color: var(--atlas-mid-text); margin: 0;">
+          My heart rate monitor disconnected for 5 minutes during a run. In my data, this shows up as a flat line or a zero.
+        </p>
+      </div>
+      <div style="background-color: var(--atlas-dark-blue); padding: 15px; border-radius: 6px; margin-top: 15px;">
+        <p style="color: var(--atlas-green); margin: 0 0 10px 0; font-weight: 600;">The Hack:</p>
+        <p style="color: var(--atlas-mid-text); margin: 0;">
+          When we create our 8x8x4 vector, we use the Alpha channel to represent <strong>"data confidence"</strong>:
+        </p>
+        <ul style="color: var(--atlas-mid-text); margin: 10px 0 0 20px; line-height: 1.8;">
+          <li>For the 59 minutes of good data: <strong>Alpha = 255 (Opaque)</strong></li>
+          <li>For the 5 minutes of bad/missing data: <strong>Alpha = 0 (Transparent)</strong></li>
+        </ul>
+      </div>
+      <div style="background-color: var(--atlas-dark-blue); padding: 15px; border-radius: 6px; margin-top: 15px;">
+        <p style="color: var(--accent-purple); margin: 0 0 10px 0; font-weight: 600;">Why This Is Genius:</p>
+        <p style="color: var(--atlas-mid-text); margin: 0;">
+          The vector search inherently understands this. When I search for a "perfect" workout (all Alpha=255), 
+          the database knows to ignore my "gappy" workout because its vector is fundamentally different. 
+          But if I search for another workout where my sensor also dropped out, <strong>their vectors will match!</strong> 
+          We've made our database understand the concept of <strong>"unreliable data"</strong>.
+        </p>
+      </div>
+    </div>
+
+    <div style="background-color: var(--atlas-hover-bg); padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--accent-purple);">
+      <h3 style="color: var(--accent-purple); margin-top: 0;">🌐 The Global Application: Encoding RPE</h3>
+      <p style="color: var(--atlas-light-text); line-height: 1.8;">
+        We could also use this channel to encode <strong>"global"</strong> data, like setting the entire Alpha grid to a single value 
+        representing the user's <strong>RPE (Rated Perceived Exertion)</strong>. Now, "hard" workouts have a different "tint" than "easy" ones.
+      </p>
+      <p style="color: var(--atlas-mid-text); margin-top: 10px; font-style: italic;">
+        💡 <strong>Example:</strong> Two workouts might have identical HR/speed/cadence patterns, but one felt "easy" (RPE=3) 
+        while the other felt "hard" (RPE=8). With Alpha = RPE, they'll have different vectors, enabling similarity matching 
+        based on perceived effort!
+      </p>
+    </div>
+
+    <div style="background-color: var(--atlas-dark-blue); padding: 20px; border-radius: 8px; border: 2px solid var(--atlas-green);">
+      <h3 style="color: var(--atlas-green); margin-top: 0;">🚀 Why This Is Powerful</h3>
+      <ul style="color: var(--atlas-light-text); line-height: 1.8; margin-left: 20px;">
+        <li><strong>More Data Points:</strong> 256-element vectors vs 192-element = 64 more dimensions for pattern matching</li>
+        <li><strong>Richer Similarity:</strong> Find workouts similar in 4 metrics instead of 3</li>
+        <li><strong>Data Quality Awareness:</strong> The database "knows" which data points are reliable</li>
+        <li><strong>Contextual Matching:</strong> Match workouts by perceived effort, not just physical metrics</li>
+        <li><strong>Flexible Encoding:</strong> Use the same channel for different purposes (metric, quality, or global value)</li>
+      </ul>
+      <p style="color: var(--atlas-light-text); margin-top: 15px; font-weight: 600;">
+        🎯 <strong>Try it:</strong> Switch between different Alpha modes above and see how it changes the vector similarity matching!
+      </p>
+    </div>
+  </div>
+</div>
+
 <div id="whyModal" class="modal">  
   <div class="modal-content">  
     <span class="close-btn">&times;</span>  
@@ -1335,6 +1678,31 @@ document.addEventListener("DOMContentLoaded", function() {
     promptClose.onclick = function() {  
       if(promptModal) promptModal.style.display = "none";  
     }  
+  }
+
+  // --- Modal Logic (#alphaInfoModal) ---
+  const alphaInfoModal = document.getElementById("alphaInfoModal");
+  const alphaInfoBtn = document.getElementById("alphaInfoBtn");
+  const alphaInfoClose = alphaInfoModal ? alphaInfoModal.querySelector(".close-btn") : null;
+  
+  if (alphaInfoBtn) {
+    alphaInfoBtn.onclick = function() {
+      if(alphaInfoModal) alphaInfoModal.style.display = "block";
+    };
+  }
+  if (alphaInfoClose) {
+    alphaInfoClose.onclick = function() {
+      if(alphaInfoModal) alphaInfoModal.style.display = "none";
+    };
+  }
+  
+  // Link to open alpha info modal
+  const learnMoreAlphaLink = document.getElementById("learnMoreAlpha");
+  if (learnMoreAlphaLink) {
+    learnMoreAlphaLink.onclick = function(e) {
+      e.preventDefault();
+      if(alphaInfoModal) alphaInfoModal.style.display = "block";
+    };
   }  
   
   // --- Modal Logic (#customViewModal) ---
@@ -1379,7 +1747,10 @@ document.addEventListener("DOMContentLoaded", function() {
     }
     if (event.target == whyModal) {  
       whyModal.style.display = "none";  
-    }  
+    }
+    if (event.target == alphaInfoModal) {
+      alphaInfoModal.style.display = "none";
+    }
   }  
   
   // --- Analyze Form Logic (Unchanged) ---  
@@ -1443,6 +1814,20 @@ document.addEventListener("DOMContentLoaded", function() {
   const rSelect = document.getElementById('r_key');
   const gSelect = document.getElementById('g_key');
   const bSelect = document.getElementById('b_key');
+  const alphaModeSelect = document.getElementById('alpha_mode');
+  const alphaKeySelect = document.getElementById('alpha_key');
+  const alphaKeyGroup = document.getElementById('alpha_key_group');
+  
+  // Show/hide alpha key selector based on alpha mode
+  if (alphaModeSelect && alphaKeyGroup) {
+    alphaModeSelect.addEventListener('change', function() {
+      if (this.value === 'fourth_metric') {
+        alphaKeyGroup.style.display = 'flex';
+      } else {
+        alphaKeyGroup.style.display = 'none';
+      }
+    });
+  }
 
   // 1. Get all the elements we need to update
   const elementsToUpdate = {
@@ -1457,6 +1842,14 @@ document.addEventListener("DOMContentLoaded", function() {
     textR: document.getElementById('text-channel-r'),
     textG: document.getElementById('text-channel-g'),
     textB: document.getElementById('text-channel-b')
+  };
+  
+  // Alpha channel elements (may not exist initially)
+  const alphaElements = {
+    capA: document.getElementById('caption-a'),
+    imgA: document.getElementById('img-channel-a'),
+    textA: document.getElementById('text-channel-a'),
+    alphaSection: document.querySelector('#img-channel-a')?.closest('div')
   };
 
   // 2. On page load, save the *initial* (revert) state to sessionStorage
@@ -1476,6 +1869,8 @@ document.addEventListener("DOMContentLoaded", function() {
   sessionStorage.setItem(storagePrefix + 'selectR', rSelect.value);
   sessionStorage.setItem(storagePrefix + 'selectG', gSelect.value);
   sessionStorage.setItem(storagePrefix + 'selectB', bSelect.value);
+  if (alphaModeSelect) sessionStorage.setItem(storagePrefix + 'selectAlphaMode', alphaModeSelect.value);
+  if (alphaKeySelect) sessionStorage.setItem(storagePrefix + 'selectAlphaKey', alphaKeySelect.value);
 
   // 3. Helper function to apply new data to the DOM
   function applyVizData(data) {
@@ -1490,6 +1885,115 @@ document.addEventListener("DOMContentLoaded", function() {
     elementsToUpdate.textR.innerHTML = data.label_r_short_html;
     elementsToUpdate.textG.innerHTML = data.label_g_short_html;
     elementsToUpdate.textB.innerHTML = data.label_b_short_html;
+    
+    // Handle alpha channel if present
+    if (data.b64_a) {
+      // Create alpha channel section if it doesn't exist
+      if (!alphaElements.imgA) {
+        const alphaSection = document.createElement('div');
+        alphaSection.style.marginTop = '15px';
+        alphaSection.style.textAlign = 'center';
+        alphaSection.innerHTML = `
+          <h4 style="color: var(--atlas-mid-text); margin-bottom: 10px; font-size: 1em;">Alpha Channel</h4>
+          <img src="" alt="Alpha channel" class="channel-img" id="img-channel-a" style="width: 128px; height: 128px;">
+          <p style="margin-top: 10px; color: var(--atlas-mid-text); font-size: 0.9em;" id="text-channel-a"></p>
+        `;
+        elementsToUpdate.capB.parentElement.appendChild(alphaSection);
+        alphaElements.imgA = document.getElementById('img-channel-a');
+        alphaElements.textA = document.getElementById('text-channel-a');
+        alphaElements.capA = document.createElement('span');
+        alphaElements.capA.id = 'caption-a';
+        elementsToUpdate.capB.parentElement.insertBefore(alphaElements.capA, elementsToUpdate.capB.nextSibling);
+        elementsToUpdate.capB.parentElement.insertBefore(document.createTextNode('<br>'), alphaElements.capA);
+      }
+      
+      alphaElements.imgA.src = 'data:image/png;base64,' + data.b64_a;
+      alphaElements.textA.innerHTML = data.label_a_short_html;
+      alphaElements.capA.innerHTML = data.label_a_full_html;
+      if (alphaElements.alphaSection) alphaElements.alphaSection.style.display = 'block';
+      
+      // Update pipeline section alpha channel
+      const pipelineAlphaImg = document.getElementById('img-channel-a-pipeline');
+      const pipelineAlphaText = document.getElementById('text-channel-a-pipeline');
+      if (pipelineAlphaImg) {
+        pipelineAlphaImg.src = 'data:image/png;base64,' + data.b64_a;
+      }
+      if (pipelineAlphaText) {
+        pipelineAlphaText.innerHTML = data.label_a_short_html;
+      }
+      
+      // Show alpha channel in pipeline if hidden
+      const pipelineAlphaSubstep = pipelineAlphaImg?.closest('.substep');
+      if (pipelineAlphaSubstep) {
+        pipelineAlphaSubstep.style.display = 'flex';
+      }
+      
+      // Update pipeline step 2 description
+      const step2Desc = document.querySelector('.pipeline-step:nth-of-type(2) > p:last-of-type');
+      if (step2Desc) {
+        step2Desc.textContent = step2Desc.textContent.replace(/three|four/g, 'four');
+        if (!step2Desc.textContent.includes('(R, G, B, and A)')) {
+          step2Desc.textContent = step2Desc.textContent.replace(/channels"/, 'channels" (R, G, B, and A)');
+        }
+      }
+      
+      // Update pipeline step 3 title and description
+      const step3Title = document.querySelector('.pipeline-step:nth-of-type(3) h3');
+      if (step3Title) {
+        step3Title.innerHTML = step3Title.innerHTML.replace(/8x8x3 RGB|8x8x4 RGBA/g, '8x8x4 RGBA');
+      }
+      const step3Desc = document.querySelector('.pipeline-step:nth-of-type(3) > p');
+      if (step3Desc) {
+        step3Desc.textContent = step3Desc.textContent.replace(/three|four/g, 'four');
+      }
+      
+      // Update pipeline step 4 title and description
+      const step4Title = document.querySelector('.pipeline-step:nth-of-type(4) h3');
+      if (step4Title) {
+        step4Title.innerHTML = step4Title.innerHTML.replace(/192-Element|256-Element/g, '256-Element');
+      }
+      const step4Desc = document.querySelector('.pipeline-step:nth-of-type(4) > p');
+      if (step4Desc) {
+        step4Desc.textContent = step4Desc.textContent.replace(/8x8x3|8x8x4/g, '8x8x4').replace(/192|256/g, '256');
+      }
+    } else {
+      // Hide alpha channel section if not present
+      if (alphaElements.alphaSection) alphaElements.alphaSection.style.display = 'none';
+      if (alphaElements.capA) alphaElements.capA.style.display = 'none';
+      
+      // Hide alpha channel in pipeline
+      const pipelineAlphaSubstep = document.getElementById('img-channel-a-pipeline')?.closest('.substep');
+      if (pipelineAlphaSubstep) {
+        pipelineAlphaSubstep.style.display = 'none';
+      }
+      
+      // Update pipeline step 2 description back to three
+      const step2Desc = document.querySelector('.pipeline-step:nth-of-type(2) > p:last-of-type');
+      if (step2Desc) {
+        step2Desc.textContent = step2Desc.textContent.replace(/four|three/g, 'three');
+        step2Desc.textContent = step2Desc.textContent.replace(/ \(R, G, B, and A\)/, '');
+      }
+      
+      // Update pipeline step 3 title and description back to RGB
+      const step3Title = document.querySelector('.pipeline-step:nth-of-type(3) h3');
+      if (step3Title) {
+        step3Title.innerHTML = step3Title.innerHTML.replace(/8x8x4 RGBA|8x8x3 RGB/g, '8x8x3 RGB');
+      }
+      const step3Desc = document.querySelector('.pipeline-step:nth-of-type(3) > p');
+      if (step3Desc) {
+        step3Desc.textContent = step3Desc.textContent.replace(/four|three/g, 'three');
+      }
+      
+      // Update pipeline step 4 title and description back to 192
+      const step4Title = document.querySelector('.pipeline-step:nth-of-type(4) h3');
+      if (step4Title) {
+        step4Title.innerHTML = step4Title.innerHTML.replace(/256-Element|192-Element/g, '192-Element');
+      }
+      const step4Desc = document.querySelector('.pipeline-step:nth-of-type(4) > p');
+      if (step4Desc) {
+        step4Desc.textContent = step4Desc.textContent.replace(/8x8x4|8x8x3/g, '8x8x3').replace(/256|192/g, '192');
+      }
+    }
   }
   
   // 4. Add click listener for the "Update View" button (now auto-finds similar workouts)
@@ -1502,10 +2006,12 @@ document.addEventListener("DOMContentLoaded", function() {
       const rVal = rSelect.value;
       const gVal = gSelect.value;
       const bVal = bSelect.value;
+      const alphaModeVal = alphaModeSelect ? alphaModeSelect.value : 'none';
+      const alphaKeyVal = alphaKeySelect ? alphaKeySelect.value : 'cadence';
       
       // Construct the API URLs
-      const vizUrl = `/experiments/data_imaging/workout/{{workout_id}}/viz?r_key=${rVal}&g_key=${gVal}&b_key=${bVal}`;
-      const similarUrl = `/experiments/data_imaging/workout/{{workout_id}}/similar?r_key=${rVal}&g_key=${gVal}&b_key=${bVal}&limit=3`;
+      const vizUrl = `/experiments/data_imaging/workout/{{workout_id}}/viz?r_key=${rVal}&g_key=${gVal}&b_key=${bVal}&alpha_mode=${alphaModeVal}&alpha_key=${alphaKeyVal}`;
+      const similarUrl = `/experiments/data_imaging/workout/{{workout_id}}/similar?r_key=${rVal}&g_key=${gVal}&b_key=${bVal}&alpha_mode=${alphaModeVal}&alpha_key=${alphaKeyVal}&limit=3`;
 
       // Fetch both visualization data and similar workouts in parallel
       Promise.all([
@@ -1554,7 +2060,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 contextSpan += ` | Pattern: ${item.ai_classification}`;
               }
               
-              return `<li><a href="/experiments/data_imaging/workout/${sid}?r_key=${encodeURIComponent(rVal)}&g_key=${encodeURIComponent(gVal)}&b_key=${encodeURIComponent(bVal)}">Workout #${sid}</a> <span>(${contextSpan})</span><br>Similarity Score: ${item.score.toFixed(4)}</li>`;
+              return `<li><a href="/experiments/data_imaging/workout/${sid}?r_key=${encodeURIComponent(rVal)}&g_key=${encodeURIComponent(gVal)}&b_key=${encodeURIComponent(bVal)}&alpha_mode=${encodeURIComponent(alphaModeVal)}&alpha_key=${encodeURIComponent(alphaKeyVal)}">Workout #${sid}</a> <span>(${contextSpan})</span><br>Similarity Score: ${item.score.toFixed(4)}</li>`;
             });
             
             customSimilarList.innerHTML = items.join('');
@@ -1602,6 +2108,11 @@ document.addEventListener("DOMContentLoaded", function() {
       rSelect.value = sessionStorage.getItem(storagePrefix + 'selectR');
       gSelect.value = sessionStorage.getItem(storagePrefix + 'selectG');
       bSelect.value = sessionStorage.getItem(storagePrefix + 'selectB');
+      if (alphaModeSelect) alphaModeSelect.value = sessionStorage.getItem(storagePrefix + 'selectAlphaMode') || 'none';
+      if (alphaKeySelect) alphaKeySelect.value = sessionStorage.getItem(storagePrefix + 'selectAlphaKey') || 'cadence';
+      if (alphaKeyGroup && alphaModeSelect) {
+        alphaKeyGroup.style.display = alphaModeSelect.value === 'fourth_metric' ? 'flex' : 'none';
+      }
       
       // Hide the revert button
       revertBtn.style.display = 'none';
@@ -1612,6 +2123,428 @@ document.addEventListener("DOMContentLoaded", function() {
       }
     });
   }
+  
+  // ---
+  // --- Vector Magic: Interactive Vector Arithmetic (Auto-using Neighbors)
+  // ---
+  const neighborsData = {{ neighbors_data | default([]) | tojson }};
+  const currentWorkoutRPE = {{ current_workout_rpe | default('null') }};
+  const currentWorkoutSessionTag = {{ current_workout_session_tag | default('null') | tojson }};
+  
+  // Intelligently categorize neighbors
+  function categorizeNeighbors(neighbors, currentRPE, currentTag) {
+    const hardWorkouts = [];
+    const easyWorkouts = [];
+    const hardTags = ['Tempo Pace', 'Threshold', 'Race Day', 'High Intensity Interval'];
+    const easyTags = ['Recovery', 'Z2 Cardio', 'Easy Recovery Run'];
+    
+    neighbors.forEach(neighbor => {
+      const tag = neighbor.session_tag;
+      const rpe = neighbor.rpe;
+      
+      // Check session tags first
+      if (tag && hardTags.some(ht => tag.includes(ht))) {
+        hardWorkouts.push(neighbor);
+      } else if (tag && easyTags.some(et => tag.includes(et))) {
+        easyWorkouts.push(neighbor);
+      } else if (rpe && currentRPE) {
+        // Use RPE comparison
+        if (rpe > currentRPE + 1) {
+          hardWorkouts.push(neighbor);
+        } else if (rpe < currentRPE - 1) {
+          easyWorkouts.push(neighbor);
+        }
+      } else {
+        // Default: use first neighbor as hard, last as easy
+        if (neighbors.indexOf(neighbor) === 0) {
+          hardWorkouts.push(neighbor);
+        } else if (neighbors.indexOf(neighbor) === neighbors.length - 1) {
+          easyWorkouts.push(neighbor);
+        }
+      }
+    });
+    
+    return { hardWorkouts, easyWorkouts };
+  }
+  
+  // Auto-populate suggestions (will search database if neighbors don't have suitable workouts)
+  async function updateSuggestions() {
+    const { hardWorkouts, easyWorkouts } = categorizeNeighbors(neighborsData, currentWorkoutRPE, currentWorkoutSessionTag);
+    
+    // If neighbors don't have suitable workouts, search database
+    let finalHardWorkouts = hardWorkouts;
+    let finalEasyWorkouts = easyWorkouts;
+    
+    if (hardWorkouts.length === 0) {
+      try {
+        const response = await fetch(`/experiments/data_imaging/workout/{{ workout_id }}/find-by-intensity?intensity=hard&limit=2`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.workouts && data.workouts.length > 0) {
+            finalHardWorkouts = data.workouts;
+          }
+        }
+      } catch (error) {
+        console.warn('Could not fetch hard workouts:', error);
+      }
+    }
+    
+    if (easyWorkouts.length === 0) {
+      try {
+        const response = await fetch(`/experiments/data_imaging/workout/{{ workout_id }}/find-by-intensity?intensity=easy&limit=2`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.workouts && data.workouts.length > 0) {
+            finalEasyWorkouts = data.workouts;
+          }
+        }
+      } catch (error) {
+        console.warn('Could not fetch easy workouts:', error);
+      }
+    }
+    
+    // Show smart suggestions
+    const suggestionsDiv = document.getElementById('vectorMagicSmartSuggestions');
+    const suggestionsContent = document.getElementById('smartSuggestionsContent');
+    
+    if (finalHardWorkouts.length > 0 || finalEasyWorkouts.length > 0) {
+      suggestionsDiv.style.display = 'block';
+      let suggestionsHTML = '<ul style="margin: 10px 0 0 20px; padding-left: 0; list-style: none;">';
+      
+      if (finalHardWorkouts.length > 0) {
+        const source = hardWorkouts.length > 0 ? 'neighbors' : 'database';
+        suggestionsHTML += `<li style="margin-bottom: 8px;">🔥 <strong>Harder workouts found (${source}):</strong> `;
+        suggestionsHTML += finalHardWorkouts.slice(0, 2).map(w => 
+          `Workout #${w.workout_id} (${w.session_tag || w.workout_type || '?'})`
+        ).join(', ');
+        suggestionsHTML += '</li>';
+      }
+      
+      if (finalEasyWorkouts.length > 0) {
+        const source = easyWorkouts.length > 0 ? 'neighbors' : 'database';
+        suggestionsHTML += `<li style="margin-bottom: 8px;">😌 <strong>Easier workouts found (${source}):</strong> `;
+        suggestionsHTML += finalEasyWorkouts.slice(0, 2).map(w => 
+          `Workout #${w.workout_id} (${w.session_tag || w.workout_type || '?'})`
+        ).join(', ');
+        suggestionsHTML += '</li>';
+      }
+      
+      suggestionsHTML += '</ul>';
+      suggestionsContent.innerHTML = suggestionsHTML;
+    }
+    
+    // Update suggestion displays
+    const harderSuggestions = document.getElementById('harderSuggestions');
+    const easierSuggestions = document.getElementById('easierSuggestions');
+    
+    if (finalHardWorkouts.length > 0) {
+      const source = hardWorkouts.length > 0 ? '✨' : '🔍';
+      harderSuggestions.innerHTML = `<p style="margin: 0; color: var(--atlas-green); font-weight: 600;">${source} Will use: Workout #${finalHardWorkouts[0].workout_id} (${finalHardWorkouts[0].session_tag || finalHardWorkouts[0].workout_type || 'hard workout'})</p>`;
+    } else {
+      harderSuggestions.innerHTML = '<p style="margin: 0; color: var(--atlas-mid-text); font-style: italic;">💡 Will search database for harder workouts</p>';
+    }
+    
+    if (finalEasyWorkouts.length > 0) {
+      const source = easyWorkouts.length > 0 ? '✨' : '🔍';
+      easierSuggestions.innerHTML = `<p style="margin: 0; color: var(--atlas-green); font-weight: 600;">${source} Will use: Workout #${finalEasyWorkouts[0].workout_id} (${finalEasyWorkouts[0].session_tag || finalEasyWorkouts[0].workout_type || 'easy workout'})</p>`;
+    } else {
+      easierSuggestions.innerHTML = '<p style="margin: 0; color: var(--atlas-mid-text); font-style: italic;">💡 Will search database for easier workouts</p>';
+    }
+  }
+  
+  // Initialize suggestions on page load
+  if (neighborsData && neighborsData.length >= 0) {
+    updateSuggestions();
+  }
+  
+  const findHarderAutoBtn = document.getElementById('findHarderAutoBtn');
+  const findEasierAutoBtn = document.getElementById('findEasierAutoBtn');
+  const findHarderManualBtn = document.getElementById('findHarderManualBtn');
+  const findEasierManualBtn = document.getElementById('findEasierManualBtn');
+  const scaleIntensityBtn = document.getElementById('scaleIntensityBtn');
+  const scaleBtns = document.querySelectorAll('.scaleBtn');
+  const vectorMagicResults = document.getElementById('vectorMagicResults');
+  const vectorMagicResultsList = document.getElementById('vectorMagicResultsList');
+  const vectorMagicOperationText = document.getElementById('vectorMagicOperationText');
+  const explainVectorMagicBtn = document.getElementById('explainVectorMagicBtn');
+  
+  // Helper function to perform vector magic search
+  async function performVectorMagic(operation, operandWorkoutId, scaleFactor) {
+    const currentWorkoutId = {{ workout_id }};
+    const rVal = rSelect.value;
+    const gVal = gSelect.value;
+    const bVal = bSelect.value;
+    const alphaModeVal = alphaModeSelect ? alphaModeSelect.value : 'none';
+    const alphaKeyVal = alphaKeySelect ? alphaKeySelect.value : 'cadence';
+    
+    // Build query parameters
+    const params = new URLSearchParams({
+      operation: operation,
+      r_key: rVal,
+      g_key: gVal,
+      b_key: bVal,
+      alpha_mode: alphaModeVal,
+      alpha_key: alphaKeyVal,
+      limit: '5'
+    });
+    
+    if (operandWorkoutId !== null && operandWorkoutId !== undefined) {
+      params.append('operand_workout_id', operandWorkoutId);
+    }
+    if (scaleFactor !== null && scaleFactor !== undefined) {
+      params.append('scale_factor', scaleFactor);
+    }
+    
+    const url = `/experiments/data_imaging/workout/${currentWorkoutId}/vector-magic?${params.toString()}`;
+    
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({detail: response.statusText}));
+        throw new Error(errorData.detail || `HTTP ${response.status}`);
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Vector magic search error:', error);
+      throw error;
+    }
+  }
+  
+  // Helper function to display results
+  function displayVectorMagicResults(data) {
+    vectorMagicOperationText.textContent = data.operation || 'Unknown operation';
+    vectorMagicResults.style.display = 'block';
+    
+    if (!data.results || data.results.length === 0) {
+      vectorMagicResultsList.innerHTML = '<li style="color: var(--atlas-mid-text); padding: 15px; background-color: var(--atlas-dark-blue); border-radius: 6px; border: 1px solid var(--atlas-border);">No workouts found matching the vector magic query.</li>';
+      return;
+    }
+    
+    const rVal = rSelect.value;
+    const gVal = gSelect.value;
+    const bVal = bSelect.value;
+    const alphaModeVal = alphaModeSelect ? alphaModeSelect.value : 'none';
+    const alphaKeyVal = alphaKeySelect ? alphaKeySelect.value : 'cadence';
+    
+    const items = data.results.map(item => {
+      const sid = item.workout_id;
+      let contextSpan = `Type: ${item.workout_type || '?'}`;
+      if (item.session_tag) contextSpan += ` | Tag: ${item.session_tag}`;
+      if (item.ai_classification && item.ai_classification !== 'Pending Analysis') {
+        contextSpan += ` | Pattern: ${item.ai_classification}`;
+      }
+      
+      const queryParams = new URLSearchParams({
+        r_key: rVal,
+        g_key: gVal,
+        b_key: bVal,
+        alpha_mode: alphaModeVal,
+        alpha_key: alphaKeyVal
+      });
+      
+      return `<li style="background: var(--atlas-dark-blue); padding: 10px 15px; border-radius: 6px; border: 1px solid var(--atlas-border); transition: background-color 0.2s ease; line-height: 1.5; margin-bottom: 10px;">
+        <a href="/experiments/data_imaging/workout/${sid}?${queryParams.toString()}" style="font-weight: 600; color: var(--atlas-green); text-decoration: none;">Workout #${sid}</a> 
+        <span style="color: var(--atlas-mid-text); font-size: 0.9em; margin-left: 8px; display: inline-block;">(${contextSpan})</span><br>
+        <span style="color: var(--atlas-mid-text); font-size: 0.9em;">Similarity Score: <strong style="color: var(--accent-orange);">${item.score.toFixed(4)}</strong></span>
+      </li>`;
+    });
+    
+    vectorMagicResultsList.innerHTML = items.join('');
+    
+    // Scroll to results
+    vectorMagicResults.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  
+  // Helper function to find workouts by intensity (searches database if neighbors don't have them)
+  async function findWorkoutByIntensity(intensity, neighbors, currentRPE, currentTag) {
+    // First, try neighbors
+    const { hardWorkouts, easyWorkouts } = categorizeNeighbors(neighbors, currentRPE, currentTag);
+    
+    if (intensity === 'hard' && hardWorkouts.length > 0) {
+      return hardWorkouts[0];
+    } else if (intensity === 'easy' && easyWorkouts.length > 0) {
+      return easyWorkouts[0];
+    }
+    
+    // If neighbors don't have suitable workouts, search the database
+    try {
+      const response = await fetch(`/experiments/data_imaging/workout/{{ workout_id }}/find-by-intensity?intensity=${intensity}&limit=1`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.workouts && data.workouts.length > 0) {
+          return data.workouts[0];
+        }
+      }
+    } catch (error) {
+      console.warn(`Could not find ${intensity} workouts in database:`, error);
+    }
+    
+    return null;
+  }
+  
+  // Find Harder (Auto) button
+  if (findHarderAutoBtn) {
+    findHarderAutoBtn.addEventListener('click', async function() {
+      findHarderAutoBtn.disabled = true;
+      findHarderAutoBtn.textContent = '🔍 Searching for harder workouts...';
+      
+      try {
+        const hardWorkout = await findWorkoutByIntensity('hard', neighborsData, currentWorkoutRPE, currentWorkoutSessionTag);
+        
+        if (!hardWorkout) {
+          alert('No harder workouts found. Try generating more workouts or use manual override.');
+          findHarderAutoBtn.disabled = false;
+          findHarderAutoBtn.textContent = '🚀 Find Harder Versions (Auto)';
+          return;
+        }
+        
+        findHarderAutoBtn.textContent = 'Finding Harder Versions...';
+        
+        const data = await performVectorMagic('add', hardWorkout.workout_id, null);
+        const source = hardWorkout.session_tag || hardWorkout.workout_type || `Workout #${hardWorkout.workout_id}`;
+        displayVectorMagicResults({
+          operation: `Vector({{ workout_id }}) + Vector(${hardWorkout.workout_id}) = Harder Versions (using ${source})`,
+          results: data.results
+        });
+      } catch (error) {
+        alert(`Error finding harder versions: ${error.message}`);
+        console.error('Error:', error);
+      } finally {
+        findHarderAutoBtn.disabled = false;
+        findHarderAutoBtn.textContent = '🚀 Find Harder Versions (Auto)';
+      }
+    });
+  }
+  
+  // Find Easier (Auto) button
+  if (findEasierAutoBtn) {
+    findEasierAutoBtn.addEventListener('click', async function() {
+      findEasierAutoBtn.disabled = true;
+      findEasierAutoBtn.textContent = '🔍 Searching for easier workouts...';
+      
+      try {
+        const easyWorkout = await findWorkoutByIntensity('easy', neighborsData, currentWorkoutRPE, currentWorkoutSessionTag);
+        
+        if (!easyWorkout) {
+          alert('No easier workouts found. Try generating more workouts or use manual override.');
+          findEasierAutoBtn.disabled = false;
+          findEasierAutoBtn.textContent = '🚀 Find Easier Versions (Auto)';
+          return;
+        }
+        
+        findEasierAutoBtn.textContent = 'Finding Easier Versions...';
+        
+        const data = await performVectorMagic('add', easyWorkout.workout_id, null);
+        const source = easyWorkout.session_tag || easyWorkout.workout_type || `Workout #${easyWorkout.workout_id}`;
+        displayVectorMagicResults({
+          operation: `Vector({{ workout_id }}) + Vector(${easyWorkout.workout_id}) = Easier Versions (using ${source})`,
+          results: data.results
+        });
+      } catch (error) {
+        alert(`Error finding easier versions: ${error.message}`);
+        console.error('Error:', error);
+      } finally {
+        findEasierAutoBtn.disabled = false;
+        findEasierAutoBtn.textContent = '🚀 Find Easier Versions (Auto)';
+      }
+    });
+  }
+  
+  // Manual override buttons
+  if (findHarderManualBtn) {
+    findHarderManualBtn.addEventListener('click', async function() {
+      const workoutId = parseInt(document.getElementById('harderWorkoutId').value);
+      if (!workoutId) {
+        alert('Please enter a workout ID');
+        return;
+      }
+      
+      findHarderManualBtn.disabled = true;
+      findHarderManualBtn.textContent = 'Finding...';
+      
+      try {
+        const data = await performVectorMagic('add', workoutId, null);
+        displayVectorMagicResults(data);
+      } catch (error) {
+        alert(`Error: ${error.message}`);
+        console.error('Error:', error);
+      } finally {
+        findHarderManualBtn.disabled = false;
+        findHarderManualBtn.textContent = 'Use Manual ID';
+      }
+    });
+  }
+  
+  if (findEasierManualBtn) {
+    findEasierManualBtn.addEventListener('click', async function() {
+      const workoutId = parseInt(document.getElementById('easierWorkoutId').value);
+      if (!workoutId) {
+        alert('Please enter a workout ID');
+        return;
+      }
+      
+      findEasierManualBtn.disabled = true;
+      findEasierManualBtn.textContent = 'Finding...';
+      
+      try {
+        const data = await performVectorMagic('add', workoutId, null);
+        displayVectorMagicResults(data);
+      } catch (error) {
+        alert(`Error: ${error.message}`);
+        console.error('Error:', error);
+      } finally {
+        findEasierManualBtn.disabled = false;
+        findEasierManualBtn.textContent = 'Use Manual ID';
+      }
+    });
+  }
+  
+  // Scale buttons
+  scaleBtns.forEach(btn => {
+    btn.addEventListener('click', function() {
+      const scale = parseFloat(this.dataset.scale);
+      document.getElementById('scaleFactor').value = scale;
+      scaleIntensityBtn.click();
+    });
+  });
+  
+  // Scale Intensity button
+  if (scaleIntensityBtn) {
+    scaleIntensityBtn.addEventListener('click', async function() {
+      const scaleFactor = parseFloat(document.getElementById('scaleFactor').value);
+      
+      if (!scaleFactor || scaleFactor <= 0) {
+        alert('Please enter a valid scale factor (e.g., 0.5 for 50% less intense, 1.5 for 50% more intense)');
+        return;
+      }
+      
+      scaleIntensityBtn.disabled = true;
+      scaleIntensityBtn.textContent = 'Finding Scaled Versions...';
+      
+      try {
+        const data = await performVectorMagic('scale', null, scaleFactor);
+        displayVectorMagicResults(data);
+      } catch (error) {
+        alert(`Error finding scaled versions: ${error.message}`);
+        console.error('Error:', error);
+      } finally {
+        scaleIntensityBtn.disabled = false;
+        scaleIntensityBtn.textContent = 'Find Scaled Versions';
+      }
+    });
+  }
+  
+  // Explain Vector Magic button (scrolls to top of section)
+  if (explainVectorMagicBtn) {
+    explainVectorMagicBtn.addEventListener('click', function() {
+      const vectorMagicSection = document.querySelector('.guide-box[style*="border-top: 4px solid var(--accent-orange)"]');
+      if (vectorMagicSection) {
+        vectorMagicSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  }
+  
+  // Note: We now auto-detect workouts from neighbors, so no need to store effort IDs
 });  
 </script>  
   

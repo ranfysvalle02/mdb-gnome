@@ -235,23 +235,49 @@ class ExperimentActor:
         cadence_array[10:15] = 0 
         cadence_array[40:45] = 0
 
+        # NEW: Generate data quality array (255 = good data, 0 = missing/bad data)
+        # Simulate some sensor dropouts
+        data_quality = self.np.full(64, 255, dtype=self.np.uint8)
+        # Randomly drop some data points
+        dropout_indices = self.np.random.choice(64, size=min(5, 64), replace=False)
+        data_quality[dropout_indices] = 0
+        # Also mark the cadence dropouts as low quality
+        data_quality[10:15] = 0
+        data_quality[40:45] = 0
+
+        # NEW: Generate session tag and RPE that correlate for Vector Magic
+        # Use suffix to create a pattern that ensures we get both hard and easy workouts
+        # Pattern: 0-2 = hard, 3-4 = medium, 5-6 = easy, 7-9 = hard, etc.
+        intensity_pattern = suffix % 10
+        if intensity_pattern in [0, 1, 2, 7, 8]:  # Hard workouts (50% of generated)
+            session_tag = str(self.np.random.choice(["Tempo Pace", "Threshold", "Race Day", "High Intensity Interval"]))
+            rpe = float(self.np.random.randint(7, 10))  # RPE 7-10 for hard
+        elif intensity_pattern in [5, 6]:  # Easy workouts (20% of generated)
+            session_tag = str(self.np.random.choice(["Recovery", "Z2 Cardio", "Easy Recovery Run"]))
+            rpe = float(self.np.random.randint(2, 5))  # RPE 2-5 for easy
+        else:  # Medium workouts (30% of generated)
+            session_tag = str(self.np.random.choice(["Race Day", "Recovery", "Z2 Cardio", "Tempo Pace", "Threshold"]))
+            rpe = float(self.np.random.randint(4, 8))  # RPE 4-8 for medium
+
         doc_id = f"workout_rad_{suffix}"
         return {
             "_id": doc_id,
             "time_series": {
-                # Use self.np
-                "heart_rate": list(self.np.round(self.np.maximum(hr_array, NORM_BOUNDS["heart_rate"][0]), 2)),
-                "calories_per_min": list(self.np.round(self.np.maximum(cal_array, NORM_BOUNDS["calories_per_min"][0]), 2)),
-                "speed_kph": list(self.np.round(self.np.maximum(spd_array, NORM_BOUNDS["speed_kph"][0]), 2)),
-                "power": list(self.np.round(self.np.maximum(power_array, NORM_BOUNDS["power"][0]), 2)),
-                "cadence": list(self.np.round(self.np.maximum(cadence_array, NORM_BOUNDS["cadence"][0]), 2)),
+                # Use self.np - convert to list with .tolist() to get native Python types
+                "heart_rate": self.np.round(self.np.maximum(hr_array, NORM_BOUNDS["heart_rate"][0]), 2).tolist(),
+                "calories_per_min": self.np.round(self.np.maximum(cal_array, NORM_BOUNDS["calories_per_min"][0]), 2).tolist(),
+                "speed_kph": self.np.round(self.np.maximum(spd_array, NORM_BOUNDS["speed_kph"][0]), 2).tolist(),
+                "power": self.np.round(self.np.maximum(power_array, NORM_BOUNDS["power"][0]), 2).tolist(),
+                "cadence": self.np.round(self.np.maximum(cadence_array, NORM_BOUNDS["cadence"][0]), 2).tolist(),
             },
+            "data_quality": data_quality.tolist(),  # NEW: Data quality array (255 = good, 0 = bad) - use .tolist() to convert np.uint8 to int
+            "rpe": rpe,  # NEW: Rated Perceived Exertion (1-10 scale) - correlated with session_tag
             "start_time": datetime(2025, 10, 27, 10, 10 + (suffix % 40), 0, tzinfo=timezone.utc),
-            "workout_type": self.np.random.choice(["Outdoor Run", "Cycling", "Strength", "Yoga"]),
-            "session_tag": self.np.random.choice(["Race Day", "Recovery", "Z2 Cardio", "Tempo Pace", "Threshold"]),
+            "workout_type": str(self.np.random.choice(["Outdoor Run", "Cycling", "Strength", "Yoga"])),  # Convert np.str_ to str
+            "session_tag": session_tag,  # Correlated with intensity for Vector Magic
             "post_session_notes": {
                 "hydration_ml": int(self.np.random.randint(500, 2500)),
-                "notes": self.np.random.choice(["Felt good", "Legs sore", "Pushed harder", "Casual run"]),
+                "notes": str(self.np.random.choice(["Felt good", "Legs sore", "Pushed harder", "Casual run"])),  # Convert np.str_ to str
             },
             "gear_used": [
                 {"item": "shoes_v3", "kilometers": float(self.np.random.randint(50, 200))},
@@ -272,6 +298,41 @@ class ExperimentActor:
             return self.np.zeros_like(x_clipped, dtype=self.np.uint8)
         return ((x_clipped - lo) / rng * 255).astype(self.np.uint8)
 
+    def _convert_numpy_types(self, obj):
+        """
+        Recursively converts NumPy types to native Python types for MongoDB compatibility.
+        """
+        if isinstance(obj, dict):
+            return {key: self._convert_numpy_types(value) for key, value in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [self._convert_numpy_types(item) for item in obj]
+        elif hasattr(obj, 'tolist'):  # NumPy array
+            return obj.tolist()
+        elif hasattr(obj, 'item'):  # NumPy scalar (np.float64, np.int64, etc.)
+            try:
+                return obj.item()
+            except (ValueError, AttributeError):
+                pass
+        
+        # Check if it's a NumPy type by module name
+        obj_type = type(obj)
+        type_module = getattr(obj_type, '__module__', '')
+        if type_module and 'numpy' in type_module:
+            # It's a NumPy type, try to convert
+            type_name = obj_type.__name__
+            if 'float' in type_name:
+                return float(obj)
+            elif 'int' in type_name or 'uint' in type_name:
+                return int(obj)
+            elif 'str' in type_name or 'unicode' in type_name:
+                return str(obj)
+            elif 'bool' in type_name:
+                return bool(obj)
+            elif hasattr(obj, 'item'):
+                return obj.item()
+        
+        return obj
+
 
     def _generate_workout_viz_arrays(
         self, 
@@ -279,9 +340,19 @@ class ExperimentActor:
         size=8, 
         r_key: str = "heart_rate", 
         g_key: str = "calories_per_min", 
-        b_key: str = "speed_kph"
+        b_key: str = "speed_kph",
+        alpha_mode: str = "none",  # "none", "fourth_metric", "data_quality", "global_rpe"
+        alpha_key: str = "cadence"  # Only used when alpha_mode == "fourth_metric"
     ):
-        """Generates the normalized 8x8x3 RGB array plus raw arrays."""
+        """
+        Generates the normalized 8x8x3 RGB or 8x8x4 RGBA array plus raw arrays.
+        
+        Alpha channel modes:
+        - "none": RGB mode (8x8x3), no alpha channel
+        - "fourth_metric": RGBA mode (8x8x4), alpha = normalized fourth metric (e.g., cadence)
+        - "data_quality": RGBA mode (8x8x4), alpha = data quality/confidence (255 = good, 0 = bad)
+        - "global_rpe": RGBA mode (8x8x4), alpha = RPE value (same for all pixels, 1-10 scale normalized to 0-255)
+        """
         
         def get_raw_data(key):
             return doc.get("time_series", {}).get(key, [0]*64)
@@ -302,34 +373,87 @@ class ExperimentActor:
         g_2d = g_1d.reshape(size, size)
         b_2d = b_1d.reshape(size, size)
 
-        # Use self.np
-        rgb = self.np.stack([r_2d, g_2d, b_2d], axis=-1)
+        # Generate alpha channel based on mode
+        alpha_2d = None
+        alpha_key_used = None
+        if alpha_mode == "fourth_metric":
+            # Use a fourth metric as the alpha channel
+            alpha_bounds = NORM_BOUNDS.get(alpha_key, (0, 1))
+            alpha_data = self.np.array(get_raw_data(alpha_key), dtype=float)
+            alpha_1d = self._norm_array(alpha_data, *alpha_bounds)
+            alpha_2d = alpha_1d.reshape(size, size)
+            alpha_key_used = alpha_key
+        elif alpha_mode == "data_quality":
+            # Use data quality array (255 = good, 0 = bad)
+            data_quality = doc.get("data_quality", [255]*64)
+            alpha_1d = self.np.array(data_quality, dtype=self.np.uint8)
+            alpha_2d = alpha_1d.reshape(size, size)
+            alpha_key_used = "data_quality"
+        elif alpha_mode == "global_rpe":
+            # Use RPE as a global alpha value (same for all pixels)
+            rpe = doc.get("rpe", 5.0)  # Default to 5 if not present
+            # Normalize RPE (1-10 scale) to 0-255
+            rpe_normalized = int(self.np.clip((rpe - 1) / 9 * 255, 0, 255))
+            alpha_2d = self.np.full((size, size), rpe_normalized, dtype=self.np.uint8)
+            alpha_key_used = "rpe"
+        else:
+            # alpha_mode == "none" or invalid, use RGB mode
+            alpha_mode = "none"
+
+        # Stack channels
+        if alpha_mode != "none" and alpha_2d is not None:
+            # Use self.np
+            rgba = self.np.stack([r_2d, g_2d, b_2d, alpha_2d], axis=-1)
+            combined = rgba
+        else:
+            # Use self.np
+            rgb = self.np.stack([r_2d, g_2d, b_2d], axis=-1)
+            combined = rgb
         
-        return {
-            "rgb_combined": rgb,
+        result = {
+            "rgb_combined": combined,  # Can be RGB or RGBA
             "raw_data": raw_data, 
             "channel_r_2d": r_2d,
             "channel_g_2d": g_2d,
             "channel_b_2d": b_2d,
             "selected_keys": {"r": r_key, "g": g_key, "b": b_key},
-            "selected_bounds": {"r": r_bounds, "g": g_bounds, "b": b_bounds}
+            "selected_bounds": {"r": r_bounds, "g": g_bounds, "b": b_bounds},
+            "alpha_mode": alpha_mode,
+            "alpha_key": alpha_key_used
         }
+        
+        if alpha_2d is not None:
+            result["channel_a_2d"] = alpha_2d
+        
+        return result
 
 
-    def _get_feature_vector(self, doc: dict):
-        """Flattens the 8x8x3 RGB array (192 values) into one vector."""
+    def _get_feature_vector(self, doc: dict, alpha_mode: str = "none", alpha_key: str = "cadence"):
+        """
+        Flattens the 8x8x3 RGB array (192 values) or 8x8x4 RGBA array (256 values) into one vector.
+        """
         arrays = self._generate_workout_viz_arrays(
             doc, 
             size=8,
             r_key="heart_rate",
             g_key="calories_per_min",
-            b_key="speed_kph"
+            b_key="speed_kph",
+            alpha_mode=alpha_mode,
+            alpha_key=alpha_key
         )
         return arrays["rgb_combined"].reshape(-1)
 
-    def _get_feature_vector_custom(self, doc: dict, r_key: str, g_key: str, b_key: str):
+    def _get_feature_vector_custom(
+        self, 
+        doc: dict, 
+        r_key: str, 
+        g_key: str, 
+        b_key: str,
+        alpha_mode: str = "none",
+        alpha_key: str = "cadence"
+    ):
         """
-        Generates a 192-element vector using custom RGB channel assignments.
+        Generates a 192-element (RGB) or 256-element (RGBA) vector using custom channel assignments.
         This allows finding similar workouts from different perspectives.
         """
         arrays = self._generate_workout_viz_arrays(
@@ -337,7 +461,9 @@ class ExperimentActor:
             size=8,
             r_key=r_key,
             g_key=g_key,
-            b_key=b_key
+            b_key=b_key,
+            alpha_mode=alpha_mode,
+            alpha_key=alpha_key
         )
         return arrays["rgb_combined"].reshape(-1)
 
@@ -348,7 +474,7 @@ class ExperimentActor:
         size=(128, 128),
         tint_color=None
     ) -> str:
-        """Encodes a NumPy array to a Base64 PNG."""
+        """Encodes a NumPy array to a Base64 PNG. Supports RGB, RGBA, and grayscale."""
         error_placeholder = (
             "iVBORw0KGgoAAAANSUEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42"
             "mNkYAAAAYAAjCB0C8AAAAASUVORK5CYII="
@@ -365,7 +491,14 @@ class ExperimentActor:
                 img = self.Image.fromarray(colored_array, "RGB")
             elif img_array.ndim == 2:
                 img = self.Image.fromarray(img_array, "L")
+            elif img_array.shape[-1] == 4:
+                # RGBA mode
+                img = self.Image.fromarray(img_array, "RGBA")
+            elif img_array.shape[-1] == 3:
+                # RGB mode
+                img = self.Image.fromarray(img_array, "RGB")
             else:
+                # Fallback to RGB
                 img = self.Image.fromarray(img_array, "RGB")
 
             if size:
@@ -522,7 +655,15 @@ class ExperimentActor:
     # ---
     # --- Refactored helper for visualization data (OPTIMIZED)
     # ---
-    async def _generate_viz_data(self, doc: dict, r_key: str, g_key: str, b_key: str) -> dict:
+    async def _generate_viz_data(
+        self, 
+        doc: dict, 
+        r_key: str, 
+        g_key: str, 
+        b_key: str,
+        alpha_mode: str = "none",
+        alpha_key: str = "cadence"
+    ) -> dict:
         """
         Generates all B64 images and labels for the selected keys.
         Returns a JSON-serializable dictionary.
@@ -535,7 +676,9 @@ class ExperimentActor:
             size=8,
             r_key=r_key,
             g_key=g_key,
-            b_key=b_key
+            b_key=b_key,
+            alpha_mode=alpha_mode,
+            alpha_key=alpha_key
         )
         
         # --- Must call internal method ---
@@ -543,6 +686,29 @@ class ExperimentActor:
         b64_r = self._encode_png_b64(arrays["channel_r_2d"], (128,128), tint_color=(255,0,0))
         b64_g = self._encode_png_b64(arrays["channel_g_2d"], (128,128), tint_color=(0,255,0))
         b64_b = self._encode_png_b64(arrays["channel_b_2d"], (128,128), tint_color=(0,0,255))
+        
+        # Generate alpha channel visualization if present
+        b64_a = None
+        label_a_full_html = None
+        label_a_short_html = None
+        if arrays.get("channel_a_2d") is not None:
+            # For alpha channel, we can show it as grayscale or with a special tint
+            # Using a subtle white/gray tint to show transparency
+            b64_a = self._encode_png_b64(arrays["channel_a_2d"], (128,128), tint_color=(255,255,255))
+            
+            alpha_key_used = arrays.get("alpha_key", "unknown")
+            if alpha_mode == "fourth_metric":
+                title = alpha_key_used.replace('_', ' ').title()
+                bounds = NORM_BOUNDS.get(alpha_key_used, ['?','?'])
+                label_a_full_html = f"<b>A:</b> {title} ({bounds[0]}-{bounds[1]})"
+                label_a_short_html = f"<strong>{title}</strong> data provides the pixel values for the <strong class=\"alpha-label\">Alpha channel</strong>."
+            elif alpha_mode == "data_quality":
+                label_a_full_html = "<b>A:</b> Data Quality (255=Good, 0=Bad/Missing)"
+                label_a_short_html = "<strong>Data Quality</strong> (255=Opaque/Good, 0=Transparent/Bad) provides the pixel values for the <strong class=\"alpha-label\">Alpha channel</strong>."
+            elif alpha_mode == "global_rpe":
+                rpe = doc.get("rpe", 5.0)
+                label_a_full_html = f"<b>A:</b> RPE (Rated Perceived Exertion) = {rpe:.1f}/10"
+                label_a_short_html = f"<strong>RPE</strong> ({rpe:.1f}/10) provides a global alpha value for the <strong class=\"alpha-label\">Alpha channel</strong> (same for all pixels)."
 
         # Helper to format labels
         def format_label(key_char: str, key: str) -> str:
@@ -560,7 +726,7 @@ class ExperimentActor:
             for key, arr in arrays["raw_data"].items()
         }
         
-        return {
+        result = {
             "b64_combined": b64_combined,
             "b64_r": b64_r,
             "b64_g": b64_g,
@@ -571,8 +737,17 @@ class ExperimentActor:
             "label_r_short_html": format_short_label(r_key, "red-label", "Red"),
             "label_g_short_html": format_short_label(g_key, "green-label", "Green"),
             "label_b_short_html": format_short_label(b_key, "blue-label", "Blue"),
-            "raw_data": raw_data_serializable
+            "raw_data": raw_data_serializable,
+            "alpha_mode": alpha_mode,
+            "alpha_key": alpha_key if alpha_mode == "fourth_metric" else None
         }
+        
+        if b64_a is not None:
+            result["b64_a"] = b64_a
+            result["label_a_full_html"] = label_a_full_html
+            result["label_a_short_html"] = label_a_short_html
+        
+        return result
 
     # ---
     # --- Find similar workouts using custom RGB channels (MongoDB Vector Search)
@@ -583,10 +758,12 @@ class ExperimentActor:
         r_key: str, 
         g_key: str, 
         b_key: str,
-        limit: int = 3
+        limit: int = 3,
+        alpha_mode: str = "none",
+        alpha_key: str = "cadence"
     ) -> list[dict]:
         """
-        Finds similar workouts using custom RGB channel assignments.
+        Finds similar workouts using custom RGB/RGBA channel assignments.
         Intelligently leverages MongoDB Atlas Vector Search:
         1. Generates query vector on-the-fly with custom channels
         2. Uses $vectorSearch aggregation with the dynamically generated query vector
@@ -602,7 +779,7 @@ class ExperimentActor:
             raise RuntimeError(f"Doc {doc_id} not found")
         
         # Generate query vector with custom channels
-        query_vector = self._get_feature_vector_custom(query_doc, r_key, g_key, b_key)
+        query_vector = self._get_feature_vector_custom(query_doc, r_key, g_key, b_key, alpha_mode, alpha_key)
         query_vector_list = query_vector.tolist()  # Convert NumPy array to list
         
         # Check if we're using indexed channel combinations (can leverage vector search directly)
@@ -758,7 +935,7 @@ class ExperimentActor:
             for doc in candidate_docs:
                 try:
                     # Generate vector for this doc using the same custom channels
-                    candidate_vector = self._get_feature_vector_custom(doc, r_key, g_key, b_key)
+                    candidate_vector = self._get_feature_vector_custom(doc, r_key, g_key, b_key, alpha_mode, alpha_key)
                     
                     # Compute cosine similarity
                     candidate_vec_norm = self.np.linalg.norm(candidate_vector)
@@ -792,9 +969,286 @@ class ExperimentActor:
             raise RuntimeError(f"Failed to find similar workouts: {e}")
 
     # ---
+    # --- Vector Magic: Vector Arithmetic Methods
+    # ---
+    async def vector_magic_search(
+        self,
+        base_workout_id: int,
+        operation: str,  # "add", "subtract", "scale"
+        operand_workout_id: int = None,  # For add/subtract operations
+        scale_factor: float = None,  # For scale operation
+        r_key: str = "heart_rate",
+        g_key: str = "calories_per_min",
+        b_key: str = "speed_kph",
+        alpha_mode: str = "none",
+        alpha_key: str = "cadence",
+        limit: int = 5
+    ) -> dict:
+        """
+        Performs vector arithmetic to find abstract concepts.
+        
+        Examples:
+        - operation="subtract", operand_workout_id=hard_workout, base_workout_id=easy_workout
+          -> Finds the "effort vector" (hard - easy)
+        - operation="add", operand_workout_id=effort_vector_workout, base_workout_id=yoga_workout
+          -> Finds harder versions of yoga (yoga + effort)
+        - operation="scale", scale_factor=0.5, base_workout_id=intense_workout
+          -> Finds 50% less intense versions
+        """
+        self._check_ready()
+        
+        base_doc_id = f"workout_rad_{base_workout_id}"
+        base_doc = await self.db.workouts.find_one({"_id": base_doc_id})
+        if not base_doc:
+            raise RuntimeError(f"Base workout {base_doc_id} not found")
+        
+        # Get base vector
+        base_vector = self._get_feature_vector_custom(
+            base_doc, r_key, g_key, b_key, alpha_mode, alpha_key
+        )
+        base_vector_list = base_vector.tolist()
+        
+        # Perform vector arithmetic
+        if operation == "subtract" and operand_workout_id is not None:
+            operand_doc_id = f"workout_rad_{operand_workout_id}"
+            operand_doc = await self.db.workouts.find_one({"_id": operand_doc_id})
+            if not operand_doc:
+                raise RuntimeError(f"Operand workout {operand_doc_id} not found")
+            
+            operand_vector = self._get_feature_vector_custom(
+                operand_doc, r_key, g_key, b_key, alpha_mode, alpha_key
+            )
+            # Subtract: base - operand (e.g., hard - easy = effort vector)
+            result_vector = self.np.array(base_vector_list) - operand_vector
+            operation_description = f"Vector({base_workout_id}) - Vector({operand_workout_id})"
+            
+        elif operation == "add" and operand_workout_id is not None:
+            operand_doc_id = f"workout_rad_{operand_workout_id}"
+            operand_doc = await self.db.workouts.find_one({"_id": operand_doc_id})
+            if not operand_doc:
+                raise RuntimeError(f"Operand workout {operand_doc_id} not found")
+            
+            operand_vector = self._get_feature_vector_custom(
+                operand_doc, r_key, g_key, b_key, alpha_mode, alpha_key
+            )
+            # Add: base + operand (e.g., yoga + effort = harder yoga)
+            result_vector = self.np.array(base_vector_list) + operand_vector
+            operation_description = f"Vector({base_workout_id}) + Vector({operand_workout_id})"
+            
+        elif operation == "scale" and scale_factor is not None:
+            # Scale: base * factor (e.g., workout * 0.5 = 50% less intense)
+            result_vector = self.np.array(base_vector_list) * scale_factor
+            operation_description = f"Vector({base_workout_id}) × {scale_factor}"
+            
+        else:
+            raise ValueError(f"Invalid operation: {operation} with provided parameters")
+        
+        # Normalize the result vector (important for vector search)
+        result_vector_norm = self.np.linalg.norm(result_vector)
+        if result_vector_norm > 0:
+            # Normalize to unit vector for better search results
+            result_vector = result_vector / result_vector_norm
+            # Scale to reasonable magnitude (preserve relative differences)
+            result_vector = result_vector * self.np.linalg.norm(base_vector)
+        
+        result_vector_list = result_vector.tolist()
+        
+        # Search for similar workouts using the computed vector
+        # Use the canonical vector search as a pre-filter, then re-rank with custom vectors
+        try:
+            # First, try to use indexed vector search as a pre-filter
+            if isinstance(base_doc.get("workout_vector"), list):
+                prefilter_pipeline = [
+                    {
+                        "$vectorSearch": {
+                            "index": self.vector_index_name,
+                            "path": "workout_vector",
+                            "queryVector": base_doc["workout_vector"],  # Use base as starting point
+                            "filter": {"_id": {"$ne": base_doc_id}},
+                            "numCandidates": 200,
+                            "limit": 100
+                        }
+                    },
+                    {
+                        "$project": {
+                            "_id": 1,
+                            "workout_type": 1,
+                            "session_tag": 1,
+                            "ai_classification": 1,
+                            "time_series": 1
+                        }
+                    }
+                ]
+                
+                cur = self.db.raw.workouts.aggregate(prefilter_pipeline)
+                candidate_docs = await cur.to_list(length=None)
+            else:
+                # Fallback: fetch candidates directly
+                candidate_docs = await self.db.workouts.find(
+                    {"_id": {"$ne": base_doc_id}},
+                    {"_id": 1, "time_series": 1, "workout_type": 1, "session_tag": 1, "ai_classification": 1}
+                ).limit(500).to_list(length=None)
+            
+            if not candidate_docs:
+                return {
+                    "operation": operation_description,
+                    "results": [],
+                    "message": "No candidate workouts found for vector magic search."
+                }
+            
+            # Compute cosine similarity with the computed vector
+            similarities = []
+            query_vec_norm = self.np.linalg.norm(result_vector)
+            
+            for doc in candidate_docs:
+                try:
+                    candidate_vector = self._get_feature_vector_custom(
+                        doc, r_key, g_key, b_key, alpha_mode, alpha_key
+                    )
+                    
+                    candidate_vec_norm = self.np.linalg.norm(candidate_vector)
+                    if candidate_vec_norm == 0 or query_vec_norm == 0:
+                        similarity = 0.0
+                    else:
+                        dot_product = float(self.np.dot(result_vector, candidate_vector))
+                        similarity = dot_product / (query_vec_norm * candidate_vec_norm)
+                    
+                    suffix = doc["_id"].split("_")[-1]
+                    
+                    similarities.append({
+                        "_id": doc["_id"],
+                        "workout_id": int(suffix),
+                        "score": similarity,
+                        "workout_type": doc.get("workout_type", "?"),
+                        "session_tag": doc.get("session_tag"),
+                        "ai_classification": doc.get("ai_classification")
+                    })
+                except Exception as e:
+                    logger.warning(f"Error computing similarity for {doc.get('_id')}: {e}")
+                    continue
+            
+            # Sort by similarity (descending) and return top N
+            similarities.sort(key=lambda x: x["score"], reverse=True)
+            
+            return {
+                "operation": operation_description,
+                "results": similarities[:limit],
+                "computed_vector_length": len(result_vector_list)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in vector_magic_search: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to perform vector magic search: {e}")
+
+    # ---
+    # --- Find workouts by intensity (for Vector Magic auto-population)
+    # ---
+    async def find_workouts_by_intensity(
+        self,
+        intensity: str,  # "hard" or "easy"
+        exclude_workout_id: int = None,
+        limit: int = 5
+    ) -> list[dict]:
+        """
+        Finds workouts by intensity characteristics (hard or easy).
+        Uses session tags, RPE, and workout types to identify intensity.
+        """
+        self._check_ready()
+        
+        hard_tags = ["Tempo Pace", "Threshold", "Race Day", "High Intensity Interval"]
+        easy_tags = ["Recovery", "Z2 Cardio", "Easy Recovery Run"]
+        
+        exclude_doc_id = None
+        if exclude_workout_id is not None:
+            exclude_doc_id = f"workout_rad_{exclude_workout_id}"
+        
+        if intensity == "hard":
+            # Find hard workouts - try multiple strategies
+            queries_to_try = [
+                # Strategy 1: Session tags (most reliable)
+                {"session_tag": {"$in": hard_tags}},
+                # Strategy 2: RPE >= 7
+                {"rpe": {"$gte": 7}},
+                # Strategy 3: AI classification
+                {"ai_classification": {"$regex": "High Intensity|Interval", "$options": "i"}},
+                # Strategy 4: Any workout with RPE >= 6 (more lenient)
+                {"rpe": {"$gte": 6}},
+                # Strategy 5: Just any workout (fallback)
+                {}
+            ]
+        elif intensity == "easy":
+            # Find easy workouts - try multiple strategies
+            queries_to_try = [
+                # Strategy 1: Session tags (most reliable)
+                {"session_tag": {"$in": easy_tags}},
+                # Strategy 2: RPE <= 4
+                {"rpe": {"$lte": 4}},
+                # Strategy 3: AI classification
+                {"ai_classification": {"$regex": "Steady|Recovery", "$options": "i"}},
+                # Strategy 4: Any workout with RPE <= 5 (more lenient)
+                {"rpe": {"$lte": 5}},
+                # Strategy 5: Just any workout (fallback)
+                {}
+            ]
+        else:
+            raise ValueError(f"Invalid intensity: {intensity}. Must be 'hard' or 'easy'")
+        
+        # Try each query strategy until we find workouts
+        for query in queries_to_try:
+            # Exclude current workout if specified
+            if exclude_doc_id is not None:
+                original_query = query.copy()
+                if original_query:
+                    query = {
+                        "$and": [
+                            original_query,
+                            {"_id": {"$ne": exclude_doc_id}}
+                        ]
+                    }
+                else:
+                    query = {"_id": {"$ne": exclude_doc_id}}
+            
+            try:
+                workouts = await self.db.workouts.find(
+                    query,
+                    {"_id": 1, "workout_type": 1, "session_tag": 1, "ai_classification": 1, "rpe": 1}
+                ).limit(limit).to_list(length=None)
+                
+                if workouts:
+                    results = []
+                    for w in workouts:
+                        suffix = w["_id"].split("_")[-1]
+                        results.append({
+                            "workout_id": int(suffix),
+                            "workout_type": w.get("workout_type", "?"),
+                            "session_tag": w.get("session_tag"),
+                            "ai_classification": w.get("ai_classification"),
+                            "rpe": w.get("rpe"),
+                            "score": 1.0  # Placeholder score
+                        })
+                    
+                    logger.info(f"Found {len(results)} {intensity} workouts using query strategy")
+                    return results
+            except Exception as e:
+                logger.warning(f"Query strategy failed: {e}, trying next...")
+                continue
+        
+        # If all strategies failed, return empty
+        logger.warning(f"No {intensity} workouts found with any query strategy")
+        return []
+
+    # ---
     # --- Endpoint for client-side JS (returns JSON)
     # ---
-    async def get_dynamic_viz_data(self, workout_id: int, r_key: str, g_key: str, b_key: str) -> dict:
+    async def get_dynamic_viz_data(
+        self, 
+        workout_id: int, 
+        r_key: str, 
+        g_key: str, 
+        b_key: str,
+        alpha_mode: str = "none",
+        alpha_key: str = "cadence"
+    ) -> dict:
         """
         Public method to be called by the new /viz API endpoint.
         """
@@ -805,7 +1259,7 @@ class ExperimentActor:
             raise RuntimeError(f"Doc {doc_id} not found")
         
         # Call the refactored helper
-        return await self._generate_viz_data(doc, r_key, g_key, b_key)
+        return await self._generate_viz_data(doc, r_key, g_key, b_key, alpha_mode, alpha_key)
 
     # --- Method 1: Replaces show_gallery ---
     async def render_gallery_page(self, request_context: dict) -> str:
@@ -862,7 +1316,9 @@ class ExperimentActor:
         request_context: dict, 
         r_key: str, 
         g_key: str, 
-        b_key: str
+        b_key: str,
+        alpha_mode: str = "none",
+        alpha_key: str = "cadence"
     ) -> str:
         self._check_ready()
         
@@ -871,7 +1327,7 @@ class ExperimentActor:
         if not doc:
             return f"<h1>404 - Not Found</h1><p>No workout with id {doc_id}</p>"
 
-        viz_data = await self._generate_viz_data(doc, r_key, g_key, b_key)
+        viz_data = await self._generate_viz_data(doc, r_key, g_key, b_key, alpha_mode, alpha_key)
         raw_data_for_charts = viz_data["raw_data"]
 
         summary_is_pending = (
@@ -881,10 +1337,11 @@ class ExperimentActor:
 
         neighbors_html = "<p>Vector data is missing, so no neighbors found.</p>"
         neighbors = []
+        neighbors_data = []  # Structured data for Vector Magic - always a list
         if isinstance(doc.get("workout_vector"), list) and len(doc["workout_vector"]) == 192:
             pipeline = [
-                {"$vectorSearch": {"index": self.vector_index_name, "path": "workout_vector", "queryVector": doc["workout_vector"], "filter": {"_id": {"$ne": doc_id}}, "numCandidates": 50, "limit": 3}},
-                {"$project": {"_id": 1, "score": {"$meta": "vectorSearchScore"}, "workout_type": 1, "session_tag": 1, "ai_classification": 1}}
+                {"$vectorSearch": {"index": self.vector_index_name, "path": "workout_vector", "queryVector": doc["workout_vector"], "filter": {"_id": {"$ne": doc_id}}, "numCandidates": 50, "limit": 5}},  # Get 5 for Vector Magic
+                {"$project": {"_id": 1, "score": {"$meta": "vectorSearchScore"}, "workout_type": 1, "session_tag": 1, "ai_classification": 1, "rpe": 1}}
             ]
             try:
                 cur = self.db.raw.workouts.aggregate(pipeline)
@@ -899,8 +1356,18 @@ class ExperimentActor:
                             context_span += f" | Pattern: {n['ai_classification']}"
                         
                         items.append(f'<li><a href="/experiments/{self.write_scope}/workout/{sid}">Workout #{sid}</a> <span>({context_span})</span><br>Similarity Score: {n["score"]:.4f}</li>')
+                        
+                        # Store structured data for Vector Magic
+                        neighbors_data.append({
+                            "workout_id": int(sid),
+                            "workout_type": n.get("workout_type", "?"),
+                            "session_tag": n.get("session_tag"),
+                            "ai_classification": n.get("ai_classification"),
+                            "score": float(n.get("score", 0.0)),
+                            "rpe": n.get("rpe")
+                        })
 
-                    neighbors_html = "".join(items)
+                    neighbors_html = "".join(items[:3])  # Show only first 3 in HTML
                 else:
                     neighbors_html = "<p>No neighbors found (maybe only 1 doc in DB?).</p>"
             except self.OperationFailure as oe:
@@ -968,6 +1435,9 @@ class ExperimentActor:
             "all_charts": all_charts,
             "json_data_pretty": doc_json,
             "ai_neighbors_html": neighbors_html,
+            "neighbors_data": neighbors_data,  # Structured data for Vector Magic
+            "current_workout_rpe": doc.get("rpe"),  # Current workout's RPE for comparison
+            "current_workout_session_tag": doc.get("session_tag"),  # Current workout's session tag
             "ai_classification": ai_class,
             "ai_summary": ai_sum,
             "llm_analysis_prompt": ephemeral_prompt,
@@ -976,16 +1446,21 @@ class ExperimentActor:
             "b64_r": viz_data["b64_r"],
             "b64_g": viz_data["b64_g"],
             "b64_b": viz_data["b64_b"],
+            "b64_a": viz_data.get("b64_a"),  # Alpha channel (may not be present)
             "label_r_full_html": viz_data["label_r_full_html"],
             "label_g_full_html": viz_data["label_g_full_html"],
             "label_b_full_html": viz_data["label_b_full_html"],
+            "label_a_full_html": viz_data.get("label_a_full_html"),  # Alpha channel label (may not be present)
             "label_r_short_html": viz_data["label_r_short_html"],
             "label_g_short_html": viz_data["label_g_short_html"],
             "label_b_short_html": viz_data["label_b_short_html"],
+            "label_a_short_html": viz_data.get("label_a_short_html"),  # Alpha channel short label (may not be present)
             "all_metrics": AVAILABLE_METRICS,
             "selected_r_key": r_key,
             "selected_g_key": g_key,
             "selected_b_key": b_key,
+            "alpha_mode": alpha_mode,
+            "alpha_key": alpha_key if alpha_mode == "fourth_metric" else None,
             "workout_type": doc.get("workout_type", "N/A"),
             "session_tag": doc.get("session_tag", "N/A"),
             "gear_used_html": gear_used_html,
@@ -1067,6 +1542,8 @@ class ExperimentActor:
             doc["workout_vector_speed_cadence_hr"] = vec_speed_cadence_hr.tolist()
             
             try:
+                # Convert all NumPy types to native Python types before insertion
+                doc = self._convert_numpy_types(doc)
                 await self.db.workouts.insert_one(doc)
                 logger.info(f"[{self.write_scope}-Actor] Inserted new doc {doc['_id']} with indexed vectors")
                 return new_suffix
