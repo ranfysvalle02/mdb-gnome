@@ -1,0 +1,11 @@
+{
+  "name": "WebRTC Demo",
+  "description": "A full-stack WebRTC video chat demo with Python backend and MongoDB storage for signaling data.",
+  "status": "active",
+  "auth_required": false,
+  "data_scope": [
+    "self"
+  ],
+  "managed_indexes": {}
+}
+

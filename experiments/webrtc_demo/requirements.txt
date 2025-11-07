@@ -1,0 +1,4 @@
+# WebRTC Demo dependencies
+# Note: aiohttp is not needed as we use FastAPI for the web server
+# motor is not needed as we use the experiment_db abstraction
+

@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Family Video Chat</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .app-container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .main-content {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .video-section {
+            background: #1a1a1a;
+            padding: 30px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            min-height: 500px;
+        }
+
+        .video-wrapper {
+            position: relative;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            aspect-ratio: 16/9;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+        }
+
+        .video-wrapper video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .video-label {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            z-index: 10;
+        }
+
+        .video-controls {
+            position: absolute;
+            bottom: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            z-index: 10;
+        }
+
+        .control-btn {
+            background: rgba(255,255,255,0.2);
+            backdrop-filter: blur(10px);
+            border: none;
+            color: white;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            transition: all 0.3s;
+        }
+
+        .control-btn:hover {
+            background: rgba(255,255,255,0.3);
+            transform: scale(1.1);
+        }
+
+        .control-btn.active {
+            background: #4CAF50;
+        }
+
+        .control-btn.muted {
+            background: #f44336;
+        }
+
+        .control-btn svg {
+            width: 24px;
+            height: 24px;
+        }
+
+        .no-video-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #2a2a2a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.2rem;
+        }
+
+        .no-video-overlay .avatar {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3rem;
+            font-weight: bold;
+        }
+
+        .controls-panel {
+            padding: 30px;
+            background: #f8f9fa;
+        }
+
+        .room-controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .room-input-wrapper {
+            flex: 1;
+            min-width: 200px;
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .room-input {
+            flex: 1;
+            padding: 15px 100px 15px 20px;
+            font-size: 1rem;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            transition: all 0.3s;
+        }
+
+        .room-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .copy-btn, .generate-btn {
+            position: absolute;
+            right: 50px;
+            background: transparent;
+            border: none;
+            color: #667eea;
+            cursor: pointer;
+            padding: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .generate-btn {
+            right: 10px;
+        }
+
+        .copy-btn:hover, .generate-btn:hover {
+            background: rgba(102, 126, 234, 0.1);
+            transform: scale(1.1);
+        }
+
+        .copy-btn svg, .generate-btn svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        .copy-btn.copied {
+            color: #4CAF50;
+        }
+
+        .btn {
+            padding: 15px 30px;
+            font-size: 1rem;
+            font-weight: 600;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #5a6268;
+            transform: translateY(-2px);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .status-bar {
+            background: white;
+            padding: 15px 20px;
+            border-radius: 12px;
+            margin-top: 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #6c757d;
+            animation: pulse 2s infinite;
+        }
+
+        .status-indicator.connected {
+            background: #4CAF50;
+        }
+
+        .status-indicator.connecting {
+            background: #ff9800;
+        }
+
+        .status-indicator.error {
+            background: #f44336;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .status-text {
+            flex: 1;
+            font-size: 0.95rem;
+            color: #555;
+        }
+
+        .status-text.success {
+            color: #4CAF50;
+            font-weight: 600;
+        }
+
+        .status-text.error {
+            color: #f44336;
+            font-weight: 600;
+        }
+
+        .connection-info {
+            font-size: 0.85rem;
+            color: #888;
+        }
+
+        .instructions {
+            background: #e3f2fd;
+            border-left: 4px solid #2196F3;
+            padding: 15px 20px;
+            margin-top: 20px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+
+        .instructions h3 {
+            margin-bottom: 10px;
+            color: #1976D2;
+        }
+
+        .instructions ul {
+            margin-left: 20px;
+        }
+
+        .instructions li {
+            margin-bottom: 5px;
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .video-section {
+                grid-template-columns: 1fr;
+                padding: 15px;
+            }
+
+            .room-controls {
+                flex-direction: column;
+            }
+
+            .room-input {
+                width: 100%;
+            }
+
+            .btn {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <div class="header">
+            <h1>👨‍👩‍👧‍👦 Family Video Chat</h1>
+            <p>Connect with your loved ones in a private room</p>
+        </div>
+
+        <div class="main-content">
+            <div class="video-section">
+                <div class="video-wrapper">
+                    <div class="video-label">You</div>
+                    <video id="localVideo" autoplay muted playsinline></video>
+                    <div class="no-video-overlay" id="localNoVideo">
+                        <div class="avatar">👤</div>
+                    </div>
+                    <div class="video-controls">
+                        <button class="control-btn" id="toggleVideo" title="Toggle Video">
+                            <svg fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z"/>
+                            </svg>
+                        </button>
+                        <button class="control-btn" id="toggleAudio" title="Toggle Audio">
+                            <svg fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+                                <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="video-wrapper">
+                    <div class="video-label">Remote</div>
+                    <video id="remoteVideo" autoplay playsinline></video>
+                    <div class="no-video-overlay" id="remoteNoVideo">
+                        <div class="avatar">👥</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="controls-panel">
+                <div class="room-controls">
+                    <div class="room-input-wrapper">
+                        <input type="text" id="roomName" class="room-input" placeholder="Enter room name" maxlength="50">
+                        <button id="copyRoomBtn" class="copy-btn" title="Copy room name">
+                            <svg fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+                            </svg>
+                        </button>
+                        <button id="generateRoomBtn" class="generate-btn" title="Generate new room name">
+                            <svg fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M12 6v3l4-4-4-4v3c-4.42 0-8 3.58-8 8 0 1.57.46 3.03 1.24 4.26L6.7 14.8c-.45-.83-.7-1.79-.7-2.8 0-3.31 2.69-6 6-6zm6.76 1.74L17.3 9.2c.44.84.7 1.79.7 2.8 0 3.31-2.69 6-6 6v-3l-4 4 4 4v-3c4.42 0 8-3.58 8-8 0-1.57-.46-3.03-1.24-4.26z"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <button id="createRoomBtn" class="btn btn-primary">Create Room</button>
+                    <button id="joinRoomBtn" class="btn btn-secondary">Join Room</button>
+                </div>
+
+                <div class="status-bar">
+                    <div class="status-indicator" id="statusIndicator"></div>
+                    <div class="status-text" id="roomStatus">Ready to connect. Enter a room name above.</div>
+                    <div class="connection-info" id="connectionInfo"></div>
+                </div>
+
+                <div class="instructions" id="instructions">
+                    <h3>📋 How to use:</h3>
+                    <ul>
+                        <li><strong>Create a room:</strong> Enter a unique room name and click "Create Room"</li>
+                        <li><strong>Join a room:</strong> Enter the same room name and click "Join Room"</li>
+                        <li><strong>Share the room name</strong> with the person you want to chat with</li>
+                        <li>Use the video and audio buttons to control your camera and microphone</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="static/js/client.js"></script>
+</body>
+</html>
