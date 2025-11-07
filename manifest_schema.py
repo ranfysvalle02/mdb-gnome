@@ -356,8 +356,8 @@ MANIFEST_SCHEMA_V2 = {
                 },
                 "type": {
                     "type": "string",
-                    "enum": ["regular", "vectorSearch", "search", "text", "geospatial", "ttl", "partial"],
-                    "description": "Index type"
+                    "enum": ["regular", "vectorSearch", "search", "text", "geospatial", "ttl", "partial", "hybrid"],
+                    "description": "Index type. 'hybrid' creates both vector and text indexes for hybrid search with $rankFusion."
                 },
                 "keys": {
                     "oneOf": [
@@ -398,6 +398,46 @@ MANIFEST_SCHEMA_V2 = {
                 "definition": {
                     "type": "object",
                     "description": "Index definition (required for vectorSearch and search indexes)"
+                },
+                "hybrid": {
+                    "type": "object",
+                    "properties": {
+                        "vector_index": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "pattern": "^[a-zA-Z0-9_]+$",
+                                    "description": "Name for the vector index (defaults to '{name}_vector')"
+                                },
+                                "definition": {
+                                    "type": "object",
+                                    "description": "Vector index definition with mappings.fields containing knnVector fields"
+                                }
+                            },
+                            "required": ["definition"],
+                            "additionalProperties": False
+                        },
+                        "text_index": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "pattern": "^[a-zA-Z0-9_]+$",
+                                    "description": "Name for the text index (defaults to '{name}_text')"
+                                },
+                                "definition": {
+                                    "type": "object",
+                                    "description": "Text index definition with mappings for full-text search"
+                                }
+                            },
+                            "required": ["definition"],
+                            "additionalProperties": False
+                        }
+                    },
+                    "required": ["vector_index", "text_index"],
+                    "additionalProperties": False,
+                    "description": "Hybrid search configuration (required when type is 'hybrid'). Defines both vector and text indexes for $rankFusion."
                 },
                 "options": {
                     "type": "object",
@@ -510,6 +550,14 @@ MANIFEST_SCHEMA_V2 = {
                     },
                     "then": {
                         "required": ["definition"]
+                    }
+                },
+                {
+                    "if": {
+                        "properties": {"type": {"const": "hybrid"}}
+                    },
+                    "then": {
+                        "required": ["hybrid"]
                     }
                 }
             ]
@@ -1098,6 +1146,33 @@ def validate_index_definition(index_def: Dict[str, Any], collection_name: str, i
                     num_dims = field.get("numDimensions")
                     if not isinstance(num_dims, int) or num_dims < 1 or num_dims > 10000:
                         return False, f"VectorSearch index '{index_name}' in collection '{collection_name}' requires 'numDimensions' to be between 1 and 10000, got: {num_dims}"
+    
+    elif index_type == "hybrid":
+        if "hybrid" not in index_def:
+            return False, f"Hybrid index '{index_name}' in collection '{collection_name}' requires 'hybrid' field"
+        hybrid = index_def.get("hybrid")
+        if not isinstance(hybrid, dict):
+            return False, f"Hybrid index '{index_name}' in collection '{collection_name}' requires 'hybrid' to be an object"
+        
+        # Validate vector_index
+        vector_index = hybrid.get("vector_index")
+        if not vector_index or not isinstance(vector_index, dict):
+            return False, f"Hybrid index '{index_name}' in collection '{collection_name}' requires 'hybrid.vector_index' to be an object"
+        if "definition" not in vector_index:
+            return False, f"Hybrid index '{index_name}' in collection '{collection_name}' requires 'hybrid.vector_index.definition' field"
+        vector_def = vector_index.get("definition")
+        if not isinstance(vector_def, dict):
+            return False, f"Hybrid index '{index_name}' in collection '{collection_name}' requires 'hybrid.vector_index.definition' to be an object"
+        
+        # Validate text_index
+        text_index = hybrid.get("text_index")
+        if not text_index or not isinstance(text_index, dict):
+            return False, f"Hybrid index '{index_name}' in collection '{collection_name}' requires 'hybrid.text_index' to be an object"
+        if "definition" not in text_index:
+            return False, f"Hybrid index '{index_name}' in collection '{collection_name}' requires 'hybrid.text_index.definition' field"
+        text_def = text_index.get("definition")
+        if not isinstance(text_def, dict):
+            return False, f"Hybrid index '{index_name}' in collection '{collection_name}' requires 'hybrid.text_index.definition' to be an object"
     
     else:
         return False, f"Unknown index type '{index_type}' for index '{index_name}' in collection '{collection_name}'"

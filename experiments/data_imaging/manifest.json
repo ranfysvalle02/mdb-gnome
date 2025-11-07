@@ -93,6 +93,25 @@
             }
           ]
         }
+      },
+      {
+        "name": "workout_text_index",
+        "type": "text",
+        "keys": {
+          "post_session_notes.notes": "text",
+          "session_tag": "text",
+          "workout_type": "text",
+          "ai_classification": "text"
+        },
+        "options": {
+          "weights": {
+            "post_session_notes.notes": 10,
+            "session_tag": 8,
+            "workout_type": 5,
+            "ai_classification": 3
+          },
+          "default_language": "english"
+        }
       }
     ]
   }

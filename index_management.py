@@ -374,10 +374,140 @@ async def run_index_creation_for_collection(
                     logger.info(f"{log_prefix} Creating new search index '{index_name}'...")
                     await index_manager.create_search_index(name=index_name, definition=definition, index_type=index_type, wait_for_ready=True)
                     logger.info(f"{log_prefix} ✔️ Created new '{index_type}' index '{index_name}'.")
+            elif index_type == "hybrid":
+                hybrid_config = index_def.get("hybrid")
+                if not hybrid_config:
+                    logger.warning(
+                        f"{log_prefix} Missing 'hybrid' field for hybrid index '{index_name}'. "
+                        f"Hybrid indexes require a 'hybrid' object with 'vector_index' and 'text_index' definitions. "
+                        f"Skipping this index definition."
+                    )
+                    continue
+                
+                vector_index_config = hybrid_config.get("vector_index")
+                text_index_config = hybrid_config.get("text_index")
+                
+                if not vector_index_config or not text_index_config:
+                    logger.warning(
+                        f"{log_prefix} Hybrid index '{index_name}' requires both 'vector_index' and 'text_index' in 'hybrid' field. "
+                        f"Skipping this index definition."
+                    )
+                    continue
+                
+                # Get index names (with fallback to default naming)
+                # Note: index_name is already prefixed with slug (e.g., "slug_hybrid_search_index")
+                # If names are provided in hybrid config, prefix them with slug
+                # If not provided, use the prefixed base name with suffix
+                vector_base_name = vector_index_config.get("name")
+                text_base_name = text_index_config.get("name")
+                
+                if vector_base_name:
+                    # User provided a name - prefix it with slug if not already prefixed
+                    if not vector_base_name.startswith(f"{slug}_"):
+                        vector_index_name = f"{slug}_{vector_base_name}"
+                    else:
+                        vector_index_name = vector_base_name
+                else:
+                    # Use default: base index name (already prefixed) + "_vector"
+                    vector_index_name = f"{index_name}_vector"
+                
+                if text_base_name:
+                    # User provided a name - prefix it with slug if not already prefixed
+                    if not text_base_name.startswith(f"{slug}_"):
+                        text_index_name = f"{slug}_{text_base_name}"
+                    else:
+                        text_index_name = text_base_name
+                else:
+                    # Use default: base index name (already prefixed) + "_text"
+                    text_index_name = f"{index_name}_text"
+                
+                vector_definition = vector_index_config.get("definition")
+                text_definition = text_index_config.get("definition")
+                
+                if not vector_definition or not text_definition:
+                    logger.warning(
+                        f"{log_prefix} Hybrid index '{index_name}' requires 'definition' in both 'vector_index' and 'text_index'. "
+                        f"Skipping this index definition."
+                    )
+                    continue
+                
+                # Create/update vector index
+                logger.info(f"{log_prefix} Processing vector index '{vector_index_name}' for hybrid search...")
+                existing_vector_index = await index_manager.get_search_index(vector_index_name)
+                if existing_vector_index:
+                    current_vector_def = existing_vector_index.get("latestDefinition", existing_vector_index.get("definition"))
+                    normalized_current_vector = normalize_json_def(current_vector_def)
+                    normalized_expected_vector = normalize_json_def(vector_definition)
+                    
+                    if normalized_current_vector == normalized_expected_vector:
+                        logger.info(f"{log_prefix} Vector index '{vector_index_name}' definition matches.")
+                        if not existing_vector_index.get("queryable") and existing_vector_index.get("status") != "FAILED":
+                            logger.info(f"{log_prefix} Vector index '{vector_index_name}' not queryable yet; waiting.")
+                            await index_manager._wait_for_search_index_ready(vector_index_name, index_manager.DEFAULT_SEARCH_TIMEOUT)
+                            logger.info(f"{log_prefix} Vector index '{vector_index_name}' now ready.")
+                        elif existing_vector_index.get("status") == "FAILED":
+                            logger.error(
+                                f"{log_prefix} Vector index '{vector_index_name}' is in FAILED state. "
+                                f"Check Atlas UI for detailed error messages."
+                            )
+                        else:
+                            logger.info(f"{log_prefix} Vector index '{vector_index_name}' is ready.")
+                    else:
+                        logger.warning(f"{log_prefix} Vector index '{vector_index_name}' definition changed; updating.")
+                        try:
+                            await index_manager.update_search_index(name=vector_index_name, definition=vector_definition, wait_for_ready=True)
+                            logger.info(f"{log_prefix} ✔️ Successfully updated vector index '{vector_index_name}'.")
+                        except Exception as update_err:
+                            logger.error(
+                                f"{log_prefix} ❌ Failed to update vector index '{vector_index_name}': {update_err}.",
+                                exc_info=True
+                            )
+                else:
+                    logger.info(f"{log_prefix} Creating new vector index '{vector_index_name}'...")
+                    await index_manager.create_search_index(name=vector_index_name, definition=vector_definition, index_type="vectorSearch", wait_for_ready=True)
+                    logger.info(f"{log_prefix} ✔️ Created vector index '{vector_index_name}'.")
+                
+                # Create/update text index
+                logger.info(f"{log_prefix} Processing text index '{text_index_name}' for hybrid search...")
+                existing_text_index = await index_manager.get_search_index(text_index_name)
+                if existing_text_index:
+                    current_text_def = existing_text_index.get("latestDefinition", existing_text_index.get("definition"))
+                    normalized_current_text = normalize_json_def(current_text_def)
+                    normalized_expected_text = normalize_json_def(text_definition)
+                    
+                    if normalized_current_text == normalized_expected_text:
+                        logger.info(f"{log_prefix} Text index '{text_index_name}' definition matches.")
+                        if not existing_text_index.get("queryable") and existing_text_index.get("status") != "FAILED":
+                            logger.info(f"{log_prefix} Text index '{text_index_name}' not queryable yet; waiting.")
+                            await index_manager._wait_for_search_index_ready(text_index_name, index_manager.DEFAULT_SEARCH_TIMEOUT)
+                            logger.info(f"{log_prefix} Text index '{text_index_name}' now ready.")
+                        elif existing_text_index.get("status") == "FAILED":
+                            logger.error(
+                                f"{log_prefix} Text index '{text_index_name}' is in FAILED state. "
+                                f"Check Atlas UI for detailed error messages."
+                            )
+                        else:
+                            logger.info(f"{log_prefix} Text index '{text_index_name}' is ready.")
+                    else:
+                        logger.warning(f"{log_prefix} Text index '{text_index_name}' definition changed; updating.")
+                        try:
+                            await index_manager.update_search_index(name=text_index_name, definition=text_definition, wait_for_ready=True)
+                            logger.info(f"{log_prefix} ✔️ Successfully updated text index '{text_index_name}'.")
+                        except Exception as update_err:
+                            logger.error(
+                                f"{log_prefix} ❌ Failed to update text index '{text_index_name}': {update_err}.",
+                                exc_info=True
+                            )
+                else:
+                    logger.info(f"{log_prefix} Creating new text index '{text_index_name}'...")
+                    await index_manager.create_search_index(name=text_index_name, definition=text_definition, index_type="search", wait_for_ready=True)
+                    logger.info(f"{log_prefix} ✔️ Created text index '{text_index_name}'.")
+                
+                logger.info(f"{log_prefix} ✔️ Hybrid search indexes ready: '{vector_index_name}' (vector) and '{text_index_name}' (text).")
             else:
                 logger.warning(
                     f"{log_prefix} Unknown index type '{index_type}' for index '{index_name}'. "
-                    f"Supported types: 'regular', 'vectorSearch', 'search', 'text', 'geospatial', 'ttl', 'partial'. "
+                    f"Supported types: 'regular', 'vectorSearch', 'search', 'text', 'geospatial', 'ttl', 'partial', 'hybrid'. "
                     f"Skipping this index definition. Update manifest.json with a supported index type."
                 )
         except Exception as e:

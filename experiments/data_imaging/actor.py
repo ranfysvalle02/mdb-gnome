@@ -1238,6 +1238,223 @@ class ExperimentActor:
         return []
 
     # ---
+    # --- Hybrid Search: Combine Vector Search with Text Search and Filters
+    # ---
+    async def hybrid_search(
+        self,
+        base_workout_id: int,
+        text_query: str = None,  # Text search query (e.g., "felt strong")
+        workout_type_filter: str = None,  # Filter by workout type (e.g., "Outdoor Run")
+        session_tag_filter: str = None,  # Filter by session tag (e.g., "Tempo Pace")
+        limit: int = 5
+    ) -> dict:
+        """
+        Hybrid search combines vector similarity (vibe-based) with text search (factual) and filters.
+        
+        Example:
+        - base_workout_id: Find workouts similar to this one (vector search)
+        - text_query: "felt strong" - searches in notes, session_tag, workout_type, ai_classification
+        - workout_type_filter: "Outdoor Run" - exact match filter
+        - session_tag_filter: "Tempo Pace" - exact match filter
+        
+        This demonstrates how to combine:
+        1. Vector search (fuzzy, vibe-based): "workouts similar to my last Tempo Run"
+        2. Text search (precise, factual): "where my notes said I 'felt strong'"
+        3. Filters (exact matches): "where workout type was 'Outdoor Run'"
+        """
+        self._check_ready()
+        
+        doc_id = f"workout_rad_{base_workout_id}"
+        base_doc = await self.db.workouts.find_one({"_id": doc_id})
+        if not base_doc:
+            raise RuntimeError(f"Base workout {doc_id} not found")
+        
+        # Build the filter query for exact matches
+        filter_query = {"_id": {"$ne": doc_id}}
+        
+        if workout_type_filter:
+            filter_query["workout_type"] = workout_type_filter
+        
+        if session_tag_filter:
+            filter_query["session_tag"] = session_tag_filter
+        
+        # Step 1: Vector search for similar workouts (vibe-based)
+        vector_results = []
+        if isinstance(base_doc.get("workout_vector"), list):
+            try:
+                vector_pipeline = [
+                    {
+                        "$vectorSearch": {
+                            "index": self.vector_index_name,
+                            "path": "workout_vector",
+                            "queryVector": base_doc["workout_vector"],
+                            "filter": filter_query,
+                            "numCandidates": max(100, limit * 20),
+                            "limit": limit * 3
+                        }
+                    },
+                    {
+                        "$project": {
+                            "_id": 1,
+                            "score": {"$meta": "vectorSearchScore"},
+                            "workout_type": 1,
+                            "session_tag": 1,
+                            "ai_classification": 1,
+                            "post_session_notes": 1,
+                            "rpe": 1
+                        }
+                    }
+                ]
+                
+                cur = self.db.raw.workouts.aggregate(vector_pipeline)
+                vector_results = await cur.to_list(length=None)
+            except Exception as e:
+                logger.warning(f"Vector search failed in hybrid search: {e}")
+        
+        # Step 2: Text search if text_query is provided
+        text_results = []
+        if text_query:
+            try:
+                # Use MongoDB $text search on the text index
+                text_search_query = {
+                    "$text": {"$search": text_query},
+                    **filter_query
+                }
+                
+                text_cursor = self.db.workouts.find(
+                    text_search_query,
+                    {
+                        "_id": 1,
+                        "workout_type": 1,
+                        "session_tag": 1,
+                        "ai_classification": 1,
+                        "post_session_notes": 1,
+                        "rpe": 1,
+                        "score": {"$meta": "textScore"}
+                    }
+                ).sort([("score", {"$meta": "textScore"})]).limit(limit * 3)
+                
+                text_results = await text_cursor.to_list(length=None)
+            except Exception as e:
+                logger.warning(f"Text search failed in hybrid search: {e}")
+        
+        # Step 3: Combine results intelligently
+        # If we have both vector and text results, merge them
+        # If we only have vector results, use those
+        # If we only have text results, use those
+        # If we have neither but have filters, do a filtered query
+        
+        combined_results = []
+        seen_ids = set()
+        
+        # Add vector results first (they're ranked by similarity)
+        for result in vector_results:
+            workout_id = result["_id"]
+            if workout_id not in seen_ids:
+                suffix = workout_id.split("_")[-1]
+                combined_results.append({
+                    "_id": workout_id,
+                    "workout_id": int(suffix),
+                    "vector_score": float(result.get("score", 0.0)),
+                    "text_score": 0.0,
+                    "workout_type": result.get("workout_type", "?"),
+                    "session_tag": result.get("session_tag"),
+                    "ai_classification": result.get("ai_classification"),
+                    "rpe": result.get("rpe"),
+                    "post_session_notes": result.get("post_session_notes", {})
+                })
+                seen_ids.add(workout_id)
+        
+        # Add text results, merging scores if already present
+        for result in text_results:
+            workout_id = result["_id"]
+            text_score = float(result.get("score", 0.0))
+            
+            if workout_id in seen_ids:
+                # Update existing result with text score
+                for combined in combined_results:
+                    if combined["_id"] == workout_id:
+                        combined["text_score"] = text_score
+                        # Combine scores (weighted average: 70% vector, 30% text)
+                        combined["combined_score"] = (combined["vector_score"] * 0.7) + (text_score * 0.3)
+                        break
+            else:
+                # New result from text search
+                suffix = workout_id.split("_")[-1]
+                combined_results.append({
+                    "_id": workout_id,
+                    "workout_id": int(suffix),
+                    "vector_score": 0.0,
+                    "text_score": text_score,
+                    "workout_type": result.get("workout_type", "?"),
+                    "session_tag": result.get("session_tag"),
+                    "ai_classification": result.get("ai_classification"),
+                    "rpe": result.get("rpe"),
+                    "post_session_notes": result.get("post_session_notes", {}),
+                    "combined_score": text_score * 0.3  # Text-only results get lower weight
+                })
+                seen_ids.add(workout_id)
+        
+        # If we have no results but have filters, do a simple filtered query
+        if not combined_results and (workout_type_filter or session_tag_filter):
+            try:
+                filtered_cursor = self.db.workouts.find(
+                    filter_query,
+                    {
+                        "_id": 1,
+                        "workout_type": 1,
+                        "session_tag": 1,
+                        "ai_classification": 1,
+                        "post_session_notes": 1,
+                        "rpe": 1
+                    }
+                ).limit(limit)
+                
+                filtered_results = await filtered_cursor.to_list(length=None)
+                for result in filtered_results:
+                    workout_id = result["_id"]
+                    suffix = workout_id.split("_")[-1]
+                    combined_results.append({
+                        "_id": workout_id,
+                        "workout_id": int(suffix),
+                        "vector_score": 0.0,
+                        "text_score": 0.0,
+                        "workout_type": result.get("workout_type", "?"),
+                        "session_tag": result.get("session_tag"),
+                        "ai_classification": result.get("ai_classification"),
+                        "rpe": result.get("rpe"),
+                        "post_session_notes": result.get("post_session_notes", {}),
+                        "combined_score": 0.0
+                    })
+            except Exception as e:
+                logger.warning(f"Filtered query failed in hybrid search: {e}")
+        
+        # Calculate combined scores for all results
+        for result in combined_results:
+            if "combined_score" not in result:
+                # If we have both scores, combine them; otherwise use the available one
+                if result["vector_score"] > 0 and result["text_score"] > 0:
+                    result["combined_score"] = (result["vector_score"] * 0.7) + (result["text_score"] * 0.3)
+                elif result["vector_score"] > 0:
+                    result["combined_score"] = result["vector_score"]
+                elif result["text_score"] > 0:
+                    result["combined_score"] = result["text_score"] * 0.3
+                else:
+                    result["combined_score"] = 0.0
+        
+        # Sort by combined score (descending) and return top N
+        combined_results.sort(key=lambda x: x.get("combined_score", 0.0), reverse=True)
+        
+        return {
+            "base_workout_id": base_workout_id,
+            "text_query": text_query,
+            "workout_type_filter": workout_type_filter,
+            "session_tag_filter": session_tag_filter,
+            "results": combined_results[:limit],
+            "total_found": len(combined_results)
+        }
+
+    # ---
     # --- Endpoint for client-side JS (returns JSON)
     # ---
     async def get_dynamic_viz_data(

@@ -312,6 +312,45 @@ async def find_by_intensity(
 # --- END NEW ---
 
 
+# ---
+# --- NEW: API endpoint for Hybrid Search (combines vector search with text search and filters)
+# ---
+@bp.get("/workout/{workout_id}/hybrid-search", response_class=JSONResponse)
+async def hybrid_search(
+    request: Request,
+    workout_id: int,
+    actor: "ray.actor.ActorHandle" = Depends(get_actor_handle),
+    text_query: str = Query(None, description="Text search query (e.g., 'felt strong')"),
+    workout_type: str = Query(None, alias="workout_type_filter", description="Filter by workout type (e.g., 'Outdoor Run')"),
+    session_tag: str = Query(None, alias="session_tag_filter", description="Filter by session tag (e.g., 'Tempo Pace')"),
+    limit: int = Query(5, ge=1, le=20, description="Maximum number of results to return")
+):
+    """
+    Hybrid search combines vector similarity (vibe-based) with text search (factual) and filters.
+    
+    This demonstrates how to combine:
+    1. Vector search (fuzzy, vibe-based): "workouts similar to my last Tempo Run"
+    2. Text search (precise, factual): "where my notes said I 'felt strong'"
+    3. Filters (exact matches): "where workout type was 'Outdoor Run'"
+    
+    Example query:
+    /workout/1/hybrid-search?text_query=felt%20strong&workout_type=Outdoor%20Run&limit=5
+    """
+    try:
+        result = await actor.hybrid_search.remote(
+            base_workout_id=workout_id,
+            text_query=text_query,
+            workout_type_filter=workout_type,
+            session_tag_filter=session_tag,
+            limit=limit
+        )
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Actor call failed for hybrid_search: {e}", exc_info=True)
+        raise HTTPException(500, f"Hybrid search failed: {e}")
+# --- END NEW ---
+
+
 @bp.post("/workout/{workout_id}/analyze")
 async def analyze_workout(
     request: Request, 
