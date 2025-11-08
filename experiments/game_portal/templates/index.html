@@ -1,0 +1,1086 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game Portal</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            display: grid; 
+            place-items: center; 
+            min-height: 100vh; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+            background-attachment: fixed;
+            color: #f7f7f7;
+            padding: 20px;
+            position: relative;
+            overflow-x: hidden;
+        }
+        
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(circle at 20% 50%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(118, 75, 162, 0.3) 0%, transparent 50%),
+                radial-gradient(circle at 40% 20%, rgba(240, 147, 251, 0.2) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: 0;
+            transition: background 0.3s ease;
+        }
+        
+        /* Mouse-following gradient effect */
+        body::after {
+            content: '';
+            position: fixed;
+            width: 600px;
+            height: 600px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(102, 126, 234, 0.15) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+            transform: translate(-50%, -50%);
+            transition: opacity 0.3s ease;
+            opacity: 0;
+        }
+        
+        body.mouse-active::after {
+            opacity: 1;
+        }
+        
+        /* Floating Particles */
+        .particles {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+            overflow: hidden;
+        }
+        
+        .particle {
+            position: absolute;
+            width: 4px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.6);
+            border-radius: 50%;
+            animation: float 15s infinite ease-in-out;
+            box-shadow: 0 0 6px rgba(255, 255, 255, 0.5);
+        }
+        
+        .particle:nth-child(1) { left: 10%; animation-delay: 0s; animation-duration: 20s; }
+        .particle:nth-child(2) { left: 20%; animation-delay: 2s; animation-duration: 18s; }
+        .particle:nth-child(3) { left: 30%; animation-delay: 4s; animation-duration: 22s; }
+        .particle:nth-child(4) { left: 40%; animation-delay: 1s; animation-duration: 19s; }
+        .particle:nth-child(5) { left: 50%; animation-delay: 3s; animation-duration: 21s; }
+        .particle:nth-child(6) { left: 60%; animation-delay: 5s; animation-duration: 17s; }
+        .particle:nth-child(7) { left: 70%; animation-delay: 2.5s; animation-duration: 23s; }
+        .particle:nth-child(8) { left: 80%; animation-delay: 4.5s; animation-duration: 18s; }
+        .particle:nth-child(9) { left: 90%; animation-delay: 1.5s; animation-duration: 20s; }
+        .particle:nth-child(10) { left: 15%; animation-delay: 3.5s; animation-duration: 19s; }
+        .particle:nth-child(11) { left: 25%; animation-delay: 0.5s; animation-duration: 21s; }
+        .particle:nth-child(12) { left: 35%; animation-delay: 2.5s; animation-duration: 18s; }
+        .particle:nth-child(13) { left: 45%; animation-delay: 4.5s; animation-duration: 22s; }
+        .particle:nth-child(14) { left: 55%; animation-delay: 1.5s; animation-duration: 20s; }
+        .particle:nth-child(15) { left: 65%; animation-delay: 3.5s; animation-duration: 17s; }
+        .particle:nth-child(16) { left: 75%; animation-delay: 0.5s; animation-duration: 23s; }
+        .particle:nth-child(17) { left: 85%; animation-delay: 2.5s; animation-duration: 19s; }
+        .particle:nth-child(18) { left: 95%; animation-delay: 4.5s; animation-duration: 21s; }
+        
+        @keyframes float {
+            0% {
+                transform: translateY(100vh) translateX(0) scale(0);
+                opacity: 0;
+            }
+            10% {
+                opacity: 1;
+            }
+            90% {
+                opacity: 1;
+            }
+            100% {
+                transform: translateY(-100px) translateX(50px) scale(1);
+                opacity: 0;
+            }
+        }
+        
+        .container { 
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(20px);
+            padding: 3rem; 
+            border-radius: 24px; 
+            box-shadow: 
+                0 20px 60px rgba(0, 0, 0, 0.3),
+                0 0 0 1px rgba(255, 255, 255, 0.2);
+            width: 90%;
+            max-width: 1200px;
+            color: #1a1a2e;
+            position: relative;
+            z-index: 1;
+            animation: fadeInUp 0.6s ease-out;
+        }
+        
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .hidden { display: none; }
+        
+        h1, h2, h3 {
+            color: #1a1a2e;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+        }
+        
+        h2 {
+            font-size: 2.5rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 2rem;
+        }
+        
+        h3 {
+            font-size: 1.5rem;
+            color: #2d3748;
+            margin-top: 2rem;
+            margin-bottom: 1rem;
+        }
+        
+        hr {
+            border: none;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #e2e8f0, transparent);
+            margin: 2rem 0;
+        }
+        
+        .hand, .dealer-hand { 
+            border: 2px solid #e2e8f0; 
+            padding: 1.5rem; 
+            margin: 1rem 0; 
+            background: linear-gradient(135deg, #ffffff 0%, #f7fafc 100%); 
+            min-height: 80px; 
+            display: flex;
+            flex-direction: row;
+            flex-wrap: wrap;
+            gap: 1rem;
+            align-items: center;
+            justify-content: flex-start;
+            border-radius: 16px;
+            box-shadow: 
+                inset 0 2px 4px rgba(0, 0, 0, 0.05),
+                0 4px 12px rgba(0, 0, 0, 0.08);
+            transition: all 0.3s ease;
+            overflow-x: auto;
+        }
+        
+        .hand:has(.card), .dealer-hand:has(.card) {
+            flex-wrap: nowrap;
+        }
+        
+        .hand:hover, .dealer-hand:hover {
+            border-color: #cbd5e0;
+            box-shadow: 
+                inset 0 2px 4px rgba(0, 0, 0, 0.05),
+                0 6px 16px rgba(0, 0, 0, 0.12);
+        }
+        
+        .board-simple {
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            padding: 1.5rem;
+            margin: 1rem 0;
+            background: linear-gradient(135deg, #48bb78 0%, #38a169 50%, #2f855a 100%);
+            min-height: 100px;
+            border-radius: 16px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 
+                0 8px 24px rgba(56, 161, 105, 0.3),
+                inset 0 2px 4px rgba(255, 255, 255, 0.2);
+        }
+        
+        .board-map-panel {
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            padding: 1.5rem;
+            background: linear-gradient(135deg, #48bb78 0%, #38a169 50%, #2f855a 100%);
+            border-radius: 16px;
+            max-height: 400px;
+            overflow-y: auto;
+            box-shadow: 
+                0 8px 24px rgba(56, 161, 105, 0.3),
+                inset 0 2px 4px rgba(255, 255, 255, 0.2);
+        }
+        
+        .board-map-panel::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .board-map-panel::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+        
+        .board-map-panel::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 4px;
+        }
+        
+        .board-map-panel::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.5);
+        }
+        
+        .board-map {
+            display: flex;
+            flex-direction: column;
+            gap: 0.3rem;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        
+        .board-map-item {
+            padding: 0.3rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        .board-map-item:first-child {
+            background: rgba(255, 255, 0, 0.2);
+            font-weight: bold;
+        }
+        
+        .board-map-item:last-child {
+            background: rgba(255, 255, 0, 0.2);
+            font-weight: bold;
+        }
+        
+        .drop-zones {
+            display: flex;
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+        
+        .drop-zone {
+            flex: 1;
+            min-height: 140px;
+            border: 3px dashed #cbd5e0;
+            border-radius: 16px;
+            padding: 1.5rem;
+            text-align: center;
+            background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%);
+            transition: all 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 0.75rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        }
+        
+        .drop-zone.drag-over {
+            border-color: #48bb78;
+            background: linear-gradient(135deg, #c6f6d5 0%, #9ae6b4 100%);
+            transform: scale(1.03);
+            box-shadow: 0 8px 24px rgba(72, 187, 120, 0.3);
+            border-style: solid;
+        }
+        
+        .drop-zone-label {
+            font-weight: 700;
+            color: #4a5568;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .drop-zone.drag-over .drop-zone-label {
+            color: #22543d;
+        }
+        
+        .drop-zone-end {
+            font-size: 2.5rem;
+            font-weight: 800;
+            color: #2d3748;
+            min-height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: white;
+            border-radius: 12px;
+            padding: 0.5rem 1.5rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .drop-zone.drag-over .drop-zone-end {
+            color: #22543d;
+            background: #c6f6d5;
+            transform: scale(1.1);
+        }
+        
+        /* Beautiful Domino Tiles */
+        .domino {
+            width: 70px;
+            height: 140px;
+            min-width: 70px;
+            max-width: 70px;
+            background-color: #f7f7f7;
+            border: 1px solid #ccc;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2), 0 1px 2px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+            flex-grow: 0;
+            position: relative;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin: 0;
+        }
+        
+        .domino:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        .domino::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 8px;
+            right: 8px;
+            height: 3px;
+            background-color: #555;
+            transform: translateY(-50%);
+            border-radius: 2px;
+        }
+        
+        .domino.playable {
+            border: 3px solid #4caf50;
+            box-shadow: 0 4px 15px rgba(76, 175, 80, 0.4), 0 1px 2px rgba(0,0,0,0.1);
+        }
+        
+        .domino.playable:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 20px rgba(76, 175, 80, 0.5), 0 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        .domino.unplayable {
+            opacity: 0.5;
+            cursor: not-allowed;
+            filter: grayscale(0.7);
+        }
+        
+        .domino.unplayable:hover {
+            transform: none;
+        }
+        
+        .domino.disabled {
+            opacity: 0.6;
+            cursor: default;
+        }
+        
+        .domino.disabled:hover {
+            transform: none;
+        }
+        
+        .domino.draggable {
+            cursor: grab;
+        }
+        
+        .domino.draggable:active {
+            cursor: grabbing;
+        }
+        
+        .domino.dragging {
+            opacity: 0.5;
+            transform: rotate(5deg);
+        }
+        
+        .domino.board-tile {
+            cursor: default;
+            opacity: 1;
+            transition: transform 0.2s, box-shadow 0.2s;
+            flex-shrink: 0;
+        }
+        
+        .domino.board-tile:hover {
+            transform: translateY(-3px) scale(1.05);
+            z-index: 100;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        .domino.path-tile {
+            pointer-events: none;
+        }
+        
+        .domino.path-tile:hover {
+            transform: scale(0.7);
+        }
+        
+        .half {
+            flex: 1;
+            position: relative;
+            padding: 8px;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+        }
+        
+        .pip {
+            width: 16px;
+            height: 16px;
+            background-color: #333;
+            border-radius: 50%;
+            align-self: center;
+            justify-self: center;
+        }
+        
+        /* Pip layouts */
+        .half-1 .pip:nth-child(1) { grid-area: 2 / 2; }
+        .half-2 .pip:nth-child(1) { grid-area: 1 / 1; }
+        .half-2 .pip:nth-child(2) { grid-area: 3 / 3; }
+        .half-3 .pip:nth-child(1) { grid-area: 1 / 1; }
+        .half-3 .pip:nth-child(2) { grid-area: 2 / 2; }
+        .half-3 .pip:nth-child(3) { grid-area: 3 / 3; }
+        .half-4 .pip:nth-child(1) { grid-area: 1 / 1; }
+        .half-4 .pip:nth-child(2) { grid-area: 1 / 3; }
+        .half-4 .pip:nth-child(3) { grid-area: 3 / 1; }
+        .half-4 .pip:nth-child(4) { grid-area: 3 / 3; }
+        .half-5 .pip:nth-child(1) { grid-area: 1 / 1; }
+        .half-5 .pip:nth-child(2) { grid-area: 1 / 3; }
+        .half-5 .pip:nth-child(3) { grid-area: 2 / 2; }
+        .half-5 .pip:nth-child(4) { grid-area: 3 / 1; }
+        .half-5 .pip:nth-child(5) { grid-area: 3 / 3; }
+        .half-6 .pip:nth-child(1) { grid-area: 1 / 1; }
+        .half-6 .pip:nth-child(2) { grid-area: 2 / 1; }
+        .half-6 .pip:nth-child(3) { grid-area: 3 / 1; }
+        .half-6 .pip:nth-child(4) { grid-area: 1 / 3; }
+        .half-6 .pip:nth-child(5) { grid-area: 2 / 3; }
+        .half-6 .pip:nth-child(6) { grid-area: 3 / 3; }
+        
+        /* --- Beautiful Playing Cards --- */
+        .card { 
+            width: 112px !important;
+            height: 160px !important;
+            min-width: 112px;
+            max-width: 112px;
+            background-color: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            padding: 8px;
+            position: relative;
+            display: inline-flex;
+            flex-direction: column;
+            justify-content: space-between;
+            flex-shrink: 0;
+            flex-grow: 0;
+            margin: 0;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+        }
+        
+        .card.red {
+            color: #dc2626;
+        }
+        
+        .card.black {
+            color: #000;
+        }
+        
+        .card-corner {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .card-corner-top {
+            align-self: flex-start;
+        }
+        
+        .card-corner-bottom {
+            align-self: flex-end;
+            transform: rotate(180deg);
+        }
+        
+        .card-rank {
+            font-size: 20px;
+            font-weight: 700;
+            line-height: 1;
+        }
+        
+        .card-suit {
+            font-size: 18px;
+            line-height: 1;
+        }
+        
+        .card-center {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 64px;
+            opacity: 0.7;
+        }
+        
+        .card.hidden-card {
+            background-color: #1d4ed8;
+            border: 2px solid #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .card.hidden-card::after {
+            content: '';
+            width: 80px;
+            height: 128px;
+            border: 2px dashed rgba(147, 197, 253, 0.5);
+            border-radius: 6px;
+        }
+        
+        .card.hidden-card .card-corner,
+        .card.hidden-card .card-center {
+            display: none;
+        }
+        
+        /* Beautiful Form Elements */
+        label {
+            display: block;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 0.5rem;
+            font-size: 0.95rem;
+        }
+        
+        input[type="text"], select {
+            width: 100%;
+            padding: 0.875rem 1.25rem;
+            margin-bottom: 1.25rem;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            background: white; 
+            color: #1a1a2e;
+            font-family: inherit;
+        }
+        
+        input[type="text"]:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            transform: translateY(-2px);
+        }
+        
+        input[type="text"]::placeholder {
+            color: #a0aec0;
+        }
+        
+        select {
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23667eea' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 1rem center;
+            padding-right: 2.5rem;
+        }
+        
+        /* Beautiful Buttons */
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 1rem 2rem;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 600;
+            margin: 0.5rem 0.5rem 0.5rem 0;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        button::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transition: left 0.5s;
+        }
+        
+        button:hover::before {
+            left: 100%;
+        }
+        
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+        }
+        
+        button:active:not(:disabled) {
+            transform: translateY(0);
+        }
+        
+        button:disabled {
+            background: linear-gradient(135deg, #cbd5e0 0%, #a0aec0 100%);
+            cursor: not-allowed;
+            opacity: 0.6;
+            box-shadow: none;
+        }
+        
+        #start-game-btn {
+            background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+            box-shadow: 0 4px 15px rgba(72, 187, 120, 0.4);
+        }
+        
+        #start-game-btn:hover:not(:disabled) {
+            box-shadow: 0 6px 20px rgba(72, 187, 120, 0.5);
+        }
+        
+        #hit-btn {
+            background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+            box-shadow: 0 4px 15px rgba(72, 187, 120, 0.4);
+        }
+        
+        #stand-btn {
+            background: linear-gradient(135deg, #f56565 0%, #e53e3e 100%);
+            box-shadow: 0 4px 15px rgba(245, 101, 101, 0.4);
+        }
+        
+        #draw-btn {
+            background: linear-gradient(135deg, #4299e1 0%, #3182ce 100%);
+            box-shadow: 0 4px 15px rgba(66, 153, 225, 0.4);
+        }
+        
+        #pass-btn {
+            background: linear-gradient(135deg, #ed8936 0%, #dd6b20 100%);
+            box-shadow: 0 4px 15px rgba(237, 137, 54, 0.4);
+        }
+        
+        /* Game Log */
+        #game-log {
+            max-height: 300px;
+            overflow-y: auto;
+            background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%);
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-top: 1rem;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+        
+        #game-log::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        #game-log::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            border-radius: 4px;
+        }
+        
+        #game-log::-webkit-scrollbar-thumb {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 4px; 
+        }
+        
+        #game-log::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+        }
+        
+        #game-log p {
+            margin: 0 0 0.75rem;
+            line-height: 1.6;
+            color: #2d3748;
+        }
+        
+        #game-log p:last-child {
+            margin-bottom: 0;
+        }
+        
+        /* --- Exciting Win/Loss Messages --- */
+        .win-message {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-size: 2rem;
+            font-weight: 700;
+            padding: 1.5rem;
+            border-radius: 12px;
+            text-align: center;
+            margin: 1rem 0;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+            animation: winPulse 1s ease-in-out infinite;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        
+        .loss-message {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            font-size: 1.5rem;
+            font-weight: 700;
+            padding: 1rem;
+            border-radius: 12px;
+            text-align: center;
+            margin: 1rem 0;
+            box-shadow: 0 10px 30px rgba(245, 87, 108, 0.4);
+            animation: lossShake 0.5s ease-in-out;
+        }
+        
+        .victory-message {
+            background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
+            color: #fff;
+            font-size: 2.5rem;
+            font-weight: 900;
+            padding: 2rem;
+            border-radius: 16px;
+            text-align: center;
+            margin: 1rem 0;
+            box-shadow: 0 20px 40px rgba(246, 211, 101, 0.5);
+            animation: victoryCelebration 2s ease-in-out infinite;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .victory-message::before {
+            content: '🎉';
+            font-size: 3rem;
+            position: absolute;
+            left: 20px;
+            animation: bounce 1s ease-in-out infinite;
+        }
+        
+        .victory-message::after {
+            content: '🎉';
+            font-size: 3rem;
+            position: absolute;
+            right: 20px;
+            animation: bounce 1s ease-in-out infinite 0.2s;
+        }
+        
+        .round-complete-message {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 0.875rem 1.25rem;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 1rem;
+            margin: 0.5rem 0;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+        
+        .round-start-message {
+            background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+            color: white;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            margin: 0.5rem 0;
+            box-shadow: 0 2px 8px rgba(72, 187, 120, 0.3);
+        }
+        
+        @keyframes winPulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        
+        @keyframes pulse {
+            0%, 100% { 
+                transform: scale(1);
+                box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+            }
+            50% { 
+                transform: scale(1.05);
+                box-shadow: 0 8px 28px rgba(102, 126, 234, 0.6);
+            }
+        }
+        
+        @keyframes lossShake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-10px); }
+            75% { transform: translateX(10px); }
+        }
+        
+        @keyframes victoryCelebration {
+            0%, 100% { transform: scale(1) rotate(0deg); }
+            25% { transform: scale(1.1) rotate(-2deg); }
+            75% { transform: scale(1.1) rotate(2deg); }
+        }
+        
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-20px); }
+        }
+        
+        .score-display {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1.5rem;
+            border-radius: 16px;
+            margin: 1rem 0;
+            font-weight: 600;
+            box-shadow: 
+                0 8px 24px rgba(102, 126, 234, 0.4),
+                0 0 0 1px rgba(255, 255, 255, 0.1);
+        }
+        
+        .score-display h4 {
+            color: white;
+            margin-bottom: 1rem;
+            font-size: 1.25rem;
+        }
+        
+        .leaderboard {
+            background: white;
+            border: 2px solid #e2e8f0;
+            border-radius: 16px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        }
+        
+        .leaderboard-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.5rem;
+            margin: 0.5rem 0;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #ffffff 0%, #f7fafc 100%);
+            transition: all 0.3s ease;
+            border: 2px solid #e2e8f0;
+            color: #2d3748;
+            font-size: 1.1rem;
+            font-weight: 600;
+            line-height: 1.5;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+        }
+        
+        .leaderboard-item:hover {
+            transform: translateX(4px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            border-color: #cbd5e0;
+        }
+        
+        .leaderboard-item.winner {
+            background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
+            color: white;
+            font-weight: 700;
+            font-size: 1.15rem;
+            border-color: #fda085;
+            box-shadow: 0 4px 16px rgba(253, 160, 133, 0.4);
+        }
+        
+        .leaderboard-item.winner:hover {
+            box-shadow: 0 6px 20px rgba(253, 160, 133, 0.5);
+            border-color: #fc8c5a;
+        }
+        
+        /* AI Thinking Animation */
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 0.6;
+            }
+            50% {
+                opacity: 1;
+            }
+        }
+        
+        .ai-thinking {
+            display: inline-block;
+        }
+        
+        .ai-thinking::after {
+            content: '...';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+        
+        @keyframes dots {
+            0%, 20% {
+                content: '.';
+            }
+            40% {
+                content: '..';
+            }
+            60%, 100% {
+                content: '...';
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Floating Particles -->
+    <div class="particles" id="particles"></div>
+    <div class="container">
+        
+        <div id="lobby-view">
+            <h2>Game Portal</h2>
+            
+            <!-- User Identity Display -->
+            <div id="user-identity" style="display: none; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 1.5rem; border-radius: 16px; margin: 1.5rem 0; box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3);">
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <svg id="user-identicon" width="60" height="60" style="border-radius: 50%; background: rgba(255, 255, 255, 0.2); padding: 4px; flex-shrink: 0;"></svg>
+                    <div style="flex: 1;">
+                        <div style="font-size: 0.875rem; opacity: 0.9; margin-bottom: 0.25rem;">Your Identity</div>
+                        <div style="font-size: 1.25rem; font-weight: 700; margin-bottom: 0.25rem;" id="user-display-name">Player</div>
+                        <div style="font-size: 0.75rem; opacity: 0.8; font-family: monospace;" id="user-fingerprint">Loading...</div>
+                    </div>
+                </div>
+            </div>
+            
+            <hr>
+            
+            <h3>Create a New Game</h3>
+            <label for="game-type">Select Game:</label>
+            <select id="game-type">
+                <option value="dominoes">Dominoes</option>
+                <option value="blackjack">Blackjack</option>
+            </select>
+            <div id="domino-mode-select" style="margin-top: 0.5rem; display: block;">
+                <label for="domino-game-mode">Game Mode (Dominoes):</label>
+                <select id="domino-game-mode">
+                    <option value="classic">Classic (Best of 5, No Prizes)</option>
+                    <option value="boricua">Boricua Style (First to 500, 2v2)</option>
+                </select>
+            </div>
+            <div id="blackjack-mode-select" style="margin-top: 0.5rem; display: none;">
+                <label for="blackjack-game-mode">Game Mode (Blackjack):</label>
+                <select id="blackjack-game-mode">
+                    <option value="best_of_5">Best of 5 (First to 3 Wins)</option>
+                    <option value="best_of_10">Best of 10 (First to 5 Wins)</option>
+                </select>
+            </div>
+            <button id="create-game-btn">Create Game</button>
+            
+            <hr>
+            <h3>Join Existing Game</h3>
+            <label for="game-id-input">Game ID:</label>
+            <input type="text" id="game-id-input" placeholder="Enter Game ID">
+            <button id="join-game-btn">Join Game</button>
+        </div>
+        <div id="game-view" class="hidden">
+            <h2 id="game-title">Game in Progress</h2>
+            
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin: 1.5rem 0;">
+                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 1.25rem; border-radius: 12px; box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);">
+                    <div style="font-size: 0.875rem; opacity: 0.9; margin-bottom: 0.5rem;">Game ID</div>
+                    <div style="font-size: 1.25rem; font-weight: 700; margin-bottom: 0.5rem;" id="game-id-display"></div>
+                    <div style="font-size: 0.75rem; opacity: 0.8; margin-bottom: 0.75rem;">Share this link to invite!</div>
+                    <button id="copy-link-btn" style="background: white; color: #667eea; font-weight: 700; padding: 0.5rem 1rem; border-radius: 8px; border: none; cursor: pointer; font-size: 0.875rem; width: 100%;">📋 Copy Share Link</button>
+                </div>
+                <div style="background: linear-gradient(135deg, #48bb78 0%, #38a169 100%); color: white; padding: 1.25rem; border-radius: 12px; box-shadow: 0 4px 12px rgba(72, 187, 120, 0.3);">
+                    <div style="font-size: 0.875rem; opacity: 0.9; margin-bottom: 0.75rem;">You are</div>
+                    <div style="display: flex; align-items: center; gap: 0.75rem;">
+                        <svg id="player-identicon-display" width="48" height="48" style="border-radius: 50%; background: rgba(255, 255, 255, 0.2); padding: 4px; flex-shrink: 0;"></svg>
+                        <div style="flex: 1;">
+                            <div style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.25rem;" id="player-display-name">Player</div>
+                            <div style="font-size: 0.7rem; opacity: 0.8; font-family: monospace;" id="player-id-display"></div>
+                        </div>
+                    </div>
+                </div>
+                <div id="turn-display-card" style="background: linear-gradient(135deg, #f6ad55 0%, #ed8936 100%); color: white; padding: 1.25rem; border-radius: 12px; box-shadow: 0 4px 12px rgba(246, 173, 85, 0.3); display: none;">
+                    <div style="font-size: 0.875rem; opacity: 0.9; margin-bottom: 0.5rem;">Current Turn</div>
+                    <div style="font-size: 1.25rem; font-weight: 700;" id="turn-display"></div>
+                </div>
+            </div>
+            
+            <button id="start-game-btn" style="margin: 1.5rem 0;">🎮 Start Game</button>
+            
+            <div id="players-list" style="background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%); padding: 1.25rem; border-radius: 12px; margin: 1.5rem 0; border: 2px solid #e2e8f0;"><strong>Players:</strong> </div>
+            <div id="blackjack-ui" class="hidden">
+                <h3>Dealer Hand (<span id="dealer-value"></span>)</h3>
+                <div class="dealer-hand" id="dealer-hand"></div>
+                <div id="blackjack-actions">
+                    <button id="hit-btn">Hit</button>
+                    <button id="stand-btn">Stand</button>
+                </div>
+                <div id="next-round-container" class="hidden" style="margin-top: 2rem; text-align: center; padding: 2rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 20px; box-shadow: 0 12px 32px rgba(102, 126, 234, 0.5); border: 3px solid rgba(255, 255, 255, 0.3);">
+                    <h2 style="color: white; margin-bottom: 0.75rem; font-size: 1.75rem; font-weight: 800;">🎉 Round Complete! 🎉</h2>
+                    <p style="color: rgba(255, 255, 255, 0.95); margin-bottom: 1.5rem; font-size: 1.1rem; font-weight: 600;" id="round-ready-status">Waiting for players to be ready...</p>
+                    <button id="next-round-btn" style="background: white; color: #667eea; font-weight: 700; padding: 1.25rem 3rem; font-size: 1.2rem; border-radius: 12px; border: none; cursor: pointer; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3); transition: all 0.3s ease;">▶ Next Round</button>
+                </div>
+            </div>
+            <div id="dominoes-ui" class="hidden">
+                <div style="display: flex; gap: 1rem;">
+                    <div style="flex: 1;">
+                        <h3>Board - Open Ends: <span id="domino-ends"></span></h3>
+                        <div class="board-simple" id="domino-board"></div>
+                        <div class="drop-zones" style="display: flex; gap: 1rem; margin-top: 1rem;">
+                            <div class="drop-zone" id="drop-zone-left" data-side="left">
+                                <div class="drop-zone-label">Drop here for LEFT</div>
+                                <div class="drop-zone-end" id="left-end-display">-</div>
+                            </div>
+                            <div class="drop-zone" id="drop-zone-right" data-side="right">
+                                <div class="drop-zone-label">Drop here for RIGHT</div>
+                                <div class="drop-zone-end" id="right-end-display">-</div>
+                            </div>
+                        </div>
+                        <div id="domino-actions">
+                            <button id="draw-btn">Draw</button>
+                            <button id="pass-btn">Pass</button>
+                        </div>
+                        <div id="next-hand-container" class="hidden" style="margin-top: 1.5rem; text-align: center; padding: 1.5rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 16px; box-shadow: 0 8px 24px rgba(102, 126, 234, 0.4);">
+                            <h3 style="color: white; margin-bottom: 1rem;">Hand Complete! 🎉</h3>
+                            <p style="color: rgba(255, 255, 255, 0.9); margin-bottom: 1rem;" id="ready-status">Waiting for players to be ready...</p>
+                            <button id="next-hand-btn" style="background: white; color: #667eea; font-weight: 700; padding: 1rem 2.5rem; font-size: 1.1rem;">▶ Next Hand</button>
+                        </div>
+                    </div>
+                    <div class="board-map-panel" style="flex: 0 0 300px;">
+                        <h3>Full Table Path</h3>
+                        <div class="board-map" id="board-map"></div>
+                    </div>
+                </div>
+            </div>
+            <h3 id="your-hand-title" style="display: none;">Your Hand (<span id="hand-value"></span>)</h3>
+            <div class="hand" id="player-hand" style="display: none;"></div>
+            
+            <h3 id="game-log-title" style="display: none;">Game Log</h3>
+            <div id="game-log" style="display: none;"></div>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/jdenticon@3.3.0/dist/jdenticon.min.js" async
+        integrity="sha384-LfouGM03m83ArVtne1JPk926e3SGD0Tz8XHtW2OKGsgeBU/UfR0Fa8eX+UlwSSAZ"
+        crossorigin="anonymous">
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/@fingerprintjs/fingerprintjs@3/dist/fp.min.js"></script>
+    <script src="static/js/app.js"></script>
+</body>
+</html>
+

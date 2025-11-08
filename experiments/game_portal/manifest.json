@@ -1,0 +1,18 @@
+{
+  "slug": "game_portal",
+  "name": "Game Portal",
+  "description": "Multiplayer game portal supporting Blackjack and Dominoes with WebSocket real-time gameplay",
+  "status": "active",
+  "auth_required": false,
+  "data_scope": ["self"],
+  "managed_indexes": {
+    "games": [
+      {
+        "name": "games_status_index",
+        "type": "regular",
+        "keys": { "status": 1 }
+      }
+    ]
+  }
+}
+

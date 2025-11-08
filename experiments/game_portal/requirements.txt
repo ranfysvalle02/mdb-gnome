@@ -1,0 +1,4 @@
+# Game Portal Experiment Requirements
+# No additional dependencies required beyond base mdb-gnome requirements
+# All game logic uses standard Python libraries (random, json, etc.)
+
