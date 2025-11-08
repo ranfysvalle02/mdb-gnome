@@ -516,6 +516,59 @@ class ExperimentActor:
                 logger.error(f"Error processing AI move for {current_player_id}: {e}", exc_info=True)
                 break
     
+    async def process_single_ai_move(self, game_id: str) -> Dict[str, Any]:
+        """Processes a single AI move and returns whether to continue processing."""
+        game = await self.db.games.find_one({"_id": game_id})
+        if not game:
+            return {"continue": False, "game_state": None}
+        
+        game_state = game.get('game_state')
+        if not game_state:
+            return {"continue": False, "game_state": None}
+        
+        if game_state.get('status') != 'in_progress':
+            return {"continue": False, "game_state": game_state}
+        
+        current_turn_index = game_state.get('current_turn_index', 0)
+        if current_turn_index >= len(game_state.get('players', [])):
+            return {"continue": False, "game_state": game_state}
+        
+        current_player_id = game_state['players'][current_turn_index]
+        
+        # Check if current player is AI
+        if not self.is_ai_player(game_id, current_player_id):
+            return {"continue": False, "game_state": game_state}
+        
+        # Make AI move
+        try:
+            game_type = game.get('game_type')
+            if game_type == 'blackjack':
+                await self.make_ai_move_blackjack(game_id, current_player_id)
+            elif game_type == 'dominoes':
+                await self.make_ai_move_dominoes(game_id, current_player_id)
+            else:
+                return {"continue": False, "game_state": game_state}
+            
+            # Get updated game state
+            updated_game = await self.db.games.find_one({"_id": game_id})
+            updated_state = updated_game.get('game_state') if updated_game else None
+            
+            # Small delay to make AI moves visible
+            await asyncio.sleep(0.5)
+            
+            # Check if we should continue (if next turn is also AI)
+            if updated_state and updated_state.get('status') == 'in_progress':
+                next_turn_index = updated_state.get('current_turn_index', 0)
+                if next_turn_index < len(updated_state.get('players', [])):
+                    next_player_id = updated_state['players'][next_turn_index]
+                    if self.is_ai_player(game_id, next_player_id):
+                        return {"continue": True, "game_state": updated_state}
+            
+            return {"continue": False, "game_state": updated_state}
+        except Exception as e:
+            logger.error(f"Error processing AI move for {current_player_id}: {e}", exc_info=True)
+            return {"continue": False, "game_state": game_state}
+    
     # --- State Sanitization ---
     
     async def sanitize_game_state_for_player(self, game_type: str, game_state: Dict[str, Any], player_id: str) -> Dict[str, Any]:

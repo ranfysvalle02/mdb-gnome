@@ -230,10 +230,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const shareUrl = `${window.location.origin}${basePath}?game=${gameId}`;
             copyLinkBtn.onclick = () => {
                 navigator.clipboard.writeText(shareUrl).then(() => {
-                    copyLinkBtn.textContent = '✓ Copied!';
-                    setTimeout(() => {
-                        copyLinkBtn.textContent = '📋 Copy Share Link';
-                    }, 2000);
+                copyLinkBtn.textContent = '✓ Copied!';
+                copyLinkBtn.style.background = '#48bb78';
+                setTimeout(() => {
+                    copyLinkBtn.textContent = '📋 Copy Share Link';
+                    copyLinkBtn.style.background = 'white';
+                }, 2000);
                 }).catch(() => {
                     const textarea = document.createElement('textarea');
                     textarea.value = shareUrl;
@@ -241,10 +243,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     textarea.select();
                     document.execCommand('copy');
                     document.body.removeChild(textarea);
-                    copyLinkBtn.textContent = '✓ Copied!';
-                    setTimeout(() => {
-                        copyLinkBtn.textContent = '📋 Copy Share Link';
-                    }, 2000);
+                copyLinkBtn.textContent = '✓ Copied!';
+                copyLinkBtn.style.background = '#48bb78';
+                setTimeout(() => {
+                    copyLinkBtn.textContent = '📋 Copy Share Link';
+                    copyLinkBtn.style.background = 'white';
+                }, 2000);
                 });
             };
         }
@@ -277,7 +281,7 @@ document.addEventListener('DOMContentLoaded', () => {
             switch (data.type) {
                 case 'connection_success':
                     localGameType = data.game_type;
-                    gameTitle.textContent = `${localGameType} Game`;
+                    gameTitle.textContent = `${localGameType.charAt(0).toUpperCase() + localGameType.slice(1)} Game`;
                     renderPlayers(data.players);
                     if (data.game_state) {
                         currentGameState = data.game_state;
@@ -289,7 +293,15 @@ document.addEventListener('DOMContentLoaded', () => {
                             if (gameInfoGrid && gameInfoGrid.firstElementChild) {
                                 gameInfoGrid.firstElementChild.style.display = 'none';
                             }
+                            const waitingMsg = document.getElementById('waiting-message');
+                            if (waitingMsg) waitingMsg.style.display = 'none';
+                        } else {
+                            const waitingMsg = document.getElementById('waiting-message');
+                            if (waitingMsg) waitingMsg.style.display = 'block';
                         }
+                    } else {
+                        const waitingMsg = document.getElementById('waiting-message');
+                        if (waitingMsg) waitingMsg.style.display = 'block';
                     }
                     break;
                 case 'player_joined':
@@ -330,7 +342,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                     break;
                 case 'error':
-                    alert(`Error: ${data.message}`);
+                    alert(`❌ Oops! ${data.message || 'Something went wrong. Please try again!'}`);
                     break;
             }
         };
@@ -401,18 +413,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 window.history.pushState({ gameId: data.game_id }, '', shareUrl);
                 connectWebSocket(data.game_id, data.player_id);
             } else {
-                alert(`Error: ${data.detail || data.error || 'Unknown error'}`);
+                alert(`❌ Oops! ${data.detail || data.error || 'Something went wrong. Please try again!'}`);
             }
         } catch (err) {
             console.error('Create Game failed:', err);
-            alert('Failed to create game. Please try again.');
+            alert('❌ Oops! Could not create the game. Please check your connection and try again!');
         }
     }
     
     async function joinGame() {
         const gameId = gameIdInput.value.trim().toUpperCase();
         if (!gameId) { 
-            alert('Please enter a Game ID.'); 
+            alert('❌ Please enter a Game ID to join a game!'); 
             return; 
         }
         
@@ -432,11 +444,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 window.history.pushState({ gameId: data.game_id }, '', shareUrl);
                 connectWebSocket(data.game_id, data.player_id);
             } else {
-                alert(`Error: ${data.detail || data.error || 'Unknown error'}`);
+                alert(`❌ Oops! ${data.detail || data.error || 'Could not join the game. Please check the Game ID and try again!'}`);
             }
         } catch (err) {
             console.error('Join Game failed:', err);
-            alert('Failed to join game. Please try again.');
+            alert('❌ Oops! Could not join the game. Please check your connection and try again!');
         }
     }
     
@@ -480,6 +492,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         startGameBtn.classList.add('hidden');
+        const waitingMsg = document.getElementById('waiting-message');
+        if (waitingMsg) waitingMsg.style.display = 'none';
         if (playerHandTitle) playerHandTitle.style.display = 'block';
         if (playerHandDiv) playerHandDiv.style.display = 'flex';
         if (gameLogTitle) gameLogTitle.style.display = 'block';
@@ -495,7 +509,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const currentPlayerId = state.players[state.current_turn_index];
         
         if (myTurn) {
-            turnDisplay.textContent = "YOUR TURN";
+            turnDisplay.textContent = "🎯 YOUR TURN! 🎯";
+            turnDisplayCard.style.background = 'linear-gradient(135deg, #48bb78 0%, #38a169 100%)';
+            turnDisplayCard.style.boxShadow = '0 8px 24px rgba(72, 187, 120, 0.5)';
         } else {
             let playerName = currentPlayerId;
             const playerCards = playersList.querySelectorAll('div > div');
@@ -508,7 +524,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }
             });
-            turnDisplay.textContent = `${playerName}'s Turn`;
+            turnDisplay.textContent = `⏳ ${playerName}'s Turn`;
+            turnDisplayCard.style.background = 'linear-gradient(135deg, #f6ad55 0%, #ed8936 100%)';
+            turnDisplayCard.style.boxShadow = '0 4px 12px rgba(246, 173, 85, 0.3)';
         }
         
         updateThinkingIndicators(state);
@@ -813,10 +831,21 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         const actions = document.getElementById('blackjack-actions');
+        const hintEl = document.getElementById('blackjack-hint');
         if (myHandData && myTurn && myHandData.status === 'playing' && state.status === 'in_progress') {
             actions.classList.remove('hidden');
+            if (hintEl) {
+                if (myHandData.value < 17) {
+                    hintEl.textContent = '💡 Tip: Your hand is low. Consider hitting to get closer to 21!';
+                } else if (myHandData.value < 21) {
+                    hintEl.textContent = '💡 Tip: You have a good hand! Stand if you\'re happy with it.';
+                } else if (myHandData.value === 21) {
+                    hintEl.textContent = '🎉 Blackjack! You should stand!';
+                }
+            }
         } else {
             actions.classList.add('hidden');
+            if (hintEl) hintEl.textContent = '';
         }
     }
     
@@ -1113,17 +1142,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 passBtn.title = 'You have playable tiles';
             }
             
+            const hintEl = document.getElementById('domino-hint');
             if (!hasPlayableTile) {
                 if (boneyardCount > 0) {
                     handValueSpan.textContent = '⚠️ No playable tiles - Click "Draw" to get a new tile';
                     handValueSpan.style.color = '#ff9800';
+                    if (hintEl) hintEl.textContent = '💡 Tip: You can draw a tile from the boneyard to try to get a playable one!';
                 } else {
                     handValueSpan.textContent = '⚠️ No playable tiles - Click "Pass" to skip your turn';
                     handValueSpan.style.color = '#ff9800';
+                    if (hintEl) hintEl.textContent = '💡 Tip: When you can\'t play and the boneyard is empty, you must pass.';
                 }
             } else {
                 handValueSpan.textContent = `✓ ${playableTiles.length} playable tile(s) - Click a highlighted tile to play`;
                 handValueSpan.style.color = '#4caf50';
+                if (hintEl) hintEl.textContent = '💡 Tip: Click a highlighted tile to play it, or drag it to the left or right drop zone!';
             }
         } else {
             actions.classList.add('hidden');
@@ -1141,9 +1174,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const canPlayRight = tile[0] === rightEnd || tile[1] === rightEnd;
             
             if (canPlayLeft && canPlayRight && leftEnd !== rightEnd) {
-                side = prompt(`Play on (l)eft or (r)ight?`, 'r');
-                if (side === 'l') side = 'left';
-                else side = 'right';
+                // Use a more user-friendly approach
+                const choice = confirm(`This tile can play on both ends!\n\nLeft end: ${leftEnd}\nRight end: ${rightEnd}\n\nClick OK for RIGHT, Cancel for LEFT`);
+                side = choice ? 'right' : 'left';
             } else if (canPlayLeft) {
                 side = 'left';
             } else {

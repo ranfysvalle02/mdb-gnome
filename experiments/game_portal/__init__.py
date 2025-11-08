@@ -99,6 +99,47 @@ async def send_to_player(game_id: str, player_id: str, message: Dict[str, Any]):
             logger.error(f"Error sending to {player_id}: {e}")
 
 
+async def process_ai_moves_with_broadcast(actor, game_id: str, player_ids: list):
+    """Processes AI moves and broadcasts state updates after each move."""
+    max_iterations = 20
+    iteration = 0
+    
+    while iteration < max_iterations:
+        iteration += 1
+        
+        # Process a single AI move
+        result = await actor.process_single_ai_move.remote(game_id)
+        
+        # Always broadcast updated state after AI move
+        updated_game = await actor.get_game.remote(game_id)
+        if not updated_game:
+            break
+        
+        players_with_ai_status = []
+        for p in updated_game.get('players', []):
+            player_dict = p.copy() if isinstance(p, dict) else {"player_id": p}
+            pid = player_dict.get('player_id', player_dict)
+            player_dict['isAI'] = await actor.is_ai_player.remote(game_id, pid)
+            players_with_ai_status.append(player_dict)
+        
+        for pid in player_ids:
+            sanitized = await actor.sanitize_game_state_for_player.remote(
+                updated_game.get('game_type'), updated_game.get('game_state'), pid
+            )
+            await send_to_player(game_id, pid, {
+                "type": "state_update",
+                "game_state": sanitized,
+                "players": players_with_ai_status
+            })
+        
+        # Check if we should continue
+        if not result.get('continue', False):
+            break
+        
+        # Small delay between AI moves for better UX
+        await asyncio.sleep(0.3)
+
+
 # --- HTTP API Models ---
 class CreateGameRequest(BaseModel):
     player_id: str = Field(..., min_length=1, max_length=200)
@@ -237,8 +278,8 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str, player_id: str)
                         "players": players_with_ai_status
                     })
                 
-                # Process AI moves
-                await actor.process_ai_moves.remote(game_id)
+                # Process AI moves with state broadcasting
+                await process_ai_moves_with_broadcast(actor, game_id, player_ids)
             
             elif action_type == 'make_move':
                 try:
@@ -268,8 +309,8 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str, player_id: str)
                             "players": players_with_ai_status
                         })
                     
-                    # Process AI moves
-                    await actor.process_ai_moves.remote(game_id)
+                    # Process AI moves with state broadcasting
+                    await process_ai_moves_with_broadcast(actor, game_id, player_ids)
                 except Exception as e:
                     logger.error(f"Error processing move: {e}", exc_info=True)
                     await websocket.send_json({"type": "error", "message": f"Failed to process move: {str(e)}"})
@@ -320,7 +361,7 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str, player_id: str)
                             "players": players_with_ai_status
                         })
                     
-                    await actor.process_ai_moves.remote(game_id)
+                    await process_ai_moves_with_broadcast(actor, game_id, player_ids)
             
             elif action_type == 'ready_for_next_hand':
                 result = await actor.ready_for_next_hand.remote(game_id, player_id)
@@ -368,7 +409,7 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str, player_id: str)
                             "players": players_with_ai_status
                         })
                     
-                    await actor.process_ai_moves.remote(game_id)
+                    await process_ai_moves_with_broadcast(actor, game_id, player_ids)
     
     except WebSocketDisconnect:
         logger.info(f"Player {player_id} disconnected from game {game_id}.")
@@ -382,4 +423,3 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str, player_id: str)
         logger.error(f"WebSocket error: {e}", exc_info=True)
         if game_id in active_connections and player_id in active_connections[game_id]:
             del active_connections[game_id][player_id]
-

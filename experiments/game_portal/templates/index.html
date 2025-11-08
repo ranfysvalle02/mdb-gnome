@@ -960,7 +960,10 @@
         </div>
         
         <div id="lobby-view">
-            <h2>Game Portal</h2>
+            <h2>🎮 Game Portal 🎮</h2>
+            <p style="color: #4a5568; font-size: 1.1rem; margin-bottom: 1.5rem; text-align: center; line-height: 1.6;">
+                Play fun games with family and friends! Create a game or join one using a Game ID.
+            </p>
             
             <!-- User Identity Display -->
             <div id="user-identity" style="display: none; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 1.5rem; border-radius: 16px; margin: 1.5rem 0; box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3);">
@@ -976,33 +979,35 @@
             
             <hr>
             
-            <h3>Create a New Game</h3>
-            <label for="game-type">Select Game:</label>
-            <select id="game-type">
-                <option value="dominoes">Dominoes</option>
-                <option value="blackjack">Blackjack</option>
+            <h3>✨ Create a New Game</h3>
+            <p style="color: #718096; font-size: 0.95rem; margin-bottom: 1rem;">Choose your game and invite others to play!</p>
+            <label for="game-type" style="font-size: 1.05rem; font-weight: 600;">Select Game:</label>
+            <select id="game-type" style="font-size: 1.05rem; padding: 0.75rem;">
+                <option value="dominoes">🎲 Dominoes</option>
+                <option value="blackjack">🃏 Blackjack</option>
             </select>
-            <div id="domino-mode-select" style="margin-top: 0.5rem; display: block;">
-                <label for="domino-game-mode">Game Mode (Dominoes):</label>
-                <select id="domino-game-mode">
-                    <option value="classic">Classic (Best of 5, No Prizes)</option>
+            <div id="domino-mode-select" style="margin-top: 0.75rem; display: block;">
+                <label for="domino-game-mode" style="font-size: 1.05rem; font-weight: 600;">Game Mode:</label>
+                <select id="domino-game-mode" style="font-size: 1.05rem; padding: 0.75rem;">
+                    <option value="classic">Classic (Best of 5)</option>
                     <option value="boricua">Boricua Style (First to 500, 2v2)</option>
                 </select>
             </div>
-            <div id="blackjack-mode-select" style="margin-top: 0.5rem; display: none;">
-                <label for="blackjack-game-mode">Game Mode (Blackjack):</label>
-                <select id="blackjack-game-mode">
+            <div id="blackjack-mode-select" style="margin-top: 0.75rem; display: none;">
+                <label for="blackjack-game-mode" style="font-size: 1.05rem; font-weight: 600;">Game Mode:</label>
+                <select id="blackjack-game-mode" style="font-size: 1.05rem; padding: 0.75rem;">
                     <option value="best_of_5">Best of 5 (First to 3 Wins)</option>
                     <option value="best_of_10">Best of 10 (First to 5 Wins)</option>
                 </select>
             </div>
-            <button id="create-game-btn">Create Game</button>
+            <button id="create-game-btn" style="font-size: 1.1rem; padding: 1rem 2.5rem; margin-top: 1rem;">🎮 Create Game</button>
             
-            <hr>
-            <h3>Join Existing Game</h3>
-            <label for="game-id-input">Game ID:</label>
-            <input type="text" id="game-id-input" placeholder="Enter Game ID">
-            <button id="join-game-btn">Join Game</button>
+            <hr style="margin: 2rem 0;">
+            <h3>👥 Join Existing Game</h3>
+            <p style="color: #718096; font-size: 0.95rem; margin-bottom: 1rem;">Enter the Game ID that someone shared with you!</p>
+            <label for="game-id-input" style="font-size: 1.05rem; font-weight: 600;">Game ID:</label>
+            <input type="text" id="game-id-input" placeholder="Enter Game ID (e.g., ABC123)" style="font-size: 1.1rem; padding: 0.875rem; text-transform: uppercase; letter-spacing: 0.1em;">
+            <button id="join-game-btn" style="font-size: 1.1rem; padding: 1rem 2.5rem; margin-top: 1rem;">🚀 Join Game</button>
         </div>
         <div id="game-view" class="hidden">
             <h2 id="game-title">Game in Progress</h2>
@@ -1024,21 +1029,28 @@
                         </div>
                     </div>
                 </div>
-                <div id="turn-display-card" style="background: linear-gradient(135deg, #f6ad55 0%, #ed8936 100%); color: white; padding: 1.25rem; border-radius: 12px; box-shadow: 0 4px 12px rgba(246, 173, 85, 0.3); display: none;">
-                    <div style="font-size: 0.875rem; opacity: 0.9; margin-bottom: 0.5rem;">Current Turn</div>
-                    <div style="font-size: 1.25rem; font-weight: 700;" id="turn-display"></div>
+                <div id="turn-display-card" style="background: linear-gradient(135deg, #f6ad55 0%, #ed8936 100%); color: white; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 12px rgba(246, 173, 85, 0.3); display: none; animation: pulse 2s ease-in-out infinite;">
+                    <div style="font-size: 0.875rem; opacity: 0.9; margin-bottom: 0.5rem;">🎯 Current Turn</div>
+                    <div style="font-size: 1.5rem; font-weight: 800; text-align: center;" id="turn-display"></div>
                 </div>
             </div>
             
-            <button id="start-game-btn" style="margin: 1.5rem 0;">🎮 Start Game</button>
+            <button id="start-game-btn" style="margin: 1.5rem 0; font-size: 1.2rem; padding: 1.25rem 3rem;">🎮 Start Game</button>
+            <p id="waiting-message" style="color: #718096; font-size: 1rem; margin-top: 1rem; text-align: center; display: none;">
+                ⏳ Waiting for players to join... Share the Game ID above!
+            </p>
             
             <div id="players-list" style="background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%); padding: 1.25rem; border-radius: 12px; margin: 1.5rem 0; border: 2px solid #e2e8f0;"><strong>Players:</strong> </div>
             <div id="blackjack-ui" class="hidden">
                 <h3>Dealer Hand (<span id="dealer-value"></span>)</h3>
                 <div class="dealer-hand" id="dealer-hand"></div>
-                <div id="blackjack-actions">
-                    <button id="hit-btn">Hit</button>
-                    <button id="stand-btn">Stand</button>
+                <div id="blackjack-actions" style="margin-top: 1.5rem;">
+                    <p style="color: #4a5568; font-size: 1rem; margin-bottom: 1rem; font-weight: 600; text-align: center;">What would you like to do?</p>
+                    <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
+                        <button id="hit-btn" style="font-size: 1.2rem; padding: 1rem 2.5rem; min-width: 150px;">➕ Hit</button>
+                        <button id="stand-btn" style="font-size: 1.2rem; padding: 1rem 2.5rem; min-width: 150px;">✋ Stand</button>
+                    </div>
+                    <p id="blackjack-hint" style="color: #718096; font-size: 0.95rem; margin-top: 1rem; text-align: center; font-style: italic;"></p>
                 </div>
                 <div id="next-round-container" class="hidden" style="margin-top: 2rem; text-align: center; padding: 2rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 20px; box-shadow: 0 12px 32px rgba(102, 126, 234, 0.5); border: 3px solid rgba(255, 255, 255, 0.3);">
                     <h2 style="color: white; margin-bottom: 0.75rem; font-size: 1.75rem; font-weight: 800;">🎉 Round Complete! 🎉</h2>
@@ -1061,9 +1073,13 @@
                                 <div class="drop-zone-end" id="right-end-display">-</div>
                             </div>
                         </div>
-                        <div id="domino-actions">
-                            <button id="draw-btn">Draw</button>
-                            <button id="pass-btn">Pass</button>
+                        <div id="domino-actions" style="margin-top: 1.5rem;">
+                            <p style="color: #4a5568; font-size: 1rem; margin-bottom: 1rem; font-weight: 600; text-align: center;">What would you like to do?</p>
+                            <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
+                                <button id="draw-btn" style="font-size: 1.2rem; padding: 1rem 2.5rem; min-width: 150px;">🎴 Draw</button>
+                                <button id="pass-btn" style="font-size: 1.2rem; padding: 1rem 2.5rem; min-width: 150px;">⏭️ Pass</button>
+                            </div>
+                            <p id="domino-hint" style="color: #718096; font-size: 0.95rem; margin-top: 1rem; text-align: center; font-style: italic;"></p>
                         </div>
                         <div id="next-hand-container" class="hidden" style="margin-top: 1.5rem; text-align: center; padding: 1.5rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 16px; box-shadow: 0 8px 24px rgba(102, 126, 234, 0.4);">
                             <h3 style="color: white; margin-bottom: 1rem;">Hand Complete! 🎉</h3>
